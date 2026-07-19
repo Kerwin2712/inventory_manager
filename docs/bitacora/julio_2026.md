@@ -1,6 +1,8 @@
 # Registro Diario de Desarrollo
 
-## [2026-07-19] Inicialización de la Arquitectura y Entorno Base
+### 19/07/2026 Inicio del Proyecto
+
+## Inicialización de la Arquitectura y Entorno Base
 - **Responsable:** Antigravity (IA Coding Assistant)
 - **Actividades realizadas:**
   - Creación de la estructura modular limpia del proyecto (`core/`, `services/`, `ui/views/`, `ui/components/`).
@@ -10,7 +12,7 @@
   - Configuración de las reglas de control y flujo de trabajo en `prompt_inicial.md`.
 - **Estado del proyecto:** Inicializado. Listo para instalar dependencias y actualizar el grafo de dependencias con Grapiphy.
 
-## [2026-07-19] Creación del Entry Point y Configuración de Ventana
+## Creación del Entry Point y Configuración de Ventana
 - **Responsable:** Antigravity (IA Coding Assistant)
 - **Actividades realizadas:**
   - Creación del archivo `main.py` en la raíz del proyecto para inicializar la aplicación Flet.
@@ -18,14 +20,14 @@
   - Integración de `LoginView` en la carga inicial de la aplicación.
 - **Estado del proyecto:** En desarrollo. Punto de entrada listo para pruebas de ejecución.
 
-## [2026-07-19] Configuración de Control de Versiones e Ignorado de Grafo
+## Configuración de Control de Versiones e Ignorado de Grafo
 - **Responsable:** Antigravity (IA Coding Assistant)
 - **Actividades realizadas:**
   - Modificación del archivo `.gitignore` para incluir `graphify-out/`.
   - Eliminación de los archivos de `graphify-out/` previamente confirmados en el índice de Git sin eliminarlos físicamente del disco.
 - **Estado del proyecto:** En desarrollo. Estructura de control de versiones optimizada.
 
-## [2026-07-19] Corrección de Errores de Referencia de Flet
+## Corrección de Errores de Referencia de Flet
 - **Responsable:** Antigravity (IA Coding Assistant)
 - **Actividades realizadas:**
   - Corrección de `AttributeError` de Flet al cambiar las referencias a `ft.Padding` (con P mayúscula) en `ui/views/base_view.py` y `ui/views/login_view.py`.
