@@ -18,3 +18,11 @@
   - Integración de `LoginView` en la carga inicial de la aplicación.
 - **Estado del proyecto:** En desarrollo. Punto de entrada listo para pruebas de ejecución.
 
+## [2026-07-19] Configuración de Control de Versiones e Ignorado de Grafo
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Modificación del archivo `.gitignore` para incluir `graphify-out/`.
+  - Eliminación de los archivos de `graphify-out/` previamente confirmados en el índice de Git sin eliminarlos físicamente del disco.
+- **Estado del proyecto:** En desarrollo. Estructura de control de versiones optimizada.
+
+
