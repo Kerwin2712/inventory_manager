@@ -1,0 +1,4 @@
+flet
+python-dotenv
+pandas
+openpyxl

@@ -1,0 +1,661 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "core/__init__.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "core_init",
+      "community": 6,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "main.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "main",
+      "community": 0,
+      "norm_label": "main.py"
+    },
+    {
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "main.py",
+      "source_location": "L4",
+      "_origin": "ast",
+      "id": "main_main",
+      "community": 0,
+      "norm_label": "main()"
+    },
+    {
+      "label": "Page",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "page",
+      "community": 0,
+      "norm_label": "page"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services/__init__.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "services_init",
+      "community": 7,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "ui/__init__.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "ui_init",
+      "community": 9,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "ui/components/__init__.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "ui_components_init",
+      "community": 8,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "ui/views/__init__.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "ui_views_init",
+      "community": 10,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "base_view.py",
+      "file_type": "code",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "ui_views_base_view",
+      "community": 1,
+      "norm_label": "base_view.py"
+    },
+    {
+      "label": "BaseView",
+      "file_type": "code",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L3",
+      "_origin": "ast",
+      "id": "ui_views_base_view_baseview",
+      "community": 1,
+      "norm_label": "baseview"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L6",
+      "_origin": "ast",
+      "id": "ui_views_base_view_baseview_init",
+      "community": 1,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": ".setup_layout()",
+      "file_type": "code",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L17",
+      "_origin": "ast",
+      "id": "ui_views_base_view_baseview_setup_layout",
+      "community": 1,
+      "norm_label": ".setup_layout()"
+    },
+    {
+      "label": ".get_body()",
+      "file_type": "code",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L33",
+      "_origin": "ast",
+      "id": "ui_views_base_view_baseview_get_body",
+      "community": 1,
+      "norm_label": ".get_body()"
+    },
+    {
+      "label": "Control",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "ui_views_base_view_py_control",
+      "community": 1,
+      "norm_label": "control"
+    },
+    {
+      "label": "Clase base que define la estructura visual com\u00fan.",
+      "file_type": "rationale",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L4",
+      "_origin": "ast",
+      "id": "ui_views_base_view_rationale_4",
+      "community": 1,
+      "norm_label": "clase base que define la estructura visual comun."
+    },
+    {
+      "label": "login_view.py",
+      "file_type": "code",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "ui_views_login_view",
+      "community": 1,
+      "norm_label": "login_view.py"
+    },
+    {
+      "label": "LoginView",
+      "file_type": "code",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L4",
+      "_origin": "ast",
+      "id": "ui_views_login_view_loginview",
+      "community": 0,
+      "norm_label": "loginview"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L7",
+      "_origin": "ast",
+      "id": "ui_views_login_view_loginview_init",
+      "community": 0,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": ".get_body()",
+      "file_type": "code",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L10",
+      "_origin": "ast",
+      "id": "ui_views_login_view_loginview_get_body",
+      "community": 0,
+      "norm_label": ".get_body()"
+    },
+    {
+      "label": "Control",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "ui_views_login_view_py_control",
+      "community": 0,
+      "norm_label": "control"
+    },
+    {
+      "label": ".handle_login()",
+      "file_type": "code",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L62",
+      "_origin": "ast",
+      "id": "ui_views_login_view_loginview_handle_login",
+      "community": 0,
+      "norm_label": ".handle_login()"
+    },
+    {
+      "label": "Vista de inicio de sesi\u00f3n.",
+      "file_type": "rationale",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L5",
+      "_origin": "ast",
+      "id": "ui_views_login_view_rationale_5",
+      "community": 0,
+      "norm_label": "vista de inicio de sesion."
+    },
+    {
+      "label": "README.md",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "readme",
+      "community": 5,
+      "norm_label": "readme.md"
+    },
+    {
+      "label": "inventory_manager",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "readme_inventory_manager",
+      "community": 5,
+      "norm_label": "inventory_manager"
+    },
+    {
+      "label": "README_proyecto.md",
+      "file_type": "document",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "docs_readme_proyecto",
+      "community": 3,
+      "norm_label": "readme_proyecto.md"
+    },
+    {
+      "label": "Sistema Integrado de Inventario y Ventas",
+      "file_type": "document",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "docs_readme_proyecto_sistema_integrado_de_inventario_y_ventas",
+      "community": 3,
+      "norm_label": "sistema integrado de inventario y ventas"
+    },
+    {
+      "label": "Arquitectura del Proyecto",
+      "file_type": "document",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L5",
+      "_origin": "ast",
+      "id": "docs_readme_proyecto_arquitectura_del_proyecto",
+      "community": 3,
+      "norm_label": "arquitectura del proyecto"
+    },
+    {
+      "label": "Tecnolog\u00edas Principales",
+      "file_type": "document",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L16",
+      "_origin": "ast",
+      "id": "docs_readme_proyecto_tecnolog\u00edas_principales",
+      "community": 3,
+      "norm_label": "tecnologias principales"
+    },
+    {
+      "label": "registro_diario.md",
+      "file_type": "document",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "docs_bitacora_registro_diario",
+      "community": 2,
+      "norm_label": "registro_diario.md"
+    },
+    {
+      "label": "Registro Diario de Desarrollo",
+      "file_type": "document",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "docs_bitacora_registro_diario_registro_diario_de_desarrollo",
+      "community": 2,
+      "norm_label": "registro diario de desarrollo"
+    },
+    {
+      "label": "[2026-07-19] Inicializaci\u00f3n de la Arquitectura y Entorno Base",
+      "file_type": "document",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L3",
+      "_origin": "ast",
+      "id": "docs_bitacora_registro_diario_2026_07_19_inicializaci\u00f3n_de_la_arquitectura_y_entorno_base",
+      "community": 2,
+      "norm_label": "[2026-07-19] inicializacion de la arquitectura y entorno base"
+    },
+    {
+      "label": "[2026-07-19] Creaci\u00f3n del Entry Point y Configuraci\u00f3n de Ventana",
+      "file_type": "document",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L13",
+      "_origin": "ast",
+      "id": "docs_bitacora_registro_diario_2026_07_19_creaci\u00f3n_del_entry_point_y_configuraci\u00f3n_de_ventana",
+      "community": 2,
+      "norm_label": "[2026-07-19] creacion del entry point y configuracion de ventana"
+    },
+    {
+      "label": "prompt_inicial.md",
+      "file_type": "document",
+      "source_file": "prompt_inicial.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "prompt_inicial",
+      "community": 4,
+      "norm_label": "prompt_inicial.md"
+    },
+    {
+      "label": "Reglas de Flujo de Trabajo del Agente",
+      "file_type": "document",
+      "source_file": "prompt_inicial.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "prompt_inicial_reglas_de_flujo_de_trabajo_del_agente",
+      "community": 4,
+      "norm_label": "reglas de flujo de trabajo del agente"
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "main.py",
+      "source_location": "L4",
+      "weight": 1.0,
+      "source": "main",
+      "target": "main_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "main.py",
+      "source_location": "L2",
+      "weight": 1.0,
+      "source": "main",
+      "target": "ui_views_login_view",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "main.py",
+      "source_location": "L2",
+      "weight": 1.0,
+      "source": "main",
+      "target": "ui_views_login_view_loginview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "main.py",
+      "source_location": "L4",
+      "weight": 1.0,
+      "source": "main_main",
+      "target": "page",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "main.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "main_main",
+      "target": "ui_views_login_view_loginview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L3",
+      "weight": 1.0,
+      "source": "ui_views_base_view",
+      "target": "ui_views_base_view_baseview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L2",
+      "weight": 1.0,
+      "source": "ui_views_login_view",
+      "target": "ui_views_base_view",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L33",
+      "weight": 1.0,
+      "source": "ui_views_base_view_baseview",
+      "target": "ui_views_base_view_baseview_get_body",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L6",
+      "weight": 1.0,
+      "source": "ui_views_base_view_baseview",
+      "target": "ui_views_base_view_baseview_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L17",
+      "weight": 1.0,
+      "source": "ui_views_base_view_baseview",
+      "target": "ui_views_base_view_baseview_setup_layout",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L4",
+      "weight": 1.0,
+      "source": "ui_views_base_view_rationale_4",
+      "target": "ui_views_base_view_baseview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L2",
+      "weight": 1.0,
+      "source": "ui_views_login_view",
+      "target": "ui_views_base_view_baseview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L2",
+      "weight": 0.8,
+      "source": "ui_views_login_view_loginview",
+      "target": "ui_views_base_view_baseview",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "ui_views_base_view_baseview_init",
+      "target": "ui_views_base_view_baseview_setup_layout",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L30",
+      "weight": 1.0,
+      "source": "ui_views_base_view_baseview_setup_layout",
+      "target": "ui_views_base_view_baseview_get_body",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/base_view.py",
+      "source_location": "L33",
+      "weight": 1.0,
+      "source": "ui_views_base_view_baseview_get_body",
+      "target": "ui_views_base_view_py_control",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L4",
+      "weight": 1.0,
+      "source": "ui_views_login_view",
+      "target": "ui_views_login_view_loginview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L10",
+      "weight": 1.0,
+      "source": "ui_views_login_view_loginview",
+      "target": "ui_views_login_view_loginview_get_body",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L62",
+      "weight": 1.0,
+      "source": "ui_views_login_view_loginview",
+      "target": "ui_views_login_view_loginview_handle_login",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L7",
+      "weight": 1.0,
+      "source": "ui_views_login_view_loginview",
+      "target": "ui_views_login_view_loginview_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L5",
+      "weight": 1.0,
+      "source": "ui_views_login_view_rationale_5",
+      "target": "ui_views_login_view_loginview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "ui/views/login_view.py",
+      "source_location": "L10",
+      "weight": 1.0,
+      "source": "ui_views_login_view_loginview_get_body",
+      "target": "ui_views_login_view_py_control",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "readme",
+      "target": "readme_inventory_manager",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "docs_readme_proyecto",
+      "target": "docs_readme_proyecto_sistema_integrado_de_inventario_y_ventas",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L5",
+      "weight": 1.0,
+      "source": "docs_readme_proyecto_sistema_integrado_de_inventario_y_ventas",
+      "target": "docs_readme_proyecto_arquitectura_del_proyecto",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "docs/README_proyecto.md",
+      "source_location": "L16",
+      "weight": 1.0,
+      "source": "docs_readme_proyecto_sistema_integrado_de_inventario_y_ventas",
+      "target": "docs_readme_proyecto_tecnolog\u00edas_principales",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "docs_bitacora_registro_diario",
+      "target": "docs_bitacora_registro_diario_registro_diario_de_desarrollo",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L13",
+      "weight": 1.0,
+      "source": "docs_bitacora_registro_diario_registro_diario_de_desarrollo",
+      "target": "docs_bitacora_registro_diario_2026_07_19_creaci\u00f3n_del_entry_point_y_configuraci\u00f3n_de_ventana",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "docs/bitacora/registro_diario.md",
+      "source_location": "L3",
+      "weight": 1.0,
+      "source": "docs_bitacora_registro_diario_registro_diario_de_desarrollo",
+      "target": "docs_bitacora_registro_diario_2026_07_19_inicializaci\u00f3n_de_la_arquitectura_y_entorno_base",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "prompt_inicial.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "prompt_inicial",
+      "target": "prompt_inicial_reglas_de_flujo_de_trabajo_del_agente",
+      "confidence_score": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "built_at_commit": "d52ac556e4c510e4efd4649e09ef03e7a73461ff"
+}

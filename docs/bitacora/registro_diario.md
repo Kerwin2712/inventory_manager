@@ -1,0 +1,20 @@
+# Registro Diario de Desarrollo
+
+## [2026-07-19] Inicialización de la Arquitectura y Entorno Base
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación de la estructura modular limpia del proyecto (`core/`, `services/`, `ui/views/`, `ui/components/`).
+  - Configuración de dependencias iniciales en `requirements.txt`.
+  - Implementación de la vista plantilla `BaseView` y la vista inicial de autenticación `LoginView` en Flet.
+  - Redacción del manual de arquitectura base en `docs/README_proyecto.md`.
+  - Configuración de las reglas de control y flujo de trabajo en `prompt_inicial.md`.
+- **Estado del proyecto:** Inicializado. Listo para instalar dependencias y actualizar el grafo de dependencias con Grapiphy.
+
+## [2026-07-19] Creación del Entry Point y Configuración de Ventana
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación del archivo `main.py` en la raíz del proyecto para inicializar la aplicación Flet.
+  - Configuración de la ventana principal (título "Sistema Integrado de Inventario y Ventas", modo oscuro y dimensiones mínimas).
+  - Integración de `LoginView` en la carga inicial de la aplicación.
+- **Estado del proyecto:** En desarrollo. Punto de entrada listo para pruebas de ejecución.
+
