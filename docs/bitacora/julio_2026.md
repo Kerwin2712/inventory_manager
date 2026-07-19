@@ -40,5 +40,12 @@
   - Corrección de `AttributeError` al reemplazar `ft.colors` por `ft.Colors` y `ft.icons` por `ft.Icons` en `ui/views/base_view.py` y `ui/views/login_view.py`.
 - **Estado del proyecto:** En desarrollo. Aplicación completamente compatible con Flet 0.86.1.
 
+## Corrección de Argumentos de Botones en Flet
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de `TypeError` al reemplazar el argumento deprecado `text` por `content` en `ft.ElevatedButton` dentro de `ui/views/login_view.py`.
+- **Estado del proyecto:** En desarrollo. Interfaz gráfica adaptada a las firmas de componentes de Flet 0.86.1.
+
+
 
 
