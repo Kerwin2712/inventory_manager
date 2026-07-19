@@ -9,7 +9,7 @@ class BaseView(ft.View):
             route=route,
             padding=ft.Padding.all(40),
             spacing=20,
-            bgcolor=ft.colors.GREY_900,
+            bgcolor=ft.Colors.GREY_900,
         )
         self.view_title = title
         self.setup_layout()
@@ -20,13 +20,13 @@ class BaseView(ft.View):
             self.view_title,
             size=28,
             weight=ft.FontWeight.BOLD,
-            color=ft.colors.BLUE_400,
+            color=ft.Colors.BLUE_400,
         )
         
         # Añade el encabezado y el contenido específico
         self.controls = [
             header,
-            ft.Divider(height=10, color=ft.colors.GREY_800),
+            ft.Divider(height=10, color=ft.Colors.GREY_800),
             self.get_body()
         ]
 

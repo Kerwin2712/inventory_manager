@@ -34,4 +34,11 @@
   - Sustitución de `ft.app(target=main)` por `ft.run(main)` en `main.py` para resolver la advertencia de obsolescencia.
 - **Estado del proyecto:** En desarrollo. Punto de entrada funcional sin warnings ni excepciones.
 
+## Corrección de Atributos de Colores e Iconos en Flet
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de `AttributeError` al reemplazar `ft.colors` por `ft.Colors` y `ft.icons` por `ft.Icons` en `ui/views/base_view.py` y `ui/views/login_view.py`.
+- **Estado del proyecto:** En desarrollo. Aplicación completamente compatible con Flet 0.86.1.
+
+
 

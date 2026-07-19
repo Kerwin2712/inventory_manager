@@ -12,31 +12,31 @@ class LoginView(BaseView):
         self.username_input = ft.TextField(
             label="Usuario",
             width=320,
-            border_color=ft.colors.BLUE_400,
-            focused_border_color=ft.colors.BLUE_200,
+            border_color=ft.Colors.BLUE_400,
+            focused_border_color=ft.Colors.BLUE_200,
         )
         self.password_input = ft.TextField(
             label="Contraseña",
             password=True,
             can_reveal_password=True,
             width=320,
-            border_color=ft.colors.BLUE_400,
-            focused_border_color=ft.colors.BLUE_200,
+            border_color=ft.Colors.BLUE_400,
+            focused_border_color=ft.Colors.BLUE_200,
         )
         
         # Botón de autenticación
         login_btn = ft.ElevatedButton(
             text="Iniciar Sesión",
             width=320,
-            bgcolor=ft.colors.BLUE_600,
-            color=ft.colors.WHITE,
+            bgcolor=ft.Colors.BLUE_600,
+            color=ft.Colors.WHITE,
             on_click=self.handle_login,
         )
         
         # Etiqueta para mensajes de error
         self.error_text = ft.Text(
             value="",
-            color=ft.colors.RED_400,
+            color=ft.Colors.RED_400,
             size=14,
             visible=False,
         )
@@ -45,7 +45,7 @@ class LoginView(BaseView):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(name=ft.icons.LOCK_PERSON_OUTLINED, size=50, color=ft.colors.BLUE_400),
+                    ft.Icon(name=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=ft.Colors.BLUE_400),
                     self.username_input,
                     self.password_input,
                     self.error_text,
