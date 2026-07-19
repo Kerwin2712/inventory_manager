@@ -24,4 +24,4 @@ def main(page: ft.Page):
     page.add(login_view)
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)

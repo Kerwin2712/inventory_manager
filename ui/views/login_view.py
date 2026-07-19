@@ -56,7 +56,7 @@ class LoginView(BaseView):
                 spacing=15,
             ),
             alignment=ft.alignment.center,
-            padding=ft.padding.only(top=40),
+            padding=ft.Padding.only(top=40),
         )
 
     def handle_login(self, e):

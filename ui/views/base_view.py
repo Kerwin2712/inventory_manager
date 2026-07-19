@@ -7,7 +7,7 @@ class BaseView(ft.View):
         # Configuraciones visuales comunes
         super().__init__(
             route=route,
-            padding=ft.padding.all(40),
+            padding=ft.Padding.all(40),
             spacing=20,
             bgcolor=ft.colors.GREY_900,
         )

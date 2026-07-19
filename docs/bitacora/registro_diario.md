@@ -25,4 +25,11 @@
   - Eliminación de los archivos de `graphify-out/` previamente confirmados en el índice de Git sin eliminarlos físicamente del disco.
 - **Estado del proyecto:** En desarrollo. Estructura de control de versiones optimizada.
 
+## [2026-07-19] Corrección de Errores de Referencia de Flet
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de `AttributeError` de Flet al cambiar las referencias a `ft.Padding` (con P mayúscula) en `ui/views/base_view.py` y `ui/views/login_view.py`.
+  - Sustitución de `ft.app(target=main)` por `ft.run(main)` en `main.py` para resolver la advertencia de obsolescencia.
+- **Estado del proyecto:** En desarrollo. Punto de entrada funcional sin warnings ni excepciones.
+
 
