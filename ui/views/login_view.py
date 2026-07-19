@@ -1,10 +1,12 @@
 import flet as ft
 from ui.views.base_view import BaseView
+from services.user_service import authenticate_user
 
 class LoginView(BaseView):
     """Vista de inicio de sesión."""
     
-    def __init__(self):
+    def __init__(self, on_login_success=None):
+        self.on_login_success = on_login_success
         super().__init__(route="/login", title="Control de Acceso")
 
     def get_body(self) -> ft.Control:
@@ -68,9 +70,21 @@ class LoginView(BaseView):
         if not user or not pwd:
             self.error_text.value = "Todos los campos son obligatorios."
             self.error_text.visible = True
-        else:
+            self.update()
+            return
+
+        # Autenticación contra SQLite
+        auth_user = authenticate_user(user, pwd)
+        
+        if auth_user:
             self.error_text.visible = False
-            # Lógica futura de autenticación con base de datos
-            print(f"Intento de login: {user}")
+            self.username_input.value = ""
+            self.password_input.value = ""
+            self.update()
             
-        self.update()
+            if self.on_login_success:
+                self.on_login_success(auth_user)
+        else:
+            self.error_text.value = "Usuario o contraseña incorrectos."
+            self.error_text.visible = True
+            self.update()

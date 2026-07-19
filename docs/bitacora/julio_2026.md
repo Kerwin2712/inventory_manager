@@ -60,6 +60,18 @@
   - Asignación de `expand=True` al contenedor principal en `ui/views/login_view.py` para abarcar el espacio de la ventana.
 - **Estado del proyecto:** En desarrollo. Pantalla de inicio de sesión renderizada correctamente con todos sus controles visibles.
 
+## Sistema de Autenticación, Hashing SQLite y Usuario Admin Inicial
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación del módulo `core/config.py` para cargar variables de entorno (`.env`) y parámetros globales.
+  - Implementación del módulo de seguridad `core/security.py` utilizando `hashlib.pbkdf2_hmac` con salt aleatorio y `hmac.compare_digest`.
+  - Desarrollo del manejador de base de datos SQLite en `core/database.py` con inicialización de tabla `users` y sembrado del usuario inicial `admin` con el hash de `RECUPERAR_PASS`.
+  - Creación del servicio `services/user_service.py` para autenticación y operaciones CRUD de cuentas de usuario.
+  - Diseño de la interfaz de administración `ui/views/admin_users_view.py` exclusiva para el superusuario `admin`, permitiéndole registrar y modificar otros usuarios del sistema.
+  - Integración de autenticación real en `ui/views/login_view.py` y enrutamiento dinámico en `main.py`.
+- **Estado del proyecto:** En desarrollo. Módulo de autenticación y gestión de usuarios completado y verificado.
+
+
 
 
 
