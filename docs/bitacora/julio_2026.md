@@ -53,6 +53,14 @@
   - Corrección de referencia a la clase `ft.Alignment.CENTER` en la propiedad de alineación del contenedor principal de `LoginView`.
 - **Estado del proyecto:** En desarrollo. Inicialización e instanciación de la interfaz de autenticación completamente comprobada.
 
+## Corrección del Renderizado de Pantalla en Flet
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Sustitución de `page.add(login_view)` por `page.views.append(login_view)` y `page.update()` en `main.py` para dibujar correctamente la pantalla.
+  - Asignación de `expand=True` al contenedor principal en `ui/views/login_view.py` para abarcar el espacio de la ventana.
+- **Estado del proyecto:** En desarrollo. Pantalla de inicio de sesión renderizada correctamente con todos sus controles visibles.
+
+
 
 
 

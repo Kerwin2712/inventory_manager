@@ -17,11 +17,10 @@ def main(page: ft.Page):
         except AttributeError:
             pass
 
-    # Instanciar la vista de login
+    # Instanciar e integrar la vista de login en la pila de vistas de la aplicación
     login_view = LoginView()
-    
-    # Agregar la vista a la página
-    page.add(login_view)
+    page.views.append(login_view)
+    page.update()
 
 if __name__ == "__main__":
     ft.run(main)
