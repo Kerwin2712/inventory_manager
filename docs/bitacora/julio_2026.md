@@ -46,6 +46,14 @@
   - Corrección de `TypeError` al reemplazar el argumento deprecado `text` por `content` en `ft.ElevatedButton` dentro de `ui/views/login_view.py`.
 - **Estado del proyecto:** En desarrollo. Interfaz gráfica adaptada a las firmas de componentes de Flet 0.86.1.
 
+## Corrección de Firmas de Icon y Alignment en Flet
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de `TypeError` en `ft.Icon` al cambiar el nombre de argumento `name` por `icon`.
+  - Corrección de referencia a la clase `ft.Alignment.CENTER` en la propiedad de alineación del contenedor principal de `LoginView`.
+- **Estado del proyecto:** En desarrollo. Inicialización e instanciación de la interfaz de autenticación completamente comprobada.
+
+
 
 
 

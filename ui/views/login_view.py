@@ -45,7 +45,7 @@ class LoginView(BaseView):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(name=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=ft.Colors.BLUE_400),
+                    ft.Icon(icon=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=ft.Colors.BLUE_400),
                     self.username_input,
                     self.password_input,
                     self.error_text,
@@ -55,7 +55,7 @@ class LoginView(BaseView):
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=15,
             ),
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
             padding=ft.Padding.only(top=40),
         )
 
