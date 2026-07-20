@@ -80,22 +80,19 @@ class VentasView(BaseView):
             s.open = True
             p.update()
 
-    def ensure_file_picker_in_overlay(self):
+    def ensure_file_picker_in_overlay(self, e=None):
         """Garantiza de forma segura que el FilePicker esté registrado en page.overlay."""
         if not hasattr(self, "file_picker") or self.file_picker is None:
             self.file_picker = ft.FilePicker()
             self.file_picker.on_result = self.handle_pdf_save_result
-        p = self.get_current_page()
+        p = self.get_current_page(e)
         if p and hasattr(p, "overlay"):
             if self.file_picker not in p.overlay:
                 p.overlay.append(self.file_picker)
-
-
-
+                p.update()
 
     def handle_pdf_save_result(self, e):
-        """Procesa la selección de ubicación para guardar el PDF."""
-
+        """Procesa la selección de ubicación elegida en la ventana Guardar como."""
         if e.path and self.venta_id_reciente:
             try:
                 ruta_guardada = generar_nota_entrega_pdf(
@@ -103,7 +100,7 @@ class VentasView(BaseView):
                     divisa_impresion=self.divisa_impresion_pdf,
                     ruta_destino=e.path
                 )
-                # Guardar el directorio contenedor en app_settings
+                # Extraer y guardar la carpeta seleccionada en SQLite
                 directorio = os.path.dirname(e.path)
                 if directorio:
                     set_setting("last_pdf_dir", directorio)
@@ -111,6 +108,7 @@ class VentasView(BaseView):
                 self.show_alert_success(e, f"Nota de Entrega guardada exitosamente en:\n{e.path}")
             except Exception as ex:
                 self.show_alert_error(e, f"Error al generar la Nota de Entrega PDF: {ex}")
+
 
     def get_body(self) -> ft.Control:
         self.ensure_file_picker_in_overlay()
@@ -247,7 +245,7 @@ class VentasView(BaseView):
                         content=ft.Container(
                             content=ft.Row([
                                 ft.Icon(ft.Icons.POINT_OF_SALE, size=24, color=ft.Colors.WHITE),
-                                ft.Text("PROCESAR VENTA (COMMIT)", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                                ft.Text("PROCESAR VENTA", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
                             ], alignment=ft.MainAxisAlignment.CENTER),
                             padding=10
                         ),
@@ -257,6 +255,7 @@ class VentasView(BaseView):
                             shape=ft.RoundedRectangleBorder(radius=8)
                         )
                     )
+
                 ], spacing=8),
                 padding=15
             ),
@@ -566,17 +565,20 @@ class VentasView(BaseView):
             dialog.open = False
             self.safe_update(e_dialog)
 
-            # Recuperar última ruta guardada de app_settings
+            # Recuperar última ruta guardada de SQLite (app_settings)
             last_dir = get_setting("last_pdf_dir", default=None)
+            if last_dir and not os.path.exists(last_dir):
+                last_dir = None
 
-            # Abrir cuadro de diálogo nativo de Windows mediante FilePicker
-            self.ensure_file_picker_in_overlay()
+            # Abrir cuadro de diálogo nativo de Windows "Guardar como"
+            self.ensure_file_picker_in_overlay(e_dialog)
             self.file_picker.save_file(
                 dialog_title="Guardar Nota de Entrega PDF",
                 file_name=f"Nota_Entrega_{self.venta_id_reciente}.pdf",
                 initial_directory=last_dir,
                 allowed_extensions=["pdf"]
             )
+
 
         dialog = ft.AlertDialog(
             title=ft.Row([ft.Icon(ft.Icons.PICTURE_AS_PDF, color=ft.Colors.RED_600), ft.Text("¿Generar Nota de Entrega PDF?")]),

@@ -301,6 +301,16 @@
 - **Verificaciones realizadas:** Prueba automatizada de renderizado para carrito vacío y carrito poblado pasando con éxito.
 - **Estado del proyecto:** En desarrollo. Módulo de Ventas visualmente corregido, responsivo e integrado.
 
+## Eliminación de Carpeta Exports y Ajuste de Botón Procesar Venta
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Remoción de la etiqueta `(COMMIT)` del botón principal en `ui/views/ventas_view.py` cambiando su leyenda a `"PROCESAR VENTA"`.
+  - Eliminación física de la carpeta `exports/` del proyecto para basar el flujo de guardado exclusivamente en la ventana nativa de Windows **Guardar como** mediante `ft.FilePicker`.
+  - Persistencia del directorio seleccionado por el usuario en la tabla `app_settings` (`last_pdf_dir`) en SQLite para recordarlo en posteriores exportaciones.
+- **Verificaciones realizadas:** Eliminación de `exports/` comprobada con `Test-Path`, pruebas de instanciación e integración de FilePicker.
+- **Estado del proyecto:** En desarrollo. Diálogo de exportación PDF nativo con persistencia de directorio configurado.
+
+
 
 
 
