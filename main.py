@@ -22,6 +22,14 @@ def main(page: ft.Page):
     page.theme_mode = initial_theme_mode
     page.theme = ft.Theme(color_scheme_seed=saved_color)
     
+    try:
+        page.window.maximized = True
+    except AttributeError:
+        try:
+            page.window_state = ft.WindowState.MAXIMIZED
+        except AttributeError:
+            pass
+
     # Manejo de tamaño mínimo compatible
     try:
         page.window.min_width = 1000

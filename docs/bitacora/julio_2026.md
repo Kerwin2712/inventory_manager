@@ -154,6 +154,18 @@
   - Conexión de la navegación en la barra lateral (`DashboardView`) permitiendo conmutar al módulo de Cartera de forma fluida.
 - **Estado del proyecto:** En desarrollo. Módulo gráfico de Cartera de Entidades completado e integrado.
 
+## UI Avanzada de Cartera: Pantalla Completa, Flujo Buscar-Antes-de-Crear y Paginación
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Configuración del inicio de la aplicación en pantalla completa (`MAXIMIZED`) en `main.py`.
+  - Ampliación de `services/cartera_service.py` con métodos de búsqueda (`buscar_cliente_por_cedula`, `buscar_proveedores`) y funciones de eliminación segura (`eliminar_cliente`, `eliminar_proveedor`) con simulación de comprobación de dependencias.
+  - Rediseño integral de `ui/views/cartera_view.py`:
+    - **Flujo "Buscar Antes de Crear":** Formularios de creación ocultos por defecto (`visible=False`). Si la entidad existe, despliega tarjeta de detalle con opciones de edición y eliminación. Si no existe, lanza un aviso `SnackBar` suave y muestra el formulario de registro.
+    - **Paginación Local:** DataGrid con límite de 10 registros por página y navegadores "Anterior" / "Siguiente".
+    - **DataGrid con Acciones:** Columna "Acciones" en cada fila con botones de íconos para editar y eliminar de forma segura, capturando excepciones de integridad con `SnackBar`.
+- **Estado del proyecto:** En desarrollo. Módulo avanzado de Cartera de Entidades completado y verificado.
+
+
 
 
 

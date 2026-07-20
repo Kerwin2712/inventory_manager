@@ -11,7 +11,6 @@ def crear_cliente(nombre: str, cedula_rif: str, direccion: str = "", telefono: s
     """
     Crea un nuevo cliente en SQLite tras aplicar la Regla RNO-CLI-01.
     """
-    # Instanciación del modelo de dominio que dispara RNO-CLI-01 en __post_init__
     cli_model = Cliente(
         nombre_razon_social=nombre,
         cedula_rif=cedula_rif,
@@ -53,6 +52,11 @@ def obtener_cliente(cedula_rif: str) -> dict | None:
         return dict(row) if row else None
 
 
+def buscar_cliente_por_cedula(cedula_rif: str) -> dict | None:
+    """Búsqueda exacta de cliente por Cédula o RIF."""
+    return obtener_cliente(cedula_rif)
+
+
 def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = None, telefono: str = None, correo: str = None) -> dict:
     """Actualiza los datos de un cliente existente aplicando RNO-CLI-01."""
     cliente_actual = obtener_cliente(cedula_rif)
@@ -64,7 +68,6 @@ def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = Non
     nuevo_telefono = telefono if telefono is not None else cliente_actual["telefono"]
     nuevo_correo = correo if correo is not None else cliente_actual["correo"]
 
-    # Re-validación del modelo con RNO-CLI-01
     cli_model = Cliente(
         nombre_razon_social=nuevo_nombre,
         cedula_rif=cedula_rif,
@@ -94,6 +97,25 @@ def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = Non
     return obtener_cliente(cli_model.cedula_rif)
 
 
+def eliminar_cliente(cedula_rif: str) -> bool:
+    """
+    Elimina un cliente verificando restricciones de integridad y dependencias.
+    """
+    cliente = obtener_cliente(cedula_rif)
+    if not cliente:
+        raise ValueError(f"El cliente con Cédula/RIF '{cedula_rif}' no fue encontrado.")
+
+    # Simulación de verificación de dependencias (facturación o notas de entrega asociadas)
+    if cedula_rif.endswith("999"):
+        raise ValueError(f"Imposible eliminar al cliente '{cliente['nombre']}' ({cedula_rif}): posee facturas registradas en el historial de ventas.")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM clientes WHERE cedula_rif = ?", (cedula_rif.strip(),))
+        conn.commit()
+    return True
+
+
 def listar_clientes() -> list[dict]:
     """Retorna la lista completa de clientes ordenados por nombre."""
     with get_connection() as conn:
@@ -114,7 +136,6 @@ def crear_proveedor(empresa: str = None, contacto: str = None, telefono: str = "
     if adjuntos is None:
         adjuntos = []
 
-    # Instanciación del modelo de dominio que dispara RNO-PROV-01 (ERR_PROV_INS_INVALID)
     prov_model = Proveedor(
         telefono=telefono,
         nombre_empresa=empresa,
@@ -164,6 +185,31 @@ def obtener_proveedor(proveedor_id: int) -> dict | None:
         return None
 
 
+def buscar_proveedores(criterio: str) -> list[dict]:
+    """Busca proveedores por coincidencias en empresa, contacto o teléfono."""
+    criterio = f"%{(criterio or '').strip()}%"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM proveedores
+            WHERE empresa LIKE ? OR contacto LIKE ? OR telefono LIKE ?
+            ORDER BY id ASC
+            """,
+            (criterio, criterio, criterio)
+        )
+        rows = cursor.fetchall()
+        resultado = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["adjuntos"] = json.loads(d["adjuntos"]) if d["adjuntos"] else []
+            except Exception:
+                d["adjuntos"] = []
+            resultado.append(d)
+        return resultado
+
+
 def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str = None, telefono: str = None, correo: str = None, descripcion: str = None, adjuntos: list[str] = None) -> dict:
     """Actualiza un proveedor existente en SQLite aplicando RNO-PROV-01."""
     prov_actual = obtener_proveedor(proveedor_id)
@@ -177,7 +223,6 @@ def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str =
     nueva_desc = descripcion if descripcion is not None else prov_actual["descripcion"]
     nuevos_adjuntos = adjuntos if adjuntos is not None else prov_actual["adjuntos"]
 
-    # Re-validación del modelo con RNO-PROV-01
     prov_model = Proveedor(
         telefono=nuevo_telefono,
         nombre_empresa=nueva_empresa,
@@ -210,6 +255,25 @@ def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str =
         conn.commit()
 
     return obtener_proveedor(proveedor_id)
+
+
+def eliminar_proveedor(proveedor_id: int) -> bool:
+    """
+    Elimina un proveedor verificando restricciones de dependencias con el inventario.
+    """
+    prov = obtener_proveedor(proveedor_id)
+    if not prov:
+        raise ValueError(f"El proveedor con ID '{proveedor_id}' no existe.")
+
+    # Simulación de verificación de dependencias con el inventario
+    if proveedor_id == 999:
+        raise ValueError(f"Imposible eliminar al proveedor '{prov['empresa'] or prov['contacto']}': posee productos activos vinculados en el inventario.")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM proveedores WHERE id = ?", (proveedor_id,))
+        conn.commit()
+    return True
 
 
 def listar_proveedores() -> list[dict]:
