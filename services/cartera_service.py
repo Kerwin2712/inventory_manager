@@ -53,8 +53,32 @@ def obtener_cliente(cedula_rif: str) -> dict | None:
 
 
 def buscar_cliente_por_cedula(cedula_rif: str) -> dict | None:
-    """Búsqueda exacta de cliente por Cédula o RIF."""
-    return obtener_cliente(cedula_rif)
+    """Búsqueda flexible de cliente por Cédula o RIF aceptando variaciones con/sin guion."""
+    if not cedula_rif:
+        return None
+    cedula_clean = cedula_rif.strip()
+    
+    # Búsqueda exacta
+    cliente = obtener_cliente(cedula_clean)
+    if cliente:
+        return cliente
+
+    # Búsqueda probando variaciones por los dígitos numéricos
+    num_digits = "".join(filter(str.isdigit, cedula_clean))
+    if num_digits:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM clientes
+                WHERE cedula_rif = ? OR cedula_rif LIKE ? OR cedula_rif LIKE ?
+                LIMIT 1
+                """,
+                (cedula_clean, f"%-{num_digits}", f"%{num_digits}")
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    return None
 
 
 def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = None, telefono: str = None, correo: str = None) -> dict:

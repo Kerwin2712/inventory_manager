@@ -181,6 +181,17 @@
   - Implementación de las funciones auxiliares `parse_documento` y `format_documento` para formatear y descomponer automáticamente la identificación estándar (ej: `V-12345678`, `J-987654321`).
 - **Estado del proyecto:** En desarrollo. Captura estructurada de Cédula y RIF implementada y verificada.
 
+## Optimización de Búsqueda Flexible e Informativa en Cartera
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Actualización de `buscar_cliente_por_cedula` en `services/cartera_service.py` para realizar búsquedas por coincidencia exacta y por dígitos numéricos.
+  - Mejora de los manejadores `handle_buscar_cliente` y `handle_buscar_proveedor` en `ui/views/cartera_view.py`:
+    - Captura automática de la entrada desde la barra de búsqueda o desde el campo del formulario si la barra está desocupada.
+    - Notificación suave mediante `SnackBar` (*"El cliente con Cédula/RIF 'V-12345678' no existe. Proceda a registrarlo a continuación."*) cuando la entidad no está registrada.
+    - Apertura automática del formulario de captura desplegando los campos de tipo y número con los valores buscados listos para completar.
+- **Estado del proyecto:** En desarrollo. Flujo de búsqueda inteligente y mensajes de estado completados.
+
+
 
 
 

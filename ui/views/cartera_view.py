@@ -478,13 +478,23 @@ class CarteraView(BaseView):
     # MANEJO DE EVENTOS BÚSQUEDA Y ACCIONES CLIENTES
     # ==========================================
     def handle_buscar_cliente(self, e):
-        numero = (self.cli_search_numero.value or "").strip()
-        if not numero:
-            self.show_alert_info("Ingrese el número de Cédula o RIF para buscar.", e)
+        numero_raw = (self.cli_search_numero.value or "").strip()
+        if not numero_raw:
+            numero_raw = (self.cli_num_doc.value or "").strip()
+
+        num_digits = "".join(filter(str.isdigit, numero_raw))
+
+        if not num_digits:
+            self.show_alert_info("Ingrese el número de Cédula o RIF para realizar la búsqueda.", e)
             return
 
-        cedula_completa = format_documento(self.cli_search_tipo.value, numero)
+        self.cli_search_numero.value = num_digits
+        cedula_completa = format_documento(self.cli_search_tipo.value, num_digits)
+        
         cliente = buscar_cliente_por_cedula(cedula_completa)
+        if not cliente:
+            cliente = buscar_cliente_por_cedula(num_digits)
+
         text_color = self.get_text_color()
         card_bg = self.get_card_bg()
         border_color = self.get_border_color()
@@ -523,7 +533,7 @@ class CarteraView(BaseView):
             self.safe_update(e)
         else:
             self.cli_result_container.visible = False
-            self.show_alert_info(f"El cliente '{cedula_completa}' no existe. Proceda a registrarlo.", e)
+            self.show_alert_info(f"El cliente con Cédula/RIF '{cedula_completa}' no existe. Proceda a registrarlo a continuación.", e)
             self.limpiar_form_cliente()
             tipo, num = parse_documento(cedula_completa, default_tipo=self.cli_search_tipo.value)
             self.cli_tipo_doc.value = tipo
@@ -616,6 +626,9 @@ class CarteraView(BaseView):
     def handle_buscar_proveedor(self, e):
         input_val = (self.prov_search_input.value or "").strip()
         if not input_val:
+            input_val = (self.prov_num_doc.value or "").strip() or (self.prov_empresa.value or "").strip()
+
+        if not input_val:
             self.show_alert_info("Ingrese el RIF, nombre de la empresa o teléfono para buscar.", e)
             return
 
@@ -663,7 +676,7 @@ class CarteraView(BaseView):
             self.safe_update(e)
         else:
             self.prov_result_container.visible = False
-            self.show_alert_info(f"Proveedor '{criterio}' no encontrado. Proceda a registrarlo.", e)
+            self.show_alert_info(f"El proveedor '{criterio}' no existe. Proceda a registrarlo a continuación.", e)
             self.limpiar_form_proveedor()
             if input_val.isdigit():
                 self.prov_num_doc.value = input_val
