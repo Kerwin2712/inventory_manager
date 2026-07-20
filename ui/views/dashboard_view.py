@@ -2,6 +2,7 @@ import flet as ft
 from ui.views.base_view import BaseView
 from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
+from ui.views.ventas_view import VentasView
 
 class DashboardView(BaseView):
     """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
@@ -19,7 +20,15 @@ class DashboardView(BaseView):
 
     def get_body(self) -> ft.Control:
         # Selección del contenido principal según la sección activa
-        if self.current_section == "Cartera":
+        if self.current_section == "Ventas":
+            ventas_view = VentasView(page=self.page, user_data=self.user_info)
+            try:
+                if self.page:
+                    ventas_view.page = self.page
+            except (RuntimeError, AttributeError):
+                pass
+            main_content = ventas_view.get_body()
+        elif self.current_section == "Cartera":
             cartera_view = CarteraView()
             try:
                 if self.page:
@@ -35,6 +44,7 @@ class DashboardView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
             main_content = inv_view.get_body()
+
         elif self.current_section == "Inicio":
             main_content = ft.Column(
                 controls=[

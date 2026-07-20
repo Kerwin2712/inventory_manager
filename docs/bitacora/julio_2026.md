@@ -258,6 +258,24 @@
 - **Verificaciones realizadas:** Ejecución exitosa de `seed.py` poblando tablas base, y generación verificada de Notas de Entrega PDF en la carpeta `exports/`.
 - **Estado del proyecto:** En desarrollo. Generador de PDF y base de datos poblada para pruebas de interfaz comercial.
 
+## Módulo de Ventas e Interfaz de Notas de Entrega PDF (ERS 3.4 & 3.5)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **Refactorización de Servicio PDF (`services/pdf_service.py`):**
+    - Modificación de `generar_nota_entrega_pdf` aceptando el parámetro `ruta_destino: str`.
+    - Remoción de la creación forzada del directorio `exports/`, permitiendo guardar el PDF en cualquier ruta seleccionada por el usuario.
+  - **Creación de VentasView (`ui/views/ventas_view.py`):**
+    - Instanciación e integración de `ft.FilePicker` vinculado a `page.overlay`.
+    - Persistencia del directorio preferido en SQLite (`get_setting("last_pdf_dir")` y `set_setting("last_pdf_dir")`).
+    - Cabecera con selector `SegmentedButton` para Venta Formal/Informal. Panel de cliente con búsqueda por Cédula/RIF (oculto en Informal).
+    - Selección interactiva de productos por código, verificación de existencias y gestión de carrito (`DataTable` temporal).
+    - Panel de resumen de venta con subtotales y totales bimoneda ($ / Bs).
+    - Flujo de procesamiento transaccional (`procesar_venta`) con alertas `SnackBar` y diálogo de confirmación `AlertDialog` para generar la Nota de Entrega PDF en USD o BCV mediante `save_file()`.
+  - **Navegación e Integración (`ui/views/dashboard_view.py`):** Conexión de la opción "Ventas" en la barra lateral para navegar a `VentasView`.
+- **Verificaciones realizadas:** Simulación del flujo completo de ventas (Formal/Informal, validación de existencias, commit ACID y generación de PDF nativo).
+- **Estado del proyecto:** En desarrollo. Módulo de Ventas y Notas de Entrega PDF completado e integrado en el Dashboard.
+
+
 
 
 

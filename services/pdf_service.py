@@ -15,11 +15,20 @@ class NotaEntregaPDF(FPDF):
         self.set_font("Helvetica", "I", 8)
         self.cell(0, 10, f"Página {self.page_no()}/{{nb}}", align="C")
 
-def generar_nota_entrega_pdf(venta_id: int, divisa_impresion: str = "USD") -> str:
+def generar_nota_entrega_pdf(venta_id: int, divisa_impresion: str = "USD", ruta_destino: str = "") -> str:
     """
     Genera la Nota de Entrega en PDF cumpliendo estrictamente con la regla ERS 3.5:
     extrae e imprime exclusivamente el campo 'nombre_referencia_corto' de la tabla productos.
+    Guarda el archivo en la 'ruta_destino' especificada.
     """
+    if not ruta_destino or not ruta_destino.strip():
+        raise ValueError("Debe especificar una ruta de destino válida para el archivo PDF.")
+
+    pdf_path = os.path.abspath(ruta_destino.strip())
+    dir_padre = os.path.dirname(pdf_path)
+    if dir_padre:
+        os.makedirs(dir_padre, exist_ok=True)
+
     divisa = divisa_impresion.upper().strip() if divisa_impresion else "USD"
     if divisa not in ["USD", "BCV"]:
         divisa = "USD"
@@ -27,7 +36,7 @@ def generar_nota_entrega_pdf(venta_id: int, divisa_impresion: str = "USD") -> st
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Obtener la cabecera de la venta y datos del cliente si aplica
+    # Obtener cabecera de la venta y datos del cliente si aplica
     cursor.execute("""
         SELECT v.id, v.tipo_venta, v.cliente_id, v.total_usd, v.total_bcv, v.fecha,
                c.nombre AS cliente_nombre, c.direccion AS cliente_direccion
@@ -52,14 +61,8 @@ def generar_nota_entrega_pdf(venta_id: int, divisa_impresion: str = "USD") -> st
     detalles = cursor.fetchall()
     conn.close()
 
-    # Directorio de salida exports/
-    exports_dir = os.path.join(os.getcwd(), "exports")
-    os.makedirs(exports_dir, exist_ok=True)
-
-    pdf_filename = f"Nota_Entrega_{venta_id}.pdf"
-    pdf_path = os.path.join(exports_dir, pdf_filename)
-
     pdf = NotaEntregaPDF(orientation="P", unit="mm", format="Letter")
+
     pdf.alias_nb_pages()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
