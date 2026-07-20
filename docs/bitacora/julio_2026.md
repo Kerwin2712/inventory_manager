@@ -283,6 +283,16 @@
 - **Verificaciones realizadas:** Verificación de tipo con `assert isinstance(selected, list)` y prueba de instanciación completa.
 - **Estado del proyecto:** En desarrollo. Bug de empaquetado Flet resuelto y validado.
 
+## Incorporación de Desplazamiento Vertical (Scroll) en VentasView
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Configuración de `scroll = ft.ScrollMode.AUTO` en el contenedor principal de `ui/views/ventas_view.py`.
+  - Habilitación de `wrap = True` en el contenedor del carrito y panel de totales para permitir reajuste dinámico en resoluciones reducidas.
+  - Aseguramiento de reasignación en lista `e.control.selected = [val]` al cambiar de tipo de venta.
+- **Verificaciones realizadas:** Verificación de propiedad `scroll == ScrollMode.AUTO` y prueba de renderizado.
+- **Estado del proyecto:** En desarrollo. Scroll vertical y visibilidad de resumen de venta optimizados.
+
+
 
 
 

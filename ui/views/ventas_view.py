@@ -270,9 +270,8 @@ class VentasView(BaseView):
                 ft.Row([
                     ft.Container(content=self.tabla_carrito_container, expand=True),
                     panel_totales
-                ], vertical_alignment=ft.CrossAxisAlignment.START, expand=True)
+                ], vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
             ],
-            expand=True,
             spacing=15
         )
 
@@ -280,6 +279,7 @@ class VentasView(BaseView):
             content=ft.Column(
                 controls=[cabecera_card, self.panel_cliente_container, columna_derecha],
                 spacing=15,
+                scroll=ft.ScrollMode.AUTO,
                 expand=True
             ),
             padding=15,
@@ -292,12 +292,14 @@ class VentasView(BaseView):
         """Conmuta entre Venta Formal e Informal."""
         val = list(e.control.selected)[0] if e.control.selected else "Formal"
         self.tipo_venta = val
+        e.control.selected = [val]
         if val == "Informal":
             self.panel_cliente_container.visible = False
             self.cliente_seleccionado = None
         else:
             self.panel_cliente_container.visible = True
         self.safe_update(e)
+
 
     def handle_buscar_cliente(self, e):
         """Busca un cliente por su Cédula/RIF."""
