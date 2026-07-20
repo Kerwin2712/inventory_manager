@@ -533,11 +533,13 @@ class CarteraView(BaseView):
             self.safe_update(e)
         else:
             self.cli_result_container.visible = False
-            self.show_alert_info(f"El cliente con Cédula/RIF '{cedula_completa}' no existe. Proceda a registrarlo a continuación.", e)
+            self.show_alert_info(f"El cliente '{cedula_completa}' no existe. Se ha pre-cargado la Cédula/RIF automáticamente.", e)
             self.limpiar_form_cliente()
             tipo, num = parse_documento(cedula_completa, default_tipo=self.cli_search_tipo.value)
             self.cli_tipo_doc.value = tipo
             self.cli_num_doc.value = num
+            self.cli_tipo_doc.disabled = True
+            self.cli_num_doc.disabled = True
             self.cli_editing_cedula = None
             self.btn_guardar_cli_label.value = "Guardar Cliente"
             self.cli_form_container.visible = True
@@ -676,13 +678,17 @@ class CarteraView(BaseView):
             self.safe_update(e)
         else:
             self.prov_result_container.visible = False
-            self.show_alert_info(f"El proveedor '{criterio}' no existe. Proceda a registrarlo a continuación.", e)
+            self.show_alert_info(f"El proveedor '{criterio}' no existe. Se ha pre-cargado la información automáticamente.", e)
             self.limpiar_form_proveedor()
             if input_val.isdigit():
                 self.prov_num_doc.value = input_val
                 self.prov_tipo_doc.value = self.prov_search_tipo.value
+                self.prov_tipo_doc.disabled = True
+                self.prov_num_doc.disabled = True
             else:
                 self.prov_empresa.value = input_val
+                self.prov_tipo_doc.disabled = False
+                self.prov_num_doc.disabled = False
             self.prov_editing_id = None
             self.btn_guardar_prov_label.value = "Guardar Proveedor"
             self.prov_form_container.visible = True
@@ -938,7 +944,9 @@ class CarteraView(BaseView):
 
     def limpiar_form_proveedor(self):
         self.prov_tipo_doc.value = "J"
+        self.prov_tipo_doc.disabled = False
         self.prov_num_doc.value = ""
+        self.prov_num_doc.disabled = False
         self.prov_empresa.value = ""
         self.prov_contacto.value = ""
         self.prov_telefono.value = ""

@@ -191,6 +191,15 @@
     - Apertura automática del formulario de captura desplegando los campos de tipo y número con los valores buscados listos para completar.
 - **Estado del proyecto:** En desarrollo. Flujo de búsqueda inteligente y mensajes de estado completados.
 
+## Bloqueo y Auto-completado de Documento Buscado en Cartera
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Automatización de la transferencia de Cédula / RIF desde la búsqueda hacia el formulario de registro en `ui/views/cartera_view.py`.
+  - Configuración de `disabled = True` en los campos `cli_tipo_doc`, `cli_num_doc`, `prov_tipo_doc` y `prov_num_doc` al no encontrar la entidad en la búsqueda.
+  - Evita la re-escritura manual del número de documento y garantiza la integridad de los datos entre la búsqueda y la creación en SQLite.
+- **Estado del proyecto:** En desarrollo. Flujo de registro automático con bloqueo de documento verificado.
+
+
 
 
 
