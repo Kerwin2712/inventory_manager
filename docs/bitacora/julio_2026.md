@@ -310,6 +310,16 @@
 - **Verificaciones realizadas:** Eliminación de `exports/` comprobada con `Test-Path`, pruebas de instanciación e integración de FilePicker.
 - **Estado del proyecto:** En desarrollo. Diálogo de exportación PDF nativo con persistencia de directorio configurado.
 
+## Corrección del Lanzamiento Asíncrono de FilePicker.save_file (Flet 0.86.1)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Solución a la advertencia `RuntimeWarning: coroutine 'FilePicker.save_file' was never awaited` en `ui/views/ventas_view.py`.
+  - Invocación de la corrutina asíncrona mediante `page.run_task(self.file_picker.save_file, **kwargs_save)`.
+  - Habilita la apertura limpia del cuadro de diálogo nativo de Windows **Guardar como** desde el entorno de ejecución de Flet.
+- **Verificaciones realizadas:** Prueba de instanciación con `run_task` ejecutada limpiamente sin advertencias de corrutina.
+- **Estado del proyecto:** En desarrollo. Apertura asíncrona de cuadro de diálogo PDF nativo resuelta y validada.
+
+
 
 
 

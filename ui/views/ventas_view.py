@@ -572,12 +572,23 @@ class VentasView(BaseView):
 
             # Abrir cuadro de diálogo nativo de Windows "Guardar como"
             self.ensure_file_picker_in_overlay(e_dialog)
-            self.file_picker.save_file(
-                dialog_title="Guardar Nota de Entrega PDF",
-                file_name=f"Nota_Entrega_{self.venta_id_reciente}.pdf",
-                initial_directory=last_dir,
-                allowed_extensions=["pdf"]
-            )
+            p = self.get_current_page(e_dialog)
+
+            kwargs_save = {
+                "dialog_title": "Guardar Nota de Entrega PDF",
+                "file_name": f"Nota_Entrega_{self.venta_id_reciente}.pdf",
+                "initial_directory": last_dir,
+                "allowed_extensions": ["pdf"]
+            }
+
+            if p and hasattr(p, "run_task"):
+                p.run_task(self.file_picker.save_file, **kwargs_save)
+            else:
+                try:
+                    self.file_picker.save_file(**kwargs_save)
+                except Exception as ex:
+                    print(f"[ERROR] No se pudo lanzar FilePicker.save_file: {ex}")
+
 
 
         dialog = ft.AlertDialog(
