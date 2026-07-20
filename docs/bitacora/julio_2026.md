@@ -215,6 +215,22 @@
 - **Verificaciones realizadas:** Todos los casos de prueba pasaron (columnas correctas, FK definida, cálculo BCV automático 100×50.25=5025.0, duplicado capturado, validación precio-existencia funcional).
 - **Estado del proyecto:** En desarrollo. Motor de tasa BCV y capa de servicios de inventario implementados y verificados.
 
+## UI del Módulo de Inventario — InventarioView (ERS 3.1 / 3.2)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación de `ui/views/inventario_view.py` con la clase `InventarioView` heredando de `BaseView`.
+  - **Panel BCV:** Indicador de tasa actual con tiempo transcurrido. Si han pasado más de 24 horas, el indicador cambia a ámbar/naranja con ícono de advertencia. Campo numérico y botón "Actualizar Tasa" que llama a `bcv_service.actualizar_tasa()` y refresca el indicador en tiempo real.
+  - **Filtros en Cascada (ERS 3.2):** Cuatro campos (Código, Descripción, Marca, Departamento) con evento `on_change` que ejecuta búsqueda en tiempo real combinando todos los filtros en AND dinámico. Botón "Limpiar filtros" para resetear todos los campos y recargar el inventario completo.
+  - **DataTable Paginado:** Muestra 15 productos por página con navegadores de página. Columnas: Código, Referencia, Descripción, Depto., Marca, Precio $ (verde), Precio Bs (ámbar), Existencia y Acciones (editar/eliminar).
+  - **Flujo de Ingreso en 3 Pasos (ERS 3.1):**
+    - **Paso 1 (Verificación):** `AlertDialog` con campo de código y botón "Verificar". Si el código existe, abre diálogo de duplicado con opciones "Ver Producto" o "Limpiar Código". Si no existe, avanza al formulario.
+    - **Paso 2 (Formulario Dinámico):** 11 campos del ERS incluyendo `ft.Dropdown` de proveedores desde `cartera_service.listar_proveedores()`. El `on_change` del campo existencia oculta la fila de precios cuando el valor es 0.
+    - **Paso 3 (Confirmación):** Diálogo "¿ESTÁS SEGURO DE REGISTRAR EL SIGUIENTE ÍTEM?" listando todos los campos con valor o "— no llenado —". Opciones: "Cancelar", "Editar" (vuelve al Paso 2) y "Aceptar — Guardar" (ejecuta el COMMIT).
+  - **Integración en Dashboard:** `dashboard_view.py` importa `InventarioView` y la instancia al navegar al módulo "Inventario" desde la Sidebar.
+- **Verificaciones realizadas:** `InventarioView()`, `get_body()` y todos los atributos de control instanciados sin errores.
+- **Estado del proyecto:** En desarrollo. Módulo de Inventario (UI completa) implementado e integrado en el Dashboard.
+
+
 
 
 

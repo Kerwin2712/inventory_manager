@@ -1,6 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.views.cartera_view import CarteraView
+from ui.views.inventario_view import InventarioView
 
 class DashboardView(BaseView):
     """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
@@ -26,6 +27,14 @@ class DashboardView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
             main_content = cartera_view.get_body()
+        elif self.current_section == "Inventario":
+            inv_view = InventarioView()
+            try:
+                if self.page:
+                    inv_view.page = self.page
+            except (RuntimeError, AttributeError):
+                pass
+            main_content = inv_view.get_body()
         elif self.current_section == "Inicio":
             main_content = ft.Column(
                 controls=[
