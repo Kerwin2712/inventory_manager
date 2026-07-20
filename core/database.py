@@ -61,7 +61,30 @@ def init_db():
             )
         """)
         
-        # Verificar si el usuario admin inicial ya existe
+        # Crear tabla de productos — Módulo de Inventario (Sección 2 ERS)
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS productos (
+                codigo          TEXT PRIMARY KEY,
+                referencia      TEXT NOT NULL,
+                departamento    TEXT NOT NULL,
+                descripcion_general TEXT NOT NULL,
+                marca           TEXT,
+                precio_dolares  REAL NOT NULL DEFAULT 0,
+                precio_bcv      REAL NOT NULL DEFAULT 0,
+                proveedor_id    INTEGER,
+                existencia      REAL NOT NULL DEFAULT 0,
+                codigo_barras   TEXT,
+                nombre_referencia_corto TEXT,
+                fecha_ultima_modificacion TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+                    ON UPDATE CASCADE ON DELETE SET NULL
+            )
+        """)
+
+        conn.commit()
         cursor.execute("SELECT id FROM users WHERE username = ?", ("admin",))
         admin_user = cursor.fetchone()
         

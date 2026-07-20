@@ -199,6 +199,23 @@
   - Evita la re-escritura manual del número de documento y garantiza la integridad de los datos entre la búsqueda y la creación en SQLite.
 - **Estado del proyecto:** En desarrollo. Flujo de registro automático con bloqueo de documento verificado.
 
+## Motor de Tasa BCV y Módulo de Inventario — Capa de Servicios y SQLite
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación de `services/bcv_service.py`:
+    - `actualizar_tasa(tasa)`: Persiste la tasa BCV y un timestamp ISO 8601 en `app_settings` (claves `tasa_bcv` y `fecha_tasa_bcv`).
+    - `obtener_estado_tasa()`: Retorna la tasa actual y una descripción legible del tiempo transcurrido (*"Actualizado hace 4 horas"*, *"Tiene 2 días sin actualizarse"*, *"Sin tasa BCV configurada"*).
+  - Actualización de `core/database.py` con `CREATE TABLE IF NOT EXISTS productos`:
+    - 12 campos exactos del ERS: `codigo` (PK), `referencia`, `departamento`, `descripcion_general`, `marca`, `precio_dolares`, `precio_bcv`, `proveedor_id` (FK → `proveedores.id` con `ON DELETE SET NULL`), `existencia`, `codigo_barras`, `nombre_referencia_corto`, `fecha_ultima_modificacion`.
+    - `PRAGMA foreign_keys = ON` activado para respetar la integridad referencial.
+  - Creación de `services/inventario_service.py` con CRUD completo:
+    - `crear_producto` / `actualizar_producto`: Aplican reglas ERS 3.1 (campos obligatorios, lógica existencia-precio, cálculo automático de `precio_bcv` desde tasa BCV, nombre corto auto-generado ≤30 caracteres, detección de código duplicado con `ERR_PROD_DUPLICADO`).
+    - `listar_productos`: Filtros opcionales de departamento, búsqueda libre y proveedor con paginación.
+    - `eliminar_producto`: Con verificación de existencia previa.
+- **Verificaciones realizadas:** Todos los casos de prueba pasaron (columnas correctas, FK definida, cálculo BCV automático 100×50.25=5025.0, duplicado capturado, validación precio-existencia funcional).
+- **Estado del proyecto:** En desarrollo. Motor de tasa BCV y capa de servicios de inventario implementados y verificados.
+
+
 
 
 
