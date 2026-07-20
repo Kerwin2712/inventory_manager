@@ -592,8 +592,7 @@ class CarteraView(BaseView):
             self.limpiar_form_cliente()
             self.cli_form_container.visible = False
             self.cli_result_container.visible = False
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
         except ValueError as ex:
             self.show_alert_error(str(ex), e)
 
@@ -602,8 +601,7 @@ class CarteraView(BaseView):
             eliminar_cliente(cedula_rif)
             self.show_alert_success(f"Cliente '{cedula_rif}' eliminado correctamente.", e)
             self.cli_result_container.visible = False
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
         except ValueError as ex:
             self.show_alert_error(str(ex), e)
 
@@ -748,8 +746,7 @@ class CarteraView(BaseView):
             self.limpiar_form_proveedor()
             self.prov_form_container.visible = False
             self.prov_result_container.visible = False
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
         except ValueError as ex:
             self.show_alert_error(str(ex), e)
 
@@ -758,8 +755,7 @@ class CarteraView(BaseView):
             eliminar_proveedor(proveedor_id)
             self.show_alert_success(f"Proveedor ID '{proveedor_id}' eliminado correctamente.", e)
             self.prov_result_container.visible = False
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
         except ValueError as ex:
             self.show_alert_error(str(ex), e)
 
@@ -779,6 +775,20 @@ class CarteraView(BaseView):
     # ==========================================
     # PAGINACIÓN Y CARGA DE TABLAS
     # ==========================================
+    def refrescar_datos(self, e=None):
+        """Recarga sólo las filas del DataTable activo sin reconstruir ningún control."""
+        accent = self.get_accent_color()
+        text_color = self.get_text_color()
+        try:
+            if self.current_tab == "clientes":
+                self.cargar_tabla_clientes(text_color, accent)
+            else:
+                self.cargar_tabla_proveedores(text_color, accent)
+        except AttributeError:
+            # Si los DataTables aún no existen (primera carga), nada que hacer
+            pass
+        self.safe_update(e)
+
     def cargar_tabla_clientes(self, text_color, accent):
         todos = listar_clientes()
         total_items = len(todos)
@@ -817,16 +827,14 @@ class CarteraView(BaseView):
     def cli_pagina_anterior(self, e):
         if self.cli_page > 1:
             self.cli_page -= 1
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
 
     def cli_pagina_siguiente(self, e):
         todos = listar_clientes()
         total_paginas = max(1, (len(todos) + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         if self.cli_page < total_paginas:
             self.cli_page += 1
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
 
     def cargar_tabla_proveedores(self, text_color, accent):
         todos = listar_proveedores()
@@ -871,16 +879,14 @@ class CarteraView(BaseView):
     def prov_pagina_anterior(self, e):
         if self.prov_page > 1:
             self.prov_page -= 1
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
 
     def prov_pagina_siguiente(self, e):
         todos = listar_proveedores()
         total_paginas = max(1, (len(todos) + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         if self.prov_page < total_paginas:
             self.prov_page += 1
-            self.rebuild_ui()
-            self.safe_update(e)
+            self.refrescar_datos(e)
 
     # ==========================================
     # ALERTAS FLOTANTES ROBUSTAS
