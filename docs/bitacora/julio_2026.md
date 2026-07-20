@@ -364,6 +364,20 @@
 - **Verificaciones realizadas:** Pruebas unitarias de consultas SQL, test de instanciación de vistas y prueba de navegación fluida.
 - **Estado del proyecto:** Completo. Motor analítico en tiempo real y sistema de respaldo a Excel operativos.
 
+## Implementación del Motor de Carga Masiva Transaccional y Defensivo desde Excel (ERS 1.1)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **Servicio de Importación (`services/importacion_service.py`):**
+    - Implementación de `procesar_importacion_excel(ruta_archivo)` con lectura de múltiples pestañas mediante `pandas.read_excel(sheet_name=None)` buscando hojas 'Productos', 'Clientes' y 'Proveedores' (insensible a mayúsculas).
+    - Lógica estrictamente transaccional ACID (`BEGIN TRANSACTION`, `COMMIT`, `ROLLBACK`). Sanitización defensiva `.fillna('')` y `.strip()` en todas las cadenas.
+    - Captura detallada de excepciones por tipo de dato o nulidad obligatoria, ejecutando `ROLLBACK` y retornando la pestaña y número de fila exacto que causó la falla para notificar al usuario.
+  - **Integración UI (`ui/views/gestion_datos_view.py`):**
+    - Implementación del método síncrono `abrir_dialogo_abrir` con `tkinter.filedialog.askopenfilename`.
+    - Conexión del botón "IMPORTAR DESDE EXCEL" mostrando un `SnackBar` verde en caso de éxito o un `AlertDialog` informativo en caso de falla con `ROLLBACK`.
+- **Verificaciones realizadas:** Pruebas unitarias automatizadas validando la importación exitosa de libros Excel con 3 pestañas y la ejecución correcta de `ROLLBACK` ante datos malformados.
+- **Estado del proyecto:** Completo. Motor de importación masiva transaccional listo para producción.
+
+
 
 
 

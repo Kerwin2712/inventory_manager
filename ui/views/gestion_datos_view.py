@@ -6,6 +6,7 @@ import pandas as pd
 import flet as ft
 from ui.views.base_view import BaseView
 from core.database import get_connection, get_setting, set_setting
+from services.importacion_service import procesar_importacion_excel
 
 class GestionDatosView(BaseView):
     """Vista de Gestión de Datos y Respaldos del Sistema (ERS 1.1)."""
@@ -29,13 +30,25 @@ class GestionDatosView(BaseView):
         root.destroy()
         return ruta
 
+    def abrir_dialogo_abrir(self) -> str:
+        """Abre un cuadro de diálogo nativo de Windows (Tkinter) para seleccionar un archivo Excel a importar."""
+        root = tk.Tk()
+        root.attributes("-topmost", True)  # Ventana en primer plano
+        root.withdraw()
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar Archivo Excel para Carga Masiva",
+            filetypes=[("Archivos de Excel", "*.xlsx;*.xls"), ("Todos los archivos", "*.*")]
+        )
+        root.destroy()
+        return ruta
+
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
         text_color = self.get_text_color()
         subtext_color = self.get_subtext_color()
         card_bg = self.get_card_bg()
 
-        # ── Tarjeta 1: Carga Masiva (Importar Excel) ──────────────────────────
+        # ── Tarjeta 1: Carga Masiva (Importar Excel - ERS 1.1) ─────────────────
         card_importar = ft.Card(
             content=ft.Container(
                 content=ft.Column([
@@ -47,7 +60,7 @@ class GestionDatosView(BaseView):
                         ], spacing=2)
                     ], spacing=15),
                     ft.Divider(),
-                    ft.Text("Permite cargar o actualizar simultáneamente productos y clientes desde plantillas estructuradas.", size=13, color=subtext_color),
+                    ft.Text("Permite cargar o actualizar simultáneamente productos, clientes y proveedores desde plantillas estructuradas.", size=13, color=subtext_color),
                     ft.Container(height=10),
                     ft.Button(
                         content=ft.Row([
@@ -108,8 +121,51 @@ class GestionDatosView(BaseView):
         )
 
     def handle_importar_click(self, e):
-        """Notificación para importación de plantillas."""
-        self.show_alert_info(e, "La función de importación masiva está lista para procesar plantillas Excel.")
+        """Ejecuta la Carga Masiva defensiva y transaccional desde Excel (ERS 1.1)."""
+        ruta_archivo = self.abrir_dialogo_abrir()
+        if not ruta_archivo:
+            return
+
+        res = procesar_importacion_excel(ruta_archivo)
+
+        if res.get("exito"):
+            self.show_alert_success(e, res.get("mensaje"))
+        else:
+            self.mostrar_dialogo_error(e, res.get("mensaje"))
+
+    def mostrar_dialogo_error(self, e, error_msg: str):
+        """Muestra un AlertDialog emergente cuando la importación transaccional falla y ejecuta ROLLBACK."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        def cerrar_dialogo(e_close):
+            dlg.open = False
+            p.update()
+
+        dlg = ft.AlertDialog(
+            title=ft.Row([
+                ft.Icon(ft.Icons.ERROR_OUTLINED, color=ft.Colors.RED_500, size=28),
+                ft.Text("Error en Carga Masiva de Excel", weight=ft.FontWeight.BOLD, color=ft.Colors.RED_500)
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Se ha realizado un ROLLBACK automático en la base de datos.", weight=ft.FontWeight.BOLD, size=13),
+                    ft.Divider(height=10),
+                    ft.Text(error_msg, color=self.get_text_color(), size=13),
+                ], spacing=10, tight=True),
+                width=450,
+                padding=10
+            ),
+            actions=[
+                ft.TextButton("Entendido", on_click=cerrar_dialogo)
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+        p.dialog = dlg
+        dlg.open = True
+        p.update()
 
     def handle_exportar_excel(self, e):
         """Exporta la base de datos completa a un libro Excel (.xlsx) con pestañas separadas (ERS 1.1)."""
@@ -147,11 +203,10 @@ class GestionDatosView(BaseView):
             df_clientes = pd.read_sql_query("""
                 SELECT 
                     cedula_rif AS [Cédula / RIF],
-                    razon_social AS [Razón Social / Nombre],
+                    nombre AS [Razón Social / Nombre],
                     direccion AS [Dirección],
                     telefono AS [Teléfono],
-                    email AS [Correo Electrónico],
-                    dias_credito AS [Días Crédito]
+                    correo AS [Correo Electrónico]
                 FROM clientes
             """, conn)
 
