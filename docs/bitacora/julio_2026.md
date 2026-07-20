@@ -243,6 +243,22 @@
 - **Verificaciones realizadas:** Suite de pruebas automatizada comprobando validación de cliente obligatorio, cliente inexistente, stock insuficiente con rollback y ventas exitosas con descuento de inventario.
 - **Estado del proyecto:** En desarrollo. Motor transaccional del Módulo de Ventas completado y verificado.
 
+## Servicio de Notas de Entrega PDF y Poblado de Datos Realistas (ERS 3.5 & Seed)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **Integración de Dependencia:** Adición e instalación de `fpdf2` en `requirements.txt`.
+  - **Servicio de PDF (`services/pdf_service.py`):**
+    - Desarrollo de `generar_nota_entrega_pdf(venta_id: int, divisa_impresion: str)`.
+    - **Regla Estricta ERS 3.5:** Impresión exclusiva del campo `nombre_referencia_corto` de la tabla `productos`, omitiendo la descripción general.
+    - Soporte bimoneda ('USD' y 'BCV') formateando subtotales y totales en dólares o bolívares.
+    - Exportación de archivos PDF a la carpeta `exports/` (`exports/Nota_Entrega_{venta_id}.pdf`).
+  - **Script de Sembrado (`seed.py`):**
+    - Creación y ejecución de `seed.py` para popular SQLite con datos de prueba realistas.
+    - Inserción en orden obligatorio: Tasa BCV inicial (732.48 con 2 decimales visible), 3 Proveedores (RNO-PROV-01), 5 Clientes (RNO-CLI-01) y 15 Productos variados (con y sin existencia, vinculados a sus `proveedor_id` correspondientes).
+- **Verificaciones realizadas:** Ejecución exitosa de `seed.py` poblando tablas base, y generación verificada de Notas de Entrega PDF en la carpeta `exports/`.
+- **Estado del proyecto:** En desarrollo. Generador de PDF y base de datos poblada para pruebas de interfaz comercial.
+
+
 
 
 

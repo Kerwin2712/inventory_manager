@@ -2,3 +2,4 @@ flet
 python-dotenv
 pandas
 openpyxl
+fpdf2
