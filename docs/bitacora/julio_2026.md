@@ -292,6 +292,16 @@
 - **Verificaciones realizadas:** Verificación de propiedad `scroll == ScrollMode.AUTO` y prueba de renderizado.
 - **Estado del proyecto:** En desarrollo. Scroll vertical y visibilidad de resumen de venta optimizados.
 
+## Optimización de Layout e Indicador de Carrito Vacío en VentasView
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Solución del rectángulo gris provocado por anidaciones redundantes de contenedores con `expand=True` dentro de `Row` en `ui/views/ventas_view.py`.
+  - Reestructuración de la fila inferior con dimensiones explícitas: alineación lateral directa de `tabla_carrito_container` y `panel_totales`.
+  - Rediseño de `build_tabla_carrito()` agregando ícono informativo, título en tipografía destacada y guía descriptiva con fondo adaptativo `get_card_bg()`.
+- **Verificaciones realizadas:** Prueba automatizada de renderizado para carrito vacío y carrito poblado pasando con éxito.
+- **Estado del proyecto:** En desarrollo. Módulo de Ventas visualmente corregido, responsivo e integrado.
+
+
 
 
 
