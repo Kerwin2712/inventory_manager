@@ -110,6 +110,14 @@
   - Restauración automática del tema guardado al arrancar la aplicación en `main.py`.
 - **Estado del proyecto:** En desarrollo. Persistencia de tema visual implementada y verificada.
 
+## Inicio de Sesión mediante Tecla Enter
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Configuración del evento `on_submit=self.handle_login` en los campos `username_input` y `password_input` de `ui/views/login_view.py`.
+  - Permite a los usuarios autenticarse directamente al presionar la tecla Enter desde cualquier campo de credenciales.
+- **Estado del proyecto:** En desarrollo. Accesibilidad e interactividad del formulario de login mejoradas.
+
+
 
 
 

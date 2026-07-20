@@ -21,6 +21,7 @@ class LoginView(BaseView):
             focused_border_color=accent,
             label_style=ft.TextStyle(color=self.get_subtext_color()),
             color=text_color,
+            on_submit=self.handle_login,
         )
         self.password_input = ft.TextField(
             label="Contraseña",
@@ -31,6 +32,7 @@ class LoginView(BaseView):
             focused_border_color=accent,
             label_style=ft.TextStyle(color=self.get_subtext_color()),
             color=text_color,
+            on_submit=self.handle_login,
         )
         
         # Botón de autenticación
