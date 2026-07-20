@@ -5,6 +5,26 @@ from services.cartera_service import (
     crear_proveedor, obtener_proveedor, buscar_proveedores, actualizar_proveedor, eliminar_proveedor, listar_proveedores
 )
 
+def parse_documento(doc_str: str, default_tipo: str = "V") -> tuple[str, str]:
+    """Separa un documento como 'V-12345678' en tupla ('V', '12345678')."""
+    if not doc_str:
+        return default_tipo, ""
+    doc = doc_str.strip().upper()
+    if len(doc) > 1 and doc[0] in ["V", "E", "J", "G", "P"]:
+        tipo = doc[0]
+        num = "".join(filter(str.isdigit, doc[1:]))
+        return tipo, num
+    num = "".join(filter(str.isdigit, doc))
+    return default_tipo, num
+
+def format_documento(tipo: str, numero: str) -> str:
+    """Formatea la letra y el número en el estándar 'TIPO-NUMERO'."""
+    num_digits = "".join(filter(str.isdigit, (numero or "").strip()))
+    if not num_digits:
+        return ""
+    return f"{tipo}-{num_digits}"
+
+
 class CarteraView(BaseView):
     """Vista avanzada para la gestión de la Cartera de Clientes y Proveedores."""
 
@@ -102,11 +122,26 @@ class CarteraView(BaseView):
     # PESTAÑA CLIENTES
     # ==========================================
     def build_clientes_tab(self, accent, card_bg, text_color, subtext_color, border_color) -> ft.Control:
-        # 1. Barra de Búsqueda
-        self.cli_search_input = ft.TextField(
-            label="Buscar por Cédula o RIF",
-            hint_text="Ej: J-98765432-1",
-            width=300,
+        # 1. Barra de Búsqueda con Dropdown de Tipo de Documento + Número
+        self.cli_search_tipo = ft.Dropdown(
+            value="V",
+            width=85,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent,
+            options=[
+                ft.dropdown.Option("V"),
+                ft.dropdown.Option("E"),
+                ft.dropdown.Option("J"),
+                ft.dropdown.Option("G"),
+                ft.dropdown.Option("P"),
+            ],
+        )
+        self.cli_search_numero = ft.TextField(
+            label="Número de Cédula / RIF",
+            hint_text="Ej: 12345678",
+            width=220,
+            keyboard_type=ft.KeyboardType.NUMBER,
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
@@ -128,7 +163,11 @@ class CarteraView(BaseView):
         )
 
         search_bar = ft.Container(
-            content=ft.Row([self.cli_search_input, btn_buscar_cli, btn_nuevo_cli], spacing=10, alignment=ft.MainAxisAlignment.START),
+            content=ft.Row([
+                ft.Row([self.cli_search_tipo, self.cli_search_numero], spacing=5),
+                btn_buscar_cli,
+                btn_nuevo_cli
+            ], spacing=15, alignment=ft.MainAxisAlignment.START),
             padding=10,
             border_radius=8,
             bgcolor=card_bg,
@@ -138,12 +177,34 @@ class CarteraView(BaseView):
         # 2. Tarjeta de Resultado de Búsqueda
         self.cli_result_container = ft.Container(visible=False)
 
-        # 3. Formulario (Oculto por defecto)
-        self.cli_cedula = ft.TextField(label="Cédula / RIF *", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
+        # 3. Formulario con Dropdown + TextField para Cédula / RIF
+        self.cli_tipo_doc = ft.Dropdown(
+            value="V",
+            width=85,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent,
+            options=[
+                ft.dropdown.Option("V"),
+                ft.dropdown.Option("E"),
+                ft.dropdown.Option("J"),
+                ft.dropdown.Option("G"),
+                ft.dropdown.Option("P"),
+            ],
+        )
+        self.cli_num_doc = ft.TextField(
+            label="Número de Cédula / RIF *",
+            hint_text="Solo números",
+            width=200,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent
+        )
         self.cli_nombre = ft.TextField(label="Nombre / Razón Social *", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
         self.cli_telefono = ft.TextField(label="Teléfono", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
         self.cli_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.cli_direccion = ft.TextField(label="Dirección", width=565, multiline=True, max_lines=2, color=text_color, border_color=border_color, focused_border_color=accent)
+        self.cli_direccion = ft.TextField(label="Dirección", width=595, multiline=True, max_lines=2, color=text_color, border_color=border_color, focused_border_color=accent)
 
         self.btn_guardar_cli_label = ft.Text("Guardar Cliente", color=ft.Colors.WHITE)
         btn_guardar_cli = ft.Button(
@@ -161,7 +222,10 @@ class CarteraView(BaseView):
             content=ft.Column(
                 controls=[
                     ft.Text("Formulario de Registro / Edición de Cliente", size=16, weight=ft.FontWeight.BOLD, color=accent),
-                    ft.Row([self.cli_cedula, self.cli_nombre], wrap=True, spacing=15),
+                    ft.Row([
+                        ft.Row([self.cli_tipo_doc, self.cli_num_doc], spacing=5),
+                        self.cli_nombre
+                    ], wrap=True, spacing=15),
                     ft.Row([self.cli_telefono, self.cli_correo], wrap=True, spacing=15),
                     self.cli_direccion,
                     ft.Row([btn_cancelar_cli, btn_guardar_cli], alignment=ft.MainAxisAlignment.END, spacing=10),
@@ -231,11 +295,25 @@ class CarteraView(BaseView):
     # PESTAÑA PROVEEDORES
     # ==========================================
     def build_proveedores_tab(self, accent, card_bg, text_color, subtext_color, border_color) -> ft.Control:
-        # 1. Barra de Búsqueda
+        # 1. Barra de Búsqueda con opción de Dropdown para RIF/Cédula o Texto
+        self.prov_search_tipo = ft.Dropdown(
+            value="J",
+            width=85,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent,
+            options=[
+                ft.dropdown.Option("J"),
+                ft.dropdown.Option("G"),
+                ft.dropdown.Option("V"),
+                ft.dropdown.Option("E"),
+                ft.dropdown.Option("P"),
+            ],
+        )
         self.prov_search_input = ft.TextField(
-            label="Buscar por Empresa o Teléfono",
-            hint_text="Ej: TecnoCorp",
-            width=300,
+            label="Buscar por RIF / Empresa / Teléfono",
+            hint_text="Ej: 12345678 o TecnoCorp",
+            width=250,
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
@@ -257,7 +335,11 @@ class CarteraView(BaseView):
         )
 
         search_bar = ft.Container(
-            content=ft.Row([self.prov_search_input, btn_buscar_prov, btn_nuevo_prov], spacing=10, alignment=ft.MainAxisAlignment.START),
+            content=ft.Row([
+                ft.Row([self.prov_search_tipo, self.prov_search_input], spacing=5),
+                btn_buscar_prov,
+                btn_nuevo_prov
+            ], spacing=15, alignment=ft.MainAxisAlignment.START),
             padding=10,
             border_radius=8,
             bgcolor=card_bg,
@@ -267,12 +349,36 @@ class CarteraView(BaseView):
         # 2. Tarjeta de Resultado de Búsqueda
         self.prov_result_container = ft.Container(visible=False)
 
-        # 3. Formulario (Oculto por defecto)
-        self.prov_empresa = ft.TextField(label="Nombre de la Empresa", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
+        # 3. Formulario de Proveedores con RIF / Cédula (Dropdown + TextField)
+        self.prov_tipo_doc = ft.Dropdown(
+            value="J",
+            width=85,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent,
+            options=[
+                ft.dropdown.Option("J"),
+                ft.dropdown.Option("G"),
+                ft.dropdown.Option("V"),
+                ft.dropdown.Option("E"),
+                ft.dropdown.Option("P"),
+            ],
+        )
+        self.prov_num_doc = ft.TextField(
+            label="Número RIF / Cédula",
+            hint_text="Solo números",
+            width=200,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent
+        )
+
+        self.prov_empresa = ft.TextField(label="Nombre de la Empresa", width=290, color=text_color, border_color=border_color, focused_border_color=accent)
         self.prov_contacto = ft.TextField(label="Agente de Contacto", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
         self.prov_telefono = ft.TextField(label="Teléfono *", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
         self.prov_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.prov_desc = ft.TextField(label="Descripción / Categoría", width=565, color=text_color, border_color=border_color, focused_border_color=accent)
+        self.prov_desc = ft.TextField(label="Descripción / Categoría", width=595, color=text_color, border_color=border_color, focused_border_color=accent)
 
         self.txt_adjuntos_status = ft.Text("Sin archivos adjuntos", size=12, color=subtext_color)
         btn_adjuntar = ft.OutlinedButton(
@@ -297,8 +403,11 @@ class CarteraView(BaseView):
             content=ft.Column(
                 controls=[
                     ft.Text("Formulario de Registro / Edición de Proveedor", size=16, weight=ft.FontWeight.BOLD, color=accent),
-                    ft.Row([self.prov_empresa, self.prov_contacto], wrap=True, spacing=15),
-                    ft.Row([self.prov_telefono, self.prov_correo], wrap=True, spacing=15),
+                    ft.Row([
+                        ft.Row([self.prov_tipo_doc, self.prov_num_doc], spacing=5),
+                        self.prov_empresa
+                    ], wrap=True, spacing=15),
+                    ft.Row([self.prov_contacto, self.prov_telefono, self.prov_correo], wrap=True, spacing=15),
                     self.prov_desc,
                     ft.Row([btn_adjuntar, self.txt_adjuntos_status], alignment=ft.MainAxisAlignment.START, spacing=10),
                     ft.Row([btn_cancelar_prov, btn_guardar_prov], alignment=ft.MainAxisAlignment.END, spacing=10),
@@ -316,10 +425,10 @@ class CarteraView(BaseView):
         self.dt_proveedores = ft.DataTable(
             columns=[
                 ft.DataColumn(label=ft.Text("ID", weight=ft.FontWeight.BOLD, color=text_color)),
+                ft.DataColumn(label=ft.Text("RIF / Cédula", weight=ft.FontWeight.BOLD, color=text_color)),
                 ft.DataColumn(label=ft.Text("Empresa", weight=ft.FontWeight.BOLD, color=text_color)),
                 ft.DataColumn(label=ft.Text("Contacto", weight=ft.FontWeight.BOLD, color=text_color)),
                 ft.DataColumn(label=ft.Text("Teléfono", weight=ft.FontWeight.BOLD, color=text_color)),
-                ft.DataColumn(label=ft.Text("Correo", weight=ft.FontWeight.BOLD, color=text_color)),
                 ft.DataColumn(label=ft.Text("Acciones", weight=ft.FontWeight.BOLD, color=accent)),
             ],
             rows=[],
@@ -369,12 +478,13 @@ class CarteraView(BaseView):
     # MANEJO DE EVENTOS BÚSQUEDA Y ACCIONES CLIENTES
     # ==========================================
     def handle_buscar_cliente(self, e):
-        cedula = (self.cli_search_input.value or "").strip()
-        if not cedula:
-            self.show_alert_info("Ingrese una Cédula o RIF para realizar la búsqueda.", e)
+        numero = (self.cli_search_numero.value or "").strip()
+        if not numero:
+            self.show_alert_info("Ingrese el número de Cédula o RIF para buscar.", e)
             return
 
-        cliente = buscar_cliente_por_cedula(cedula)
+        cedula_completa = format_documento(self.cli_search_tipo.value, numero)
+        cliente = buscar_cliente_por_cedula(cedula_completa)
         text_color = self.get_text_color()
         card_bg = self.get_card_bg()
         border_color = self.get_border_color()
@@ -413,9 +523,11 @@ class CarteraView(BaseView):
             self.safe_update(e)
         else:
             self.cli_result_container.visible = False
-            self.show_alert_info(f"El cliente con Cédula/RIF '{cedula}' no existe. Proceda a registrarlo.", e)
+            self.show_alert_info(f"El cliente '{cedula_completa}' no existe. Proceda a registrarlo.", e)
             self.limpiar_form_cliente()
-            self.cli_cedula.value = cedula
+            tipo, num = parse_documento(cedula_completa, default_tipo=self.cli_search_tipo.value)
+            self.cli_tipo_doc.value = tipo
+            self.cli_num_doc.value = num
             self.cli_editing_cedula = None
             self.btn_guardar_cli_label.value = "Guardar Cliente"
             self.cli_form_container.visible = True
@@ -424,8 +536,11 @@ class CarteraView(BaseView):
     def preparar_edicion_cliente(self, cliente: dict, e=None):
         self.cli_result_container.visible = False
         self.cli_editing_cedula = cliente["cedula_rif"]
-        self.cli_cedula.value = cliente["cedula_rif"]
-        self.cli_cedula.disabled = True
+        tipo, num = parse_documento(cliente["cedula_rif"])
+        self.cli_tipo_doc.value = tipo
+        self.cli_num_doc.value = num
+        self.cli_tipo_doc.disabled = True
+        self.cli_num_doc.disabled = True
         self.cli_nombre.value = cliente["nombre"]
         self.cli_direccion.value = cliente["direccion"] or ""
         self.cli_telefono.value = cliente["telefono"] or ""
@@ -436,6 +551,13 @@ class CarteraView(BaseView):
 
     def handle_guardar_cliente(self, e):
         try:
+            num_limpio = "".join(filter(str.isdigit, (self.cli_num_doc.value or "").strip()))
+            if not num_limpio:
+                self.show_alert_error("Debe ingresar un número de Cédula o RIF válido.", e)
+                return
+
+            cedula_completa = format_documento(self.cli_tipo_doc.value, num_limpio)
+
             if self.cli_editing_cedula:
                 actualizar_cliente(
                     cedula_rif=self.cli_editing_cedula,
@@ -448,7 +570,7 @@ class CarteraView(BaseView):
             else:
                 crear_cliente(
                     nombre=self.cli_nombre.value,
-                    cedula_rif=self.cli_cedula.value,
+                    cedula_rif=cedula_completa,
                     direccion=self.cli_direccion.value,
                     telefono=self.cli_telefono.value,
                     correo=self.cli_correo.value,
@@ -477,7 +599,8 @@ class CarteraView(BaseView):
         self.cli_result_container.visible = False
         self.limpiar_form_cliente()
         self.cli_editing_cedula = None
-        self.cli_cedula.disabled = False
+        self.cli_tipo_doc.disabled = False
+        self.cli_num_doc.disabled = False
         self.btn_guardar_cli_label.value = "Guardar Cliente"
         self.cli_form_container.visible = True
         self.safe_update(e)
@@ -491,10 +614,14 @@ class CarteraView(BaseView):
     # MANEJO DE EVENTOS BÚSQUEDA Y ACCIONES PROVEEDORES
     # ==========================================
     def handle_buscar_proveedor(self, e):
-        criterio = (self.prov_search_input.value or "").strip()
-        if not criterio:
-            self.show_alert_info("Ingrese el nombre de la empresa o teléfono para buscar.", e)
+        input_val = (self.prov_search_input.value or "").strip()
+        if not input_val:
+            self.show_alert_info("Ingrese el RIF, nombre de la empresa o teléfono para buscar.", e)
             return
+
+        criterio = input_val
+        if input_val.isdigit():
+            criterio = format_documento(self.prov_search_tipo.value, input_val)
 
         proveedores = buscar_proveedores(criterio)
         text_color = self.get_text_color()
@@ -538,10 +665,11 @@ class CarteraView(BaseView):
             self.prov_result_container.visible = False
             self.show_alert_info(f"Proveedor '{criterio}' no encontrado. Proceda a registrarlo.", e)
             self.limpiar_form_proveedor()
-            if criterio.isdigit():
-                self.prov_telefono.value = criterio
+            if input_val.isdigit():
+                self.prov_num_doc.value = input_val
+                self.prov_tipo_doc.value = self.prov_search_tipo.value
             else:
-                self.prov_empresa.value = criterio
+                self.prov_empresa.value = input_val
             self.prov_editing_id = None
             self.btn_guardar_prov_label.value = "Guardar Proveedor"
             self.prov_form_container.visible = True
@@ -550,6 +678,13 @@ class CarteraView(BaseView):
     def preparar_edicion_proveedor(self, prov: dict, e=None):
         self.prov_result_container.visible = False
         self.prov_editing_id = prov["id"]
+        
+        # Extraer RIF/Cédula si está presente en la descripción o campos
+        desc = prov["descripcion"] or ""
+        tipo, num = parse_documento(desc, default_tipo="J")
+        self.prov_tipo_doc.value = tipo
+        self.prov_num_doc.value = num
+        
         self.prov_empresa.value = prov["empresa"] or ""
         self.prov_contacto.value = prov["contacto"] or ""
         self.prov_telefono.value = prov["telefono"] or ""
@@ -562,6 +697,13 @@ class CarteraView(BaseView):
 
     def handle_guardar_proveedor(self, e):
         try:
+            num_limpio = "".join(filter(str.isdigit, (self.prov_num_doc.value or "").strip()))
+            rif_formateado = format_documento(self.prov_tipo_doc.value, num_limpio) if num_limpio else ""
+            
+            desc_final = self.prov_desc.value or ""
+            if rif_formateado and rif_formateado not in desc_final:
+                desc_final = f"RIF: {rif_formateado} | {desc_final}".strip(" |")
+
             if self.prov_editing_id:
                 actualizar_proveedor(
                     proveedor_id=self.prov_editing_id,
@@ -569,7 +711,7 @@ class CarteraView(BaseView):
                     contacto=self.prov_contacto.value,
                     telefono=self.prov_telefono.value,
                     correo=self.prov_correo.value,
-                    descripcion=self.prov_desc.value,
+                    descripcion=desc_final,
                     adjuntos=self.adjuntos_temp,
                 )
                 self.show_alert_success("¡Proveedor actualizado exitosamente!", e)
@@ -579,7 +721,7 @@ class CarteraView(BaseView):
                     contacto=self.prov_contacto.value,
                     telefono=self.prov_telefono.value,
                     correo=self.prov_correo.value,
-                    descripcion=self.prov_desc.value,
+                    descripcion=desc_final,
                     adjuntos=self.adjuntos_temp,
                 )
                 self.show_alert_success("¡Proveedor registrado exitosamente!", e)
@@ -683,14 +825,18 @@ class CarteraView(BaseView):
 
         rows = []
         for p in pagina_items:
+            desc = p["descripcion"] or "-"
+            tipo, num = parse_documento(desc, default_tipo="J")
+            rif_display = format_documento(tipo, num) if num else "-"
+
             rows.append(
                 ft.DataRow(
                     cells=[
                         ft.DataCell(ft.Text(str(p["id"]), color=text_color)),
+                        ft.DataCell(ft.Text(rif_display, color=text_color)),
                         ft.DataCell(ft.Text(p["empresa"] or "-", color=text_color)),
                         ft.DataCell(ft.Text(p["contacto"] or "-", color=text_color)),
                         ft.DataCell(ft.Text(p["telefono"], color=text_color)),
-                        ft.DataCell(ft.Text(p["correo"] or "-", color=text_color)),
                         ft.DataCell(
                             ft.Row([
                                 ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar", on_click=lambda ev, item=p: self.preparar_edicion_proveedor(item, ev)),
@@ -767,8 +913,10 @@ class CarteraView(BaseView):
         self.safe_update(e)
 
     def limpiar_form_cliente(self):
-        self.cli_cedula.value = ""
-        self.cli_cedula.disabled = False
+        self.cli_tipo_doc.value = "V"
+        self.cli_tipo_doc.disabled = False
+        self.cli_num_doc.value = ""
+        self.cli_num_doc.disabled = False
         self.cli_nombre.value = ""
         self.cli_direccion.value = ""
         self.cli_telefono.value = ""
@@ -776,6 +924,8 @@ class CarteraView(BaseView):
         self.cli_editing_cedula = None
 
     def limpiar_form_proveedor(self):
+        self.prov_tipo_doc.value = "J"
+        self.prov_num_doc.value = ""
         self.prov_empresa.value = ""
         self.prov_contacto.value = ""
         self.prov_telefono.value = ""

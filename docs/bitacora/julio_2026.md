@@ -173,6 +173,15 @@
   - Actualización de las alertas emergentes `show_alert_error`, `show_alert_success` y `show_alert_info` garantizando el refresco suave de la interfaz en controles anidados.
 - **Estado del proyecto:** En desarrollo. Manejo de estado y renderizado seguro en CarteraView corregidos y validados.
 
+## Selectores Desplegables de Tipo de Documento en CarteraView
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Rediseño de las barras de búsqueda y formularios de captura de Clientes y Proveedores en `ui/views/cartera_view.py`.
+  - Integración de selectores desplegables `ft.Dropdown` (`V`, `E`, `J`, `G`, `P`) combinados con campos de texto exclusivamente numéricos `keyboard_type=ft.KeyboardType.NUMBER`.
+  - Implementación de las funciones auxiliares `parse_documento` y `format_documento` para formatear y descomponer automáticamente la identificación estándar (ej: `V-12345678`, `J-987654321`).
+- **Estado del proyecto:** En desarrollo. Captura estructurada de Cédula y RIF implementada y verificada.
+
+
 
 
 
