@@ -36,7 +36,7 @@ class AdminUsersView(BaseView):
             value="administrador",
         )
 
-        self.save_btn = ft.ElevatedButton(
+        self.save_btn = ft.Button(
             content="Guardar Usuario",
             bgcolor=ft.Colors.BLUE_600,
             color=ft.Colors.WHITE,
@@ -49,7 +49,7 @@ class AdminUsersView(BaseView):
             on_click=self.handle_cancel_edit,
         )
 
-        logout_btn = ft.ElevatedButton(
+        logout_btn = ft.Button(
             content="Cerrar Sesión",
             bgcolor=ft.Colors.RED_600,
             color=ft.Colors.WHITE,

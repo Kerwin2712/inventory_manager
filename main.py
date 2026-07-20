@@ -45,7 +45,7 @@ def main(page: ft.Page):
                 weight=ft.FontWeight.BOLD,
                 color=ft.Colors.BLUE_400
             )
-            logout_btn = ft.ElevatedButton(
+            logout_btn = ft.Button(
                 content="Cerrar Sesión",
                 bgcolor=ft.Colors.RED_600,
                 color=ft.Colors.WHITE,

@@ -71,6 +71,14 @@
   - Integración de autenticación real en `ui/views/login_view.py` y enrutamiento dinámico en `main.py`.
 - **Estado del proyecto:** En desarrollo. Módulo de autenticación y gestión de usuarios completado y verificado.
 
+## Exclusión de SQLite en Gitignore y Actualización de Botones Deprecados
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Adición de `inventory.db` y `*.db` a `.gitignore` y desindexado en Git (`git rm --cached`) para evitar la sincronización de archivos de base de datos locales.
+  - Reemplazo de `ft.ElevatedButton` por la clase recomendada `ft.Button` en `main.py`, `login_view.py` y `admin_users_view.py`, eliminando los avisos de obsolescencia.
+- **Estado del proyecto:** En desarrollo. Consola de comandos sin advertencias y control de versiones configurado correctamente.
+
+
 
 
 

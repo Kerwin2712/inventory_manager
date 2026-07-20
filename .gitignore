@@ -219,3 +219,7 @@ __marimo__/
 
 # Graphify knowledge graph directory
 graphify-out/
+
+# SQLite Database
+inventory.db
+*.db

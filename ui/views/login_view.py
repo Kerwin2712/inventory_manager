@@ -27,7 +27,7 @@ class LoginView(BaseView):
         )
         
         # Botón de autenticación
-        login_btn = ft.ElevatedButton(
+        login_btn = ft.Button(
             content="Iniciar Sesión",
             width=320,
             bgcolor=ft.Colors.BLUE_600,
