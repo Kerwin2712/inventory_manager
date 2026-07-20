@@ -102,6 +102,15 @@
   - Corrección de la apariencia en Modo Claro: Sidebar con fondo blanco impecable y todos los elementos de texto configurados en colores oscuros de alto contraste para máxima legibilidad.
 - **Estado del proyecto:** En desarrollo. Personalización de temas visuales corregida y validada.
 
+## Persistencia de Preferencias de Tema en SQLite
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Adición de la tabla `app_settings` y funciones `get_setting` / `set_setting` en `core/database.py` para almacenar `theme_mode` y `seed_color`.
+  - Sincronización automática en `ui/views/base_view.py` para actualizar SQLite al ejecutar `toggle_theme` o `change_seed_color`.
+  - Restauración automática del tema guardado al arrancar la aplicación en `main.py`.
+- **Estado del proyecto:** En desarrollo. Persistencia de tema visual implementada y verificada.
+
+
 
 
 

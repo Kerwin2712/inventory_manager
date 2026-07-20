@@ -1,11 +1,13 @@
 import flet as ft
+from core.database import get_setting, set_setting
 
 class BaseView(ft.View):
-    """Clase base que define la estructura visual común y gestión centralizada de temas."""
+    """Clase base con persistencia automática de temas en SQLite."""
     
-    # Estado estático global para persistencia entre vistas
+    # Estado estático global sincronizado con SQLite
     current_seed_color = "#2196F3"
     current_theme_mode = ft.ThemeMode.DARK
+    _settings_loaded = False
     
     def __init__(self, route: str, title: str):
         super().__init__(
@@ -14,8 +16,19 @@ class BaseView(ft.View):
             spacing=15,
         )
         self.view_title = title
+        self.ensure_settings_loaded()
         self.bgcolor = self.get_bg_color()
         self.setup_layout()
+
+    @classmethod
+    def ensure_settings_loaded(cls):
+        """Carga las preferencias desde SQLite la primera vez que se instancie una vista."""
+        if not cls._settings_loaded:
+            saved_mode = get_setting("theme_mode", "dark")
+            saved_color = get_setting("seed_color", "#2196F3")
+            cls.current_theme_mode = ft.ThemeMode.LIGHT if saved_mode == "light" else ft.ThemeMode.DARK
+            cls.current_seed_color = saved_color if saved_color else "#2196F3"
+            cls._settings_loaded = True
 
     @property
     def is_dark(self) -> bool:
@@ -76,25 +89,29 @@ class BaseView(ft.View):
         raise NotImplementedError("Las subclases deben implementar get_body()")
 
     def toggle_theme(self, e=None):
-        """Alterna dinámicamente entre el modo claro y oscuro."""
+        """Alterna dinámicamente entre modo claro/oscuro y guarda la preferencia en SQLite."""
         if not self.page:
             return
             
         if self.page.theme_mode == ft.ThemeMode.DARK:
             self.page.theme_mode = ft.ThemeMode.LIGHT
+            new_mode_str = "light"
         else:
             self.page.theme_mode = ft.ThemeMode.DARK
+            new_mode_str = "dark"
             
         BaseView.current_theme_mode = self.page.theme_mode
+        set_setting("theme_mode", new_mode_str)
         self.rebuild_ui()
 
     def change_seed_color(self, color_hex: str):
-        """Actualiza el color de acento global y refresca la interfaz."""
+        """Actualiza el color de acento global y guarda la preferencia en SQLite."""
         if not self.page:
             return
             
         BaseView.current_seed_color = color_hex
         self.page.theme = ft.Theme(color_scheme_seed=color_hex)
+        set_setting("seed_color", color_hex)
         self.rebuild_ui()
 
     def rebuild_ui(self):

@@ -1,17 +1,26 @@
 import flet as ft
-from core.database import init_db
+from core.database import init_db, get_setting
+from ui.views.base_view import BaseView
 from ui.views.login_view import LoginView
 from ui.views.admin_users_view import AdminUsersView
 from ui.views.dashboard_view import DashboardView
 
 def main(page: ft.Page):
-    # Inicializar la base de datos SQLite y sembrar la cuenta admin
+    # Inicializar la base de datos SQLite, tablas y datos por defecto
     init_db()
 
-    # Configuración de propiedades básicas de la ventana
+    # Cargar preferencias de tema guardadas desde SQLite
+    saved_mode = get_setting("theme_mode", "dark")
+    saved_color = get_setting("seed_color", "#2196F3")
+    
+    initial_theme_mode = ft.ThemeMode.LIGHT if saved_mode == "light" else ft.ThemeMode.DARK
+    BaseView.current_theme_mode = initial_theme_mode
+    BaseView.current_seed_color = saved_color
+
+    # Configuración de propiedades de la ventana y tema
     page.title = "Sistema Integrado de Inventario y Ventas"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.theme = ft.Theme(color_scheme_seed="#2196F3")
+    page.theme_mode = initial_theme_mode
+    page.theme = ft.Theme(color_scheme_seed=saved_color)
     
     # Manejo de tamaño mínimo compatible
     try:
