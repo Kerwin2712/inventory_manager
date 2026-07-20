@@ -84,6 +84,38 @@ def init_db():
             )
         """)
 
+        # Crear tabla de ventas (Cabecera - ERS 3.4 / 3.5)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ventas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo_venta TEXT NOT NULL,
+                cliente_id TEXT,
+                total_usd REAL NOT NULL DEFAULT 0,
+                total_bcv REAL NOT NULL DEFAULT 0,
+                fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cliente_id) REFERENCES clientes(cedula_rif)
+                    ON UPDATE CASCADE ON DELETE SET NULL
+            )
+        """)
+
+        # Crear tabla de ventas_detalle (Líneas - ERS 3.4 / 3.5)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ventas_detalle (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                venta_id INTEGER NOT NULL,
+                producto_codigo TEXT NOT NULL,
+                cantidad REAL NOT NULL,
+                precio_unitario_usd REAL NOT NULL,
+                precio_unitario_bcv REAL NOT NULL,
+                subtotal_usd REAL NOT NULL,
+                subtotal_bcv REAL NOT NULL,
+                FOREIGN KEY (venta_id) REFERENCES ventas(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (producto_codigo) REFERENCES productos(codigo)
+                    ON UPDATE CASCADE
+            )
+        """)
+
         conn.commit()
         cursor.execute("SELECT id FROM users WHERE username = ?", ("admin",))
         admin_user = cursor.fetchone()

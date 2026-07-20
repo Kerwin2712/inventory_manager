@@ -230,6 +230,20 @@
 - **Verificaciones realizadas:** `InventarioView()`, `get_body()` y todos los atributos de control instanciados sin errores.
 - **Estado del proyecto:** En desarrollo. Módulo de Inventario (UI completa) implementado e integrado en el Dashboard.
 
+## Motor Transaccional y Tablas de Ventas (ERS 3.4 / 3.5)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **Esquema de Base de Datos (`core/database.py`):**
+    - Adición de las sentencias `CREATE TABLE IF NOT EXISTS ventas` (cabecera con `id`, `tipo_venta`, `cliente_id` FK a `clientes`, `total_usd`, `total_bcv` y `fecha`).
+    - Adición de `CREATE TABLE IF NOT EXISTS ventas_detalle` (líneas con `id`, `venta_id` FK a `ventas` con `ON DELETE CASCADE`, `producto_codigo` FK a `productos`, `cantidad`, `precio_unitario_usd`, `precio_unitario_bcv`, `subtotal_usd`, `subtotal_bcv`).
+  - **Capa de Servicios ACID (`services/ventas_service.py`):**
+    - Creación del servicio `procesar_venta(tipo_venta: str, cliente_id: str = None, lineas: list)`.
+    - Validaciones estrictas ERS 3.4: Si `tipo_venta` es 'Formal', se exige `cliente_id` no nulo/vacío y su existencia en la base de datos `clientes`. Si es 'Informal', se ignora el cliente.
+    - Lógica transaccional ACID en SQLite (`BEGIN TRANSACTION`, `COMMIT`, `ROLLBACK`): verifica existencia y stock suficiente por ítem, inserta en `ventas_detalle` y descuenta el campo `existencia` en `productos`. Si ocurre cualquier falla, revierte todos los cambios.
+- **Verificaciones realizadas:** Suite de pruebas automatizada comprobando validación de cliente obligatorio, cliente inexistente, stock insuficiente con rollback y ventas exitosas con descuento de inventario.
+- **Estado del proyecto:** En desarrollo. Motor transaccional del Módulo de Ventas completado y verificado.
+
+
 
 
 
