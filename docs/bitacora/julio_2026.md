@@ -78,6 +78,15 @@
   - Reemplazo de `ft.ElevatedButton` por la clase recomendada `ft.Button` en `main.py`, `login_view.py` y `admin_users_view.py`, eliminando los avisos de obsolescencia.
 - **Estado del proyecto:** En desarrollo. Consola de comandos sin advertencias y control de versiones configurado correctamente.
 
+## Sistema Centralizado de Temas y Dashboard del Super Admin
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Actualización de `ui/views/base_view.py` incorporando los métodos `toggle_theme` (modo claro/oscuro) y `change_seed_color` (`color_scheme_seed`) con comentarios guía de persistencia futura en SQLite.
+  - Creación del Dashboard del Super Admin en `ui/views/dashboard_view.py` con Sidebar de navegación (Inicio, Ventas, Inventario, Cartera, Gestión de Datos), Header con notificaciones y selector de 4 colores de acento (Azul, Verde, Rojo, Naranja), 3 Cards de métricas rápidas, y secciones para Inteligencia de Negocio y Auditoría Preventiva de Stock Crítico.
+  - Enrutamiento dinámico y prueba visual en `main.py`.
+- **Estado del proyecto:** En desarrollo. Pantalla de Dashboard e infraestructura de temas dinámicos implementadas.
+
+
 
 
 
