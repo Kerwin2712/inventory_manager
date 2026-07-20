@@ -3,6 +3,12 @@ from ui.views.base_view import BaseView
 from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
+from ui.views.gestion_datos_view import GestionDatosView
+from services.reportes_service import (
+    obtener_metricas_dashboard,
+    obtener_top_ventas,
+    obtener_alertas_stock
+)
 
 class DashboardView(BaseView):
     """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
@@ -11,6 +17,8 @@ class DashboardView(BaseView):
         self.user_info = user_info or {"username": "usuario", "role": "administrador"}
         self.on_logout_callback = on_logout_callback
         self.current_section = "Inicio"
+        self.rango_top_ventas = "Hoy"
+        self.limite_top_ventas = 10
         super().__init__(route="/dashboard", title="Dashboard General")
 
     def handle_nav_change(self, section_name: str):
@@ -28,6 +36,7 @@ class DashboardView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
             main_content = ventas_view.get_body()
+
         elif self.current_section == "Cartera":
             cartera_view = CarteraView()
             try:
@@ -36,6 +45,7 @@ class DashboardView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
             main_content = cartera_view.get_body()
+
         elif self.current_section == "Inventario":
             inv_view = InventarioView()
             try:
@@ -44,6 +54,15 @@ class DashboardView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
             main_content = inv_view.get_body()
+
+        elif self.current_section == "Gestión de Datos":
+            gd_view = GestionDatosView()
+            try:
+                if self.page:
+                    gd_view.page = self.page
+            except (RuntimeError, AttributeError):
+                pass
+            main_content = gd_view.get_body()
 
         elif self.current_section == "Inicio":
             main_content = ft.Column(
@@ -243,11 +262,22 @@ class DashboardView(BaseView):
         )
 
     def build_metrics_cards(self) -> ft.Control:
-        """Construye las tarjetas de métricas con el fondo adaptativo del tema."""
+        """Construye las tarjetas de métricas con datos reales de la base de datos."""
+        metricas = obtener_metricas_dashboard()
+
+        ventas_val = f"$ {metricas['ventas_hoy_usd']:,.2f}"
+        variacion_str = f"{metricas['variacion_pct']:+.1f}% vs ayer" if metricas['ventas_ayer_usd'] > 0 else "Ventas registradas hoy"
+
+        stock_val = f"{metricas['total_unidades']:,.0f} Unidades"
+        stock_sub = f"{metricas['total_categorias']} Departamentos"
+
+        criticos_val = f"{metricas['total_criticos']} Críticos"
+        criticos_sub = "Requieren reposición" if metricas['total_criticos'] > 0 else "Sin alertas activas"
+
         cards_data = [
-            ("Ventas del Día", "$1,450.80", "+12.5% vs ayer", ft.Icons.ATTACH_MONEY_ROUNDED, ft.Colors.GREEN_500),
-            ("Productos en Stock", "1,840 Unidades", "52 Categorías", ft.Icons.INVENTORY_ROUNDED, self.get_accent_color()),
-            ("Alertas de Stock Bajo", "8 Críticos", "Requieren reposición", ft.Icons.WARNING_AMBER_ROUNDED, ft.Colors.AMBER_500),
+            ("Ventas del Día", ventas_val, variacion_str, ft.Icons.ATTACH_MONEY_ROUNDED, ft.Colors.GREEN_500),
+            ("Productos en Stock", stock_val, stock_sub, ft.Icons.INVENTORY_ROUNDED, self.get_accent_color()),
+            ("Alertas de Stock Bajo", criticos_val, criticos_sub, ft.Icons.WARNING_AMBER_ROUNDED, ft.Colors.AMBER_500 if metricas['total_criticos'] > 0 else ft.Colors.GREEN_500),
         ]
 
         card_widgets = []
@@ -263,7 +293,7 @@ class DashboardView(BaseView):
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),
-                            ft.Text(value, size=22, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                            ft.Text(value, size=20, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
                             ft.Text(subtitle, size=12, color=color),
                         ],
                         spacing=8,
@@ -280,54 +310,94 @@ class DashboardView(BaseView):
         return ft.Row(controls=card_widgets, spacing=20, wrap=True)
 
     def build_data_sections(self) -> ft.Control:
-        """Construye las tablas de métricas en contenedores adaptativos."""
+        """Construye las tablas de métricas en contenedores adaptativos con datos reales."""
         text_color = self.get_text_color()
         accent = self.get_accent_color()
 
-        # 1. Inteligencia de Negocio
-        top_products = [
-            ("1", "Laptop Dell XPS 15", "Electrónica", "142 Uds"),
-            ("2", "Monitor LG 27 UltraFine", "Periféricos", "98 Uds"),
-            ("3", "Teclado Mecánico RGB", "Accesorios", "85 Uds"),
-            ("4", "Mouse Inalámbrico Logi", "Accesorios", "74 Uds"),
-            ("5", "Disco SSD 1TB NVMe", "Componentes", "62 Uds"),
-        ]
+        # ── 1. Inteligencia de Negocio (Top Más Vendidos) ────────────────────
+        def handle_cambio_rango(e):
+            self.rango_top_ventas = e.control.value
+            self.rebuild_ui()
 
-        top_rows = []
-        for pos, name, cat, qty in top_products:
-            top_rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(pos, weight=ft.FontWeight.BOLD, color=text_color)),
-                        ft.DataCell(ft.Text(name, color=text_color)),
-                        ft.DataCell(ft.Text(cat, color=self.get_subtext_color())),
-                        ft.DataCell(ft.Text(qty, color=accent, weight=ft.FontWeight.BOLD)),
-                    ]
-                )
-            )
+        def handle_cambio_limite(e):
+            self.limite_top_ventas = int(e.control.value)
+            self.rebuild_ui()
 
-        top_table = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("#", color=text_color)),
-                ft.DataColumn(ft.Text("Producto", color=text_color)),
-                ft.DataColumn(ft.Text("Categoría", color=text_color)),
-                ft.DataColumn(ft.Text("Ventas", color=text_color)),
+        dd_rango = ft.Dropdown(
+            value=self.rango_top_ventas,
+            options=[
+                ft.dropdown.Option("Hoy"),
+                ft.dropdown.Option("Semana"),
+                ft.dropdown.Option("Mes"),
+                ft.dropdown.Option("Año"),
             ],
-            rows=top_rows,
+            width=110,
+            content_padding=5
         )
+        dd_rango.on_change = handle_cambio_rango
+
+        dd_limite = ft.Dropdown(
+            value=str(self.limite_top_ventas),
+            options=[
+                ft.dropdown.Option("10", "Top 10"),
+                ft.dropdown.Option("100", "Top 100"),
+            ],
+            width=100,
+            content_padding=5
+        )
+        dd_limite.on_change = handle_cambio_limite
+
+
+        top_products = obtener_top_ventas(self.rango_top_ventas, self.limite_top_ventas)
+
+        if top_products:
+            top_rows = []
+            for item in top_products:
+                top_rows.append(
+                    ft.DataRow(
+                        cells=[
+                            ft.DataCell(ft.Text(item["posicion"], weight=ft.FontWeight.BOLD, color=text_color)),
+                            ft.DataCell(ft.Text(item["nombre_corto"], color=text_color)),
+                            ft.DataCell(ft.Text(item["categoria"], color=self.get_subtext_color())),
+                            ft.DataCell(ft.Text(f"{item['total_vendido']:.0f} Uds", color=accent, weight=ft.FontWeight.BOLD)),
+                        ]
+                    )
+                )
+
+            top_content = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("#", color=text_color)),
+                    ft.DataColumn(ft.Text("Producto", color=text_color)),
+                    ft.DataColumn(ft.Text("Departamento", color=text_color)),
+                    ft.DataColumn(ft.Text("Cantidad Vendida", color=text_color)),
+                ],
+                rows=top_rows,
+            )
+        else:
+            top_content = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.INFO_OUTLINED, color=self.get_subtext_color(), size=32),
+                    ft.Text(f"No hay ventas registradas para el período '{self.rango_top_ventas}'.", color=self.get_subtext_color(), size=13)
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30
+            )
 
         left_section = ft.Container(
             content=ft.Column(
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.LEADERBOARD_ROUNDED, color=accent),
-                            ft.Text("Inteligencia de Negocio (Top Más Vendidos)", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ft.Row([
+                                ft.Icon(ft.Icons.LEADERBOARD_ROUNDED, color=accent),
+                                ft.Text("Inteligencia de Negocio", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ], spacing=8),
+                            ft.Row([dd_rango, dd_limite], spacing=5)
                         ],
-                        spacing=10,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        wrap=True
                     ),
                     ft.Divider(height=10, color=self.get_border_color()),
-                    top_table,
+                    top_content,
                 ],
                 spacing=10,
             ),
@@ -338,37 +408,41 @@ class DashboardView(BaseView):
             expand=True,
         )
 
-        # 2. Auditoría Preventiva
-        critical_stock = [
-            ("Cable HDMI 2.1 2m", "2", "10", "TecnoImport C.A."),
-            ("RAM 16GB DDR5 5600", "1", "5", "Global Distribution"),
-            ("Impresora HP Smart", "0", "3", "OfiSuministros Vzla"),
-            ("Adaptador Ethernet USB-C", "3", "12", "TecnoImport C.A."),
-            ("Fuente de Poder 750W", "2", "8", "Global Distribution"),
-        ]
+        # ── 2. Auditoría Preventiva (Stock Crítico + Contacto Proveedor - ERS 3.6) ──
+        alertas_stock = obtener_alertas_stock(minimo=5.0)
 
-        stock_rows = []
-        for name, current, min_val, supplier in critical_stock:
-            stock_rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(name, color=text_color)),
-                        ft.DataCell(ft.Text(current, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD)),
-                        ft.DataCell(ft.Text(min_val, color=text_color)),
-                        ft.DataCell(ft.Text(supplier, color=self.get_subtext_color())),
-                    ]
+        if alertas_stock:
+            stock_rows = []
+            for item in alertas_stock:
+                contacto_str = f"{item['proveedor_nombre']} ({item['proveedor_telefono']})"
+                stock_rows.append(
+                    ft.DataRow(
+                        cells=[
+                            ft.DataCell(ft.Text(item["nombre_corto"], color=text_color, weight=ft.FontWeight.BOLD)),
+                            ft.DataCell(ft.Text(f"{item['existencia']:.0f}", color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD)),
+                            ft.DataCell(ft.Text(f"{item['minimo']:.0f}", color=text_color)),
+                            ft.DataCell(ft.Text(contacto_str, color=self.get_subtext_color())),
+                        ]
+                    )
                 )
-            )
 
-        stock_table = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Producto", color=text_color)),
-                ft.DataColumn(ft.Text("Stock Actual", color=text_color)),
-                ft.DataColumn(ft.Text("Mínimo", color=text_color)),
-                ft.DataColumn(ft.Text("Proveedor", color=text_color)),
-            ],
-            rows=stock_rows,
-        )
+            stock_content = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Producto", color=text_color)),
+                    ft.DataColumn(ft.Text("Stock Actual", color=text_color)),
+                    ft.DataColumn(ft.Text("Mínimo", color=text_color)),
+                    ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color)),
+                ],
+                rows=stock_rows,
+            )
+        else:
+            stock_content = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINED, color=ft.Colors.GREEN_500, size=32),
+                    ft.Text("Todo el inventario se encuentra sobre el stock mínimo de reposición.", color=self.get_subtext_color(), size=13)
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30
+            )
 
         right_section = ft.Container(
             content=ft.Column(
@@ -376,12 +450,12 @@ class DashboardView(BaseView):
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.REPORT_PROBLEM_ROUNDED, color=ft.Colors.AMBER_500),
-                            ft.Text("Auditoría Preventiva (Stock Crítico)", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ft.Text("Auditoría Preventiva (Stock Crítico < 5)", size=15, weight=ft.FontWeight.BOLD, color=text_color),
                         ],
                         spacing=10,
                     ),
                     ft.Divider(height=10, color=self.get_border_color()),
-                    stock_table,
+                    stock_content,
                 ],
                 spacing=10,
             ),

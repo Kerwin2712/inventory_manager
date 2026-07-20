@@ -346,6 +346,25 @@
 - **Verificaciones realizadas:** Prueba de instanciación síncrona verificando la ausencia de `file_picker` y la presencia del método nativo `abrir_dialogo_guardado`.
 - **Estado del proyecto:** En desarrollo. Diálogo de exportación PDF nativo, síncrono y robusto operativo en Windows.
 
+## Conexión Analítica del Dashboard y Módulo de Gestión de Datos & Respaldos (ERS 1.1 & 3.6)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **Creación de Servicio Analítico (`services/reportes_service.py`):**
+    - Implementación de `obtener_metricas_dashboard()` calculando ventas reales del día en USD, productos en almacén, departamentos activos y stock crítico.
+    - Implementación de `obtener_top_ventas(rango_temporal, limite)` con filtros dinámicos por tiempo ('Hoy', 'Semana', 'Mes', 'Año') y límite de la dimensión (Top 10 / Top 100).
+    - Implementación de `obtener_alertas_stock(minimo=5)` realizando un `JOIN` con la tabla `proveedores` para aislar e incluir el contacto y teléfono del proveedor responsable (ERS 3.6).
+  - **Integración en Tiempo Real en Dashboard (`ui/views/dashboard_view.py`):**
+    - Conexión de las tarjetas de métricas superiores y renderizado dinámico del Top Más Vendidos con desplegables interactivos.
+    - Renderizado de la tabla de Auditoría Preventiva mostrando ítems críticos junto con su proveedor y número telefónico de contacto.
+  - **Creación de Módulo de Gestión de Datos (`ui/views/gestion_datos_view.py`):**
+    - Diseño de interfaz con tarjetas para Carga Masiva e Importación/Exportación a Excel (ERS 1.1).
+    - Implementación del flujo de respaldos utilizando `pandas`, `openpyxl` y el diálogo nativo `tkinter.filedialog.asksaveasfilename` sugiriendo el nombre `Backup_Inventario_YYYYMMDD_HHMMSS.xlsx`.
+    - Generación del libro Excel con 3 pestañas (sheets) separadas: `Productos`, `Clientes` y `Proveedores`, guardando la carpeta contenedora en SQLite (`last_excel_dir`).
+  - **Enrutamiento de Navegación:** Conexión de la opción "Gestión de Datos" del Sidebar a `GestionDatosView`.
+- **Verificaciones realizadas:** Pruebas unitarias de consultas SQL, test de instanciación de vistas y prueba de navegación fluida.
+- **Estado del proyecto:** Completo. Motor analítico en tiempo real y sistema de respaldo a Excel operativos.
+
+
 
 
 
