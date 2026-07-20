@@ -32,6 +32,34 @@ def init_db():
                 value TEXT NOT NULL
             )
         """)
+
+        # Crear tabla de clientes (Sección 1.2 ERS)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS clientes (
+                cedula_rif TEXT PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                direccion TEXT,
+                telefono TEXT,
+                correo TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Crear tabla de proveedores (Sección 1.3 ERS)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS proveedores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                empresa TEXT,
+                contacto TEXT,
+                telefono TEXT NOT NULL,
+                correo TEXT,
+                descripcion TEXT,
+                adjuntos TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         
         # Verificar si el usuario admin inicial ya existe
         cursor.execute("SELECT id FROM users WHERE username = ?", ("admin",))

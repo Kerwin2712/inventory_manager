@@ -134,6 +134,17 @@
     - **`Producto`:** Esquema estricto de 12 campos del documento ERS (incluyendo `descripcion_general`, `nombre_referencia_corto` limitado a 30 caracteres para notas impresas y método de cálculo `calcular_precio_bcv`).
 - **Estado del proyecto:** En desarrollo. Modelos de dominio base implementados y verificados.
 
+## Persistencia y Servicio de Cartera de Clientes y Proveedores
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Inclusión de sentencias DDL en `core/database.py` para la creación de las tablas `clientes` (`cedula_rif` como clave primaria) y `proveedores` (`id` autoincremental).
+  - Desarrollo del módulo de servicios `services/cartera_service.py` implementando las funciones CRUD para ambas entidades con Clean Architecture.
+  - Integración de validaciones de reglas de negocio:
+    - **RNO-CLI-01:** Validación de no vacíos y `strip()` en Nombre/Razón Social y Cédula/RIF en `crear_cliente` y `actualizar_cliente`.
+    - **RNO-PROV-01:** Validación de matriz asociativa `(Empresa + Teléfono) Ó (Contacto + Teléfono)` y emisión del código de excepción `ERR_PROV_INS_INVALID` si no se cumplen las condiciones.
+- **Estado del proyecto:** En desarrollo. Persistencia y servicios de la cartera de entidades completados y validados.
+
+
 
 
 
