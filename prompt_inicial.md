@@ -4,7 +4,7 @@ REGLA 1: Al iniciar cada conversación, debes leer obligatoriamente `docs/README
 
 REGLA 2: Cada vez que realices un cambio, debes registrarlo cronológicamente en el archivo del mes actual dentro de `docs/bitacora/`.
 
-REGLA 3: Los commits que generes deben ser strictly atómicos (un commit por funcionalidad o arreglo específico).
+REGLA 3: Los commits que generes deben ser estrictamente atómicos (un commit por funcionalidad o arreglo específico).
 
 REGLA 4: BAJO NINGUNA CIRCUNSTANCIA debes ejecutar el comando `git push`.
 

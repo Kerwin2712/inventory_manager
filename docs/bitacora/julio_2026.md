@@ -124,6 +124,17 @@
   - Creación de `README.md` profesional con características del software, instrucciones paso a paso de instalación/ejecución y sección de derechos de autor y propiedad intelectual.
 - **Estado del proyecto:** En desarrollo. Documentación técnica y legal actualizada.
 
+## Corrección Estructural de Bitácora y Modelado de Dominio (ERS)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Actualización de `.agents/prompt_inicial.md` y `prompt_inicial.md` especificando las Reglas 1 y 2 para el manejo de bitácoras segmentadas por mes (`docs/bitacora/julio_2026.md`).
+  - Creación del módulo de modelos de dominio en `core/models.py` definiendo las clases `Cliente`, `Proveedor` y `Producto` con sus validaciones estrictas:
+    - **`Cliente`:** Validación RNO-CLI-01 para obligatoriedad de Nombre/Razón Social y Cédula/RIF.
+    - **`Proveedor`:** Validación RNO-PROV-01 y código de error `ERR_PROV_INS_INVALID` si falta el teléfono de contacto o los datos de la empresa/vendedor.
+    - **`Producto`:** Esquema estricto de 12 campos del documento ERS (incluyendo `descripcion_general`, `nombre_referencia_corto` limitado a 30 caracteres para notas impresas y método de cálculo `calcular_precio_bcv`).
+- **Estado del proyecto:** En desarrollo. Modelos de dominio base implementados y verificados.
+
+
 
 
 
