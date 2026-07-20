@@ -214,7 +214,7 @@ class InventarioView(BaseView):
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.SEARCH, color=accent, size=20),
-                            ft.Text("Búsqueda y Filtros en Cascada (ERS 3.2)",
+                            ft.Text("Búsqueda y Filtros",
                                     size=14, weight=ft.FontWeight.BOLD, color=text_color),
                         ],
                         spacing=8,
@@ -487,7 +487,7 @@ class InventarioView(BaseView):
 
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Ingresar Producto — Paso 1: Verificar Código", color=text_color),
+            title=ft.Text("Nuevo Producto", color=text_color),
             content=ft.Column(
                 controls=[
                     ft.Text("Ingrese el código único del producto para verificar si ya existe:", color=text_color),
@@ -579,7 +579,7 @@ class InventarioView(BaseView):
             focused_border_color=accent,
         )
 
-        titulo_paso = "Editar Producto" if self._editing_codigo else "Ingresar Producto — Paso 2: Datos"
+        titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
 
         def _guardar(ev):
             self._close_dialog(ev)
