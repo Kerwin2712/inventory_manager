@@ -94,6 +94,15 @@
   - Limpieza de `ui/views/dashboard_view.py` removiendo enlaces administrativos irrelevantes para los usuarios convencionales.
 - **Estado del proyecto:** En desarrollo. Separación de responsabilidades y vista exclusiva de administración configuradas.
 
+## Corrección del Sistema de Acentos de Color y Legibilidad en Modo Claro
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Rediseño de `ui/views/base_view.py` incorporando tokens de color adaptativos (`get_accent_color`, `get_bg_color`, `get_sidebar_bg`, `get_card_bg`, `get_text_color`, `get_subtext_color`).
+  - Aplicación estricta del color de acento (`color_scheme_seed`) exclusivamente en el título de la pantalla, ícono de usuario y la opción activa de la sidebar.
+  - Corrección de la apariencia en Modo Claro: Sidebar con fondo blanco impecable y todos los elementos de texto configurados en colores oscuros de alto contraste para máxima legibilidad.
+- **Estado del proyecto:** En desarrollo. Personalización de temas visuales corregida y validada.
+
+
 
 
 

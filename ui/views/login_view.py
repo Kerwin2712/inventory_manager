@@ -3,34 +3,41 @@ from ui.views.base_view import BaseView
 from services.user_service import authenticate_user
 
 class LoginView(BaseView):
-    """Vista de inicio de sesión."""
+    """Vista de inicio de sesión con adaptación dinámica de tema."""
     
     def __init__(self, on_login_success=None):
         self.on_login_success = on_login_success
         super().__init__(route="/login", title="Control de Acceso")
 
     def get_body(self) -> ft.Control:
+        accent = self.get_accent_color()
+        text_color = self.get_text_color()
+
         # Campos de entrada de datos
         self.username_input = ft.TextField(
             label="Usuario",
             width=320,
-            border_color=ft.Colors.BLUE_400,
-            focused_border_color=ft.Colors.BLUE_200,
+            border_color=accent,
+            focused_border_color=accent,
+            label_style=ft.TextStyle(color=self.get_subtext_color()),
+            color=text_color,
         )
         self.password_input = ft.TextField(
             label="Contraseña",
             password=True,
             can_reveal_password=True,
             width=320,
-            border_color=ft.Colors.BLUE_400,
-            focused_border_color=ft.Colors.BLUE_200,
+            border_color=accent,
+            focused_border_color=accent,
+            label_style=ft.TextStyle(color=self.get_subtext_color()),
+            color=text_color,
         )
         
         # Botón de autenticación
         login_btn = ft.Button(
             content="Iniciar Sesión",
             width=320,
-            bgcolor=ft.Colors.BLUE_600,
+            bgcolor=accent,
             color=ft.Colors.WHITE,
             on_click=self.handle_login,
         )
@@ -38,7 +45,7 @@ class LoginView(BaseView):
         # Etiqueta para mensajes de error
         self.error_text = ft.Text(
             value="",
-            color=ft.Colors.RED_400,
+            color=ft.Colors.RED_500,
             size=14,
             visible=False,
         )
@@ -47,7 +54,7 @@ class LoginView(BaseView):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(icon=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=ft.Colors.BLUE_400),
+                    ft.Icon(icon=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
                     self.username_input,
                     self.password_input,
                     self.error_text,

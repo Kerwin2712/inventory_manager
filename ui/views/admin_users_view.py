@@ -11,24 +11,33 @@ class AdminUsersView(BaseView):
         super().__init__(route="/admin_users", title="Gestión Exclusiva de Usuarios (Superadmin)")
 
     def get_body(self) -> ft.Control:
+        accent = self.get_accent_color()
+        text_color = self.get_text_color()
+
         # Controles del formulario
         self.username_input = ft.TextField(
             label="Nombre de Usuario",
             width=250,
-            border_color=ft.Colors.BLUE_400,
+            border_color=self.get_border_color(),
+            label_style=ft.TextStyle(color=self.get_subtext_color()),
+            color=text_color,
         )
         self.password_input = ft.TextField(
             label="Contraseña",
             password=True,
             can_reveal_password=True,
             width=280,
-            border_color=ft.Colors.BLUE_400,
+            border_color=self.get_border_color(),
+            label_style=ft.TextStyle(color=self.get_subtext_color()),
+            color=text_color,
             hint_text="Vacío = no cambiar al editar"
         )
         self.role_dropdown = ft.Dropdown(
             label="Rol",
             width=200,
-            border_color=ft.Colors.BLUE_400,
+            border_color=self.get_border_color(),
+            label_style=ft.TextStyle(color=self.get_subtext_color()),
+            color=text_color,
             options=[
                 ft.dropdown.Option(key="administrador", text="Administrador Real"),
                 ft.dropdown.Option(key="vendedor", text="Vendedor"),
@@ -38,7 +47,7 @@ class AdminUsersView(BaseView):
 
         self.save_btn = ft.Button(
             content="Guardar Usuario",
-            bgcolor=ft.Colors.BLUE_600,
+            bgcolor=accent,
             color=ft.Colors.WHITE,
             on_click=self.handle_save_user,
         )
@@ -58,16 +67,10 @@ class AdminUsersView(BaseView):
 
         self.msg_text = ft.Text(value="", size=14, visible=False)
 
-        # Controles de tema (Sol/Luna + Selector de Acento)
-        theme_icon = ft.Icons.LIGHT_MODE_OUTLINED
-        try:
-            if self.page and self.page.theme_mode == ft.ThemeMode.LIGHT:
-                theme_icon = ft.Icons.DARK_MODE_OUTLINED
-        except RuntimeError:
-            pass
-
+        # Controles de tema
         theme_toggle_btn = ft.IconButton(
-            icon=theme_icon,
+            icon=ft.Icons.LIGHT_MODE_OUTLINED if self.is_dark else ft.Icons.DARK_MODE_OUTLINED,
+            icon_color=text_color,
             tooltip="Alternar Modo Claro / Oscuro",
             on_click=self.toggle_theme,
         )
@@ -86,7 +89,7 @@ class AdminUsersView(BaseView):
                     content=ft.Row(
                         controls=[
                             ft.Container(width=16, height=16, border_radius=8, bgcolor=display_color),
-                            ft.Text(name),
+                            ft.Text(name, color=text_color),
                         ],
                         spacing=10,
                     ),
@@ -96,6 +99,7 @@ class AdminUsersView(BaseView):
 
         color_picker_btn = ft.PopupMenuButton(
             icon=ft.Icons.PALETTE_OUTLINED,
+            icon_color=accent,
             tooltip="Seleccionar Color de Acento",
             items=color_menu_items,
         )
@@ -103,10 +107,10 @@ class AdminUsersView(BaseView):
         # Tabla para listar usuarios
         self.users_table = ft.DataTable(
             columns=[
-                ft.DataColumn(ft.Text("ID")),
-                ft.DataColumn(ft.Text("Usuario")),
-                ft.DataColumn(ft.Text("Rol")),
-                ft.DataColumn(ft.Text("Acciones")),
+                ft.DataColumn(ft.Text("ID", color=text_color)),
+                ft.DataColumn(ft.Text("Usuario", color=text_color)),
+                ft.DataColumn(ft.Text("Rol", color=text_color)),
+                ft.DataColumn(ft.Text("Acciones", color=text_color)),
             ],
             rows=[],
         )
@@ -117,7 +121,7 @@ class AdminUsersView(BaseView):
         form_card = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Registrar o Modificar Usuario del Sistema", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_200),
+                    ft.Text("Registrar o Modificar Usuario del Sistema", size=18, weight=ft.FontWeight.BOLD, color=accent),
                     ft.Row(
                         controls=[
                             self.username_input,
@@ -140,12 +144,21 @@ class AdminUsersView(BaseView):
             ),
             padding=20,
             border_radius=10,
-            bgcolor=ft.Colors.GREY_800,
+            bgcolor=self.get_card_bg(),
+            border=ft.Border.all(1, self.get_border_color()),
         )
+
+        user_icon = ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS, color=accent, size=22)
 
         top_header = ft.Row(
             controls=[
-                ft.Text("Panel Exclusivo de Cuentas (Superadmin)", size=16, color=ft.Colors.GREY_400),
+                ft.Row(
+                    controls=[
+                        user_icon,
+                        ft.Text("Panel Exclusivo de Cuentas (Superadmin)", size=16, color=text_color, weight=ft.FontWeight.BOLD),
+                    ],
+                    spacing=8,
+                ),
                 ft.Row(
                     controls=[
                         theme_toggle_btn,
@@ -162,8 +175,8 @@ class AdminUsersView(BaseView):
             controls=[
                 top_header,
                 form_card,
-                ft.Divider(height=20, color=ft.Colors.GREY_700),
-                ft.Text("Lista de Usuarios Registrados", size=18, weight=ft.FontWeight.BOLD),
+                ft.Divider(height=20, color=self.get_border_color()),
+                ft.Text("Lista de Usuarios Registrados", size=18, weight=ft.FontWeight.BOLD, color=text_color),
                 ft.Container(
                     content=self.users_table,
                     padding=10,
@@ -174,27 +187,29 @@ class AdminUsersView(BaseView):
         )
 
     def refresh_table(self):
-        """Carga los usuarios existentes en la tabla."""
+        """Carga los usuarios existentes en la tabla adaptando los colores."""
         users = get_all_users()
         rows = []
+        text_color = self.get_text_color()
+        accent = self.get_accent_color()
+
         for u in users:
             edit_btn = ft.IconButton(
                 icon=ft.Icons.EDIT,
-                icon_color=ft.Colors.BLUE_400,
+                icon_color=accent,
                 tooltip="Editar Usuario",
                 data=u,
                 on_click=self.start_edit_user,
             )
             
-            # Impedir modificar la cuenta admin inicial si es la cuenta del sistema
-            action_cell = edit_btn if u["username"] != "admin" else ft.Text("Superadmin Principal", color=ft.Colors.GREY_500)
+            action_cell = edit_btn if u["username"] != "admin" else ft.Text("Superadmin Principal", color=self.get_subtext_color())
             
             rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(str(u["id"]))),
-                        ft.DataCell(ft.Text(u["username"])),
-                        ft.DataCell(ft.Text(u["role"])),
+                        ft.DataCell(ft.Text(str(u["id"]), color=text_color)),
+                        ft.DataCell(ft.Text(u["username"], color=text_color)),
+                        ft.DataCell(ft.Text(u["role"], color=text_color)),
                         ft.DataCell(action_cell),
                     ]
                 )
@@ -253,7 +268,7 @@ class AdminUsersView(BaseView):
     def show_message(self, msg: str, is_error: bool):
         """Muestra un mensaje de retroalimentación."""
         self.msg_text.value = msg
-        self.msg_text.color = ft.Colors.RED_400 if is_error else ft.Colors.GREEN_400
+        self.msg_text.color = ft.Colors.RED_500 if is_error else ft.Colors.GREEN_500
         self.msg_text.visible = True
 
     def handle_logout(self, e):
