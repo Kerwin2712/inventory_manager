@@ -55,7 +55,7 @@ pip install -r requirements.txt
 Crea un archivo llamado `.env` en la raíz del proyecto (o edita el existente) y define la clave inicial del superusuario `admin`:
 
 ```env
-RECUPERAR_PASS=27934140
+RECUPERAR_PASS=123456789
 DATABASE_PATH=inventory.db
 ```
 
@@ -73,7 +73,7 @@ python main.py
 Al ejecutar la aplicación por primera vez en un equipo nuevo, el sistema creará automáticamente la base de datos local y sembrará la cuenta inicial de instalación:
 
 - **Usuario:** `admin`
-- **Contraseña:** El valor asignado a la variable `RECUPERAR_PASS` en tu archivo `.env` (ej. `27934140`).
+- **Contraseña:** El valor asignado a la variable `RECUPERAR_PASS` en tu archivo `.env` (ej. `123456789`).
 
 ---
 
@@ -82,6 +82,6 @@ Al ejecutar la aplicación por primera vez en un equipo nuevo, el sistema crear�
 > **IMPORTANT:** 
 > **© Todos los derechos reservados.**
 > 
-> Este proyecto, su código fuente, arquitectura, diseño de interfaz y elementos asociados son propiedad intelectual exclusiva de su autor (**Kerwin / Kerwin2712**). 
+> Este proyecto, su código fuente, arquitectura, diseño de interfaz y elementos asociados son propiedad intelectual exclusiva de su autor (**Kerwin Quintero / Kerwin2712**). 
 > 
 > Queda estrictamente prohibida la reproducción, distribución, modificación, comercialización o uso no autorizado de este software o cualquiera de sus componentes sin la autorización previa y por escrito del titular de los derechos de autor.
