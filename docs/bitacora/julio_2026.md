@@ -117,6 +117,14 @@
   - Permite a los usuarios autenticarse directamente al presionar la tecla Enter desde cualquier campo de credenciales.
 - **Estado del proyecto:** En desarrollo. Accesibilidad e interactividad del formulario de login mejoradas.
 
+## Actualización de Documentación de Referencia y Manual de Inicio
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Redacción técnica completa de `docs/README_proyecto.md` especificando la arquitectura Clean Architecture, módulos (`core/`, `services/`, `ui/`), hashing PBKDF2-HMAC-SHA256, enrutamiento por roles y sistema de temas con SQLite.
+  - Creación de `README.md` profesional con características del software, instrucciones paso a paso de instalación/ejecución y sección de derechos de autor y propiedad intelectual.
+- **Estado del proyecto:** En desarrollo. Documentación técnica y legal actualizada.
+
+
 
 
 
