@@ -328,6 +328,16 @@
 - **Verificaciones realizadas:** Prueba automatizada verificando la reutilización transparente de `FilePicker` en `page.overlay`.
 - **Estado del proyecto:** En desarrollo. FilePicker nativo registrado permanentemente en el socket de Flet.
 
+## Corrección del Error 'Unknown control: FilePicker' en Pantalla de Login
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Diagnóstico de la advertencia visual "Unknown control: FilePicker" mostrada al iniciar sesión.
+  - Eliminación de la instanciación global prematura de `FilePicker` en `main.py`.
+  - Refactorización de `ensure_file_picker_in_overlay` en `ui/views/ventas_view.py` para asociar el `FilePicker` al `page.overlay` únicamente en el momento oportuno al exportar la Nota de Entrega.
+- **Verificaciones realizadas:** Prueba automatizada de instanciación aislada de `LoginView`, `DashboardView` y `VentasView`.
+- **Estado del proyecto:** En desarrollo. Interfaz de Login y flujo de ventas aislados y limpios sin advertencias de controles desconocidos.
+
+
 
 
 

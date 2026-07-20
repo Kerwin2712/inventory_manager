@@ -81,28 +81,17 @@ class VentasView(BaseView):
             p.update()
 
     def ensure_file_picker_in_overlay(self, e=None) -> ft.FilePicker:
-        """Garantiza de forma segura la reutilización del FilePicker en page.overlay."""
-        p = self.get_current_page(e)
-        if p and hasattr(p, "overlay"):
-            for control in p.overlay:
-                if isinstance(control, ft.FilePicker):
-                    control.on_result = self.handle_pdf_save_result
-                    self.file_picker = control
-                    return control
-
-            # Si por algún motivo no estuviera en overlay, se crea e inserta
-            fp = ft.FilePicker()
-            fp.on_result = self.handle_pdf_save_result
-            p.overlay.append(fp)
-            p.update()
-            self.file_picker = fp
-            return fp
-
+        """Garantiza de forma segura que self.file_picker esté registrado en page.overlay."""
         if not hasattr(self, "file_picker") or self.file_picker is None:
             self.file_picker = ft.FilePicker()
             self.file_picker.on_result = self.handle_pdf_save_result
-        return self.file_picker
 
+        p = self.get_current_page(e)
+        if p and hasattr(p, "overlay"):
+            if self.file_picker not in p.overlay:
+                p.overlay.append(self.file_picker)
+                p.update()
+        return self.file_picker
 
     def handle_pdf_save_result(self, e):
         """Procesa la selección de ubicación elegida en la ventana Guardar como."""
@@ -122,11 +111,9 @@ class VentasView(BaseView):
             except Exception as ex:
                 self.show_alert_error(e, f"Error al generar la Nota de Entrega PDF: {ex}")
 
-
     def get_body(self) -> ft.Control:
-        self.ensure_file_picker_in_overlay()
-
         # ── 1. Cabecera: Selector de Tipo de Venta y Tasa BCV ────────────────
+
         self.tipo_venta_selector = ft.SegmentedButton(
             selected=["Formal"],
             segments=[
