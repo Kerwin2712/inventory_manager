@@ -165,6 +165,15 @@
     - **DataGrid con Acciones:** Columna "Acciones" en cada fila con botones de íconos para editar y eliminar de forma segura, capturando excepciones de integridad con `SnackBar`.
 - **Estado del proyecto:** En desarrollo. Módulo avanzado de Cartera de Entidades completado y verificado.
 
+## Corrección de Actualización de Control Secundario en CarteraView
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Solución del error `RuntimeError: Control must be added to the page first` al intentar eliminar o editar registros en `ui/views/cartera_view.py`.
+  - Implementación de los métodos `get_current_page(e)` y `safe_update(e)` para resolver de manera segura la instancia de `page` activa desde el evento del botón o el árbol de controles.
+  - Actualización de las alertas emergentes `show_alert_error`, `show_alert_success` y `show_alert_info` garantizando el refresco suave de la interfaz en controles anidados.
+- **Estado del proyecto:** En desarrollo. Manejo de estado y renderizado seguro en CarteraView corregidos y validados.
+
+
 
 
 

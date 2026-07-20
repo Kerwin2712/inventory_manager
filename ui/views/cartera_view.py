@@ -25,6 +25,30 @@ class CarteraView(BaseView):
         
         super().__init__(route="/cartera", title="Cartera de Clientes y Proveedores")
 
+    def get_current_page(self, e=None):
+        """Obtiene de manera segura la instancia de page activa desde el evento o el control."""
+        if e and hasattr(e, "page") and e.page:
+            return e.page
+        if e and hasattr(e, "control") and hasattr(e.control, "page") and e.control.page:
+            return e.control.page
+        try:
+            if self.page:
+                return self.page
+        except (RuntimeError, AttributeError):
+            pass
+        return None
+
+    def safe_update(self, e=None):
+        """Actualiza la interfaz de forma segura evitando RuntimeError en controles secundarios."""
+        p = self.get_current_page(e)
+        if p:
+            p.update()
+        else:
+            try:
+                self.update()
+            except (RuntimeError, AttributeError):
+                pass
+
     def handle_tab_change(self, e):
         """Cambia la pestaña activa (Clientes o Proveedores)."""
         if e.control.selected:
@@ -32,6 +56,7 @@ class CarteraView(BaseView):
             if selected_list:
                 self.current_tab = selected_list[0]
                 self.rebuild_ui()
+                self.safe_update(e)
 
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
@@ -346,17 +371,15 @@ class CarteraView(BaseView):
     def handle_buscar_cliente(self, e):
         cedula = (self.cli_search_input.value or "").strip()
         if not cedula:
-            self.show_alert_info("Ingrese una Cédula o RIF para realizar la búsqueda.")
+            self.show_alert_info("Ingrese una Cédula o RIF para realizar la búsqueda.", e)
             return
 
         cliente = buscar_cliente_por_cedula(cedula)
-        accent = self.get_accent_color()
         text_color = self.get_text_color()
         card_bg = self.get_card_bg()
         border_color = self.get_border_color()
 
         if cliente:
-            # Mostrar tarjeta de detalle con opciones
             self.cli_form_container.visible = False
             self.cli_result_container.content = ft.Card(
                 content=ft.Container(
@@ -369,8 +392,8 @@ class CarteraView(BaseView):
                                         ft.Text(f"Cliente Encontrado: {cliente['nombre']}", size=16, weight=ft.FontWeight.BOLD, color=text_color),
                                     ], spacing=10),
                                     ft.Row([
-                                        ft.OutlinedButton("Editar", icon=ft.Icons.EDIT, on_click=lambda e, c=cliente: self.preparar_edicion_cliente(c)),
-                                        ft.Button("Eliminar", icon=ft.Icons.DELETE_OUTLINED, bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE, on_click=lambda e, c=cliente["cedula_rif"]: self.handle_eliminar_cliente(c)),
+                                        ft.OutlinedButton("Editar", icon=ft.Icons.EDIT, on_click=lambda ev, c=cliente: self.preparar_edicion_cliente(c, ev)),
+                                        ft.Button("Eliminar", icon=ft.Icons.DELETE_OUTLINED, bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE, on_click=lambda ev, c=cliente["cedula_rif"]: self.handle_eliminar_cliente(c, ev)),
                                     ], spacing=10),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -387,19 +410,18 @@ class CarteraView(BaseView):
                 )
             )
             self.cli_result_container.visible = True
-            self.update()
+            self.safe_update(e)
         else:
-            # Entidad no encontrada -> Alerta suave y mostrar formulario de creación
             self.cli_result_container.visible = False
-            self.show_alert_info(f"El cliente con Cédula/RIF '{cedula}' no existe. Proceda a registrarlo.")
+            self.show_alert_info(f"El cliente con Cédula/RIF '{cedula}' no existe. Proceda a registrarlo.", e)
             self.limpiar_form_cliente()
             self.cli_cedula.value = cedula
             self.cli_editing_cedula = None
             self.btn_guardar_cli_label.value = "Guardar Cliente"
             self.cli_form_container.visible = True
-            self.update()
+            self.safe_update(e)
 
-    def preparar_edicion_cliente(self, cliente: dict):
+    def preparar_edicion_cliente(self, cliente: dict, e=None):
         self.cli_result_container.visible = False
         self.cli_editing_cedula = cliente["cedula_rif"]
         self.cli_cedula.value = cliente["cedula_rif"]
@@ -410,7 +432,7 @@ class CarteraView(BaseView):
         self.cli_correo.value = cliente["correo"] or ""
         self.btn_guardar_cli_label.value = "Actualizar Cliente"
         self.cli_form_container.visible = True
-        self.update()
+        self.safe_update(e)
 
     def handle_guardar_cliente(self, e):
         try:
@@ -422,7 +444,7 @@ class CarteraView(BaseView):
                     telefono=self.cli_telefono.value,
                     correo=self.cli_correo.value,
                 )
-                self.show_alert_success("¡Cliente actualizado exitosamente!")
+                self.show_alert_success("¡Cliente actualizado exitosamente!", e)
             else:
                 crear_cliente(
                     nombre=self.cli_nombre.value,
@@ -431,23 +453,25 @@ class CarteraView(BaseView):
                     telefono=self.cli_telefono.value,
                     correo=self.cli_correo.value,
                 )
-                self.show_alert_success("¡Cliente registrado exitosamente!")
+                self.show_alert_success("¡Cliente registrado exitosamente!", e)
 
             self.limpiar_form_cliente()
             self.cli_form_container.visible = False
             self.cli_result_container.visible = False
             self.rebuild_ui()
+            self.safe_update(e)
         except ValueError as ex:
-            self.show_alert_error(str(ex))
+            self.show_alert_error(str(ex), e)
 
-    def handle_eliminar_cliente(self, cedula_rif: str):
+    def handle_eliminar_cliente(self, cedula_rif: str, e=None):
         try:
             eliminar_cliente(cedula_rif)
-            self.show_alert_success(f"Cliente '{cedula_rif}' eliminado correctamente.")
+            self.show_alert_success(f"Cliente '{cedula_rif}' eliminado correctamente.", e)
             self.cli_result_container.visible = False
             self.rebuild_ui()
+            self.safe_update(e)
         except ValueError as ex:
-            self.show_alert_error(str(ex))
+            self.show_alert_error(str(ex), e)
 
     def handle_mostrar_form_cliente(self, e):
         self.cli_result_container.visible = False
@@ -456,12 +480,12 @@ class CarteraView(BaseView):
         self.cli_cedula.disabled = False
         self.btn_guardar_cli_label.value = "Guardar Cliente"
         self.cli_form_container.visible = True
-        self.update()
+        self.safe_update(e)
 
     def handle_ocultar_form_cliente(self, e):
         self.cli_form_container.visible = False
         self.limpiar_form_cliente()
-        self.update()
+        self.safe_update(e)
 
     # ==========================================
     # MANEJO DE EVENTOS BÚSQUEDA Y ACCIONES PROVEEDORES
@@ -469,7 +493,7 @@ class CarteraView(BaseView):
     def handle_buscar_proveedor(self, e):
         criterio = (self.prov_search_input.value or "").strip()
         if not criterio:
-            self.show_alert_info("Ingrese el nombre de la empresa o teléfono para buscar.")
+            self.show_alert_info("Ingrese el nombre de la empresa o teléfono para buscar.", e)
             return
 
         proveedores = buscar_proveedores(criterio)
@@ -478,7 +502,7 @@ class CarteraView(BaseView):
         border_color = self.get_border_color()
 
         if proveedores:
-            prov = proveedores[0] # Tomar primera coincidencia para la tarjeta
+            prov = proveedores[0]
             self.prov_form_container.visible = False
             self.prov_result_container.content = ft.Card(
                 content=ft.Container(
@@ -491,8 +515,8 @@ class CarteraView(BaseView):
                                         ft.Text(f"Proveedor Encontrado: {prov['empresa'] or prov['contacto']}", size=16, weight=ft.FontWeight.BOLD, color=text_color),
                                     ], spacing=10),
                                     ft.Row([
-                                        ft.OutlinedButton("Editar", icon=ft.Icons.EDIT, on_click=lambda e, p=prov: self.preparar_edicion_proveedor(p)),
-                                        ft.Button("Eliminar", icon=ft.Icons.DELETE_OUTLINED, bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE, on_click=lambda e, pid=prov["id"]: self.handle_eliminar_proveedor(pid)),
+                                        ft.OutlinedButton("Editar", icon=ft.Icons.EDIT, on_click=lambda ev, p=prov: self.preparar_edicion_proveedor(p, ev)),
+                                        ft.Button("Eliminar", icon=ft.Icons.DELETE_OUTLINED, bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE, on_click=lambda ev, pid=prov["id"]: self.handle_eliminar_proveedor(pid, ev)),
                                     ], spacing=10),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -509,10 +533,10 @@ class CarteraView(BaseView):
                 )
             )
             self.prov_result_container.visible = True
-            self.update()
+            self.safe_update(e)
         else:
             self.prov_result_container.visible = False
-            self.show_alert_info(f"Proveedor '{criterio}' no encontrado. Proceda a registrarlo.")
+            self.show_alert_info(f"Proveedor '{criterio}' no encontrado. Proceda a registrarlo.", e)
             self.limpiar_form_proveedor()
             if criterio.isdigit():
                 self.prov_telefono.value = criterio
@@ -521,9 +545,9 @@ class CarteraView(BaseView):
             self.prov_editing_id = None
             self.btn_guardar_prov_label.value = "Guardar Proveedor"
             self.prov_form_container.visible = True
-            self.update()
+            self.safe_update(e)
 
-    def preparar_edicion_proveedor(self, prov: dict):
+    def preparar_edicion_proveedor(self, prov: dict, e=None):
         self.prov_result_container.visible = False
         self.prov_editing_id = prov["id"]
         self.prov_empresa.value = prov["empresa"] or ""
@@ -534,7 +558,7 @@ class CarteraView(BaseView):
         self.adjuntos_temp = prov.get("adjuntos", [])
         self.btn_guardar_prov_label.value = "Actualizar Proveedor"
         self.prov_form_container.visible = True
-        self.update()
+        self.safe_update(e)
 
     def handle_guardar_proveedor(self, e):
         try:
@@ -548,7 +572,7 @@ class CarteraView(BaseView):
                     descripcion=self.prov_desc.value,
                     adjuntos=self.adjuntos_temp,
                 )
-                self.show_alert_success("¡Proveedor actualizado exitosamente!")
+                self.show_alert_success("¡Proveedor actualizado exitosamente!", e)
             else:
                 crear_proveedor(
                     empresa=self.prov_empresa.value,
@@ -558,23 +582,25 @@ class CarteraView(BaseView):
                     descripcion=self.prov_desc.value,
                     adjuntos=self.adjuntos_temp,
                 )
-                self.show_alert_success("¡Proveedor registrado exitosamente!")
+                self.show_alert_success("¡Proveedor registrado exitosamente!", e)
 
             self.limpiar_form_proveedor()
             self.prov_form_container.visible = False
             self.prov_result_container.visible = False
             self.rebuild_ui()
+            self.safe_update(e)
         except ValueError as ex:
-            self.show_alert_error(str(ex))
+            self.show_alert_error(str(ex), e)
 
-    def handle_eliminar_proveedor(self, proveedor_id: int):
+    def handle_eliminar_proveedor(self, proveedor_id: int, e=None):
         try:
             eliminar_proveedor(proveedor_id)
-            self.show_alert_success(f"Proveedor ID '{proveedor_id}' eliminado correctamente.")
+            self.show_alert_success(f"Proveedor ID '{proveedor_id}' eliminado correctamente.", e)
             self.prov_result_container.visible = False
             self.rebuild_ui()
+            self.safe_update(e)
         except ValueError as ex:
-            self.show_alert_error(str(ex))
+            self.show_alert_error(str(ex), e)
 
     def handle_mostrar_form_proveedor(self, e):
         self.prov_result_container.visible = False
@@ -582,12 +608,12 @@ class CarteraView(BaseView):
         self.prov_editing_id = None
         self.btn_guardar_prov_label.value = "Guardar Proveedor"
         self.prov_form_container.visible = True
-        self.update()
+        self.safe_update(e)
 
     def handle_ocultar_form_proveedor(self, e):
         self.prov_form_container.visible = False
         self.limpiar_form_proveedor()
-        self.update()
+        self.safe_update(e)
 
     # ==========================================
     # PAGINACIÓN Y CARGA DE TABLAS
@@ -617,8 +643,8 @@ class CarteraView(BaseView):
                         ft.DataCell(ft.Text(c["correo"] or "-", color=text_color)),
                         ft.DataCell(
                             ft.Row([
-                                ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar", on_click=lambda e, item=c: self.preparar_edicion_cliente(item)),
-                                ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, tooltip="Eliminar", on_click=lambda e, item=c["cedula_rif"]: self.handle_eliminar_cliente(item)),
+                                ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar", on_click=lambda ev, item=c: self.preparar_edicion_cliente(item, ev)),
+                                ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, tooltip="Eliminar", on_click=lambda ev, item=c["cedula_rif"]: self.handle_eliminar_cliente(item, ev)),
                             ], spacing=0)
                         ),
                     ]
@@ -631,6 +657,7 @@ class CarteraView(BaseView):
         if self.cli_page > 1:
             self.cli_page -= 1
             self.rebuild_ui()
+            self.safe_update(e)
 
     def cli_pagina_siguiente(self, e):
         todos = listar_clientes()
@@ -638,6 +665,7 @@ class CarteraView(BaseView):
         if self.cli_page < total_paginas:
             self.cli_page += 1
             self.rebuild_ui()
+            self.safe_update(e)
 
     def cargar_tabla_proveedores(self, text_color, accent):
         todos = listar_proveedores()
@@ -665,8 +693,8 @@ class CarteraView(BaseView):
                         ft.DataCell(ft.Text(p["correo"] or "-", color=text_color)),
                         ft.DataCell(
                             ft.Row([
-                                ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar", on_click=lambda e, item=p: self.preparar_edicion_proveedor(item)),
-                                ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, tooltip="Eliminar", on_click=lambda e, pid=p["id"]: self.handle_eliminar_proveedor(pid)),
+                                ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar", on_click=lambda ev, item=p: self.preparar_edicion_proveedor(item, ev)),
+                                ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, tooltip="Eliminar", on_click=lambda ev, pid=p["id"]: self.handle_eliminar_proveedor(pid, ev)),
                             ], spacing=0)
                         ),
                     ]
@@ -679,6 +707,7 @@ class CarteraView(BaseView):
         if self.prov_page > 1:
             self.prov_page -= 1
             self.rebuild_ui()
+            self.safe_update(e)
 
     def prov_pagina_siguiente(self, e):
         todos = listar_proveedores()
@@ -686,61 +715,56 @@ class CarteraView(BaseView):
         if self.prov_page < total_paginas:
             self.prov_page += 1
             self.rebuild_ui()
+            self.safe_update(e)
 
     # ==========================================
-    # ALERTAS FLOTANTES
+    # ALERTAS FLOTANTES ROBUSTAS
     # ==========================================
-    def show_alert_error(self, message: str):
+    def show_alert_error(self, message: str, e=None):
         """Muestra una alerta flotante de error en pantalla usando SnackBar."""
-        try:
-            if self.page:
-                snack = ft.SnackBar(
-                    content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                    bgcolor=ft.Colors.RED_700,
-                    duration=4000,
-                )
-                self.page.overlay.append(snack)
-                snack.open = True
-                self.page.update()
-        except (RuntimeError, AttributeError):
-            pass
+        p = self.get_current_page(e)
+        if p:
+            snack = ft.SnackBar(
+                content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                bgcolor=ft.Colors.RED_700,
+                duration=4000,
+            )
+            p.overlay.append(snack)
+            snack.open = True
+            p.update()
 
-    def show_alert_success(self, message: str):
+    def show_alert_success(self, message: str, e=None):
         """Muestra una alerta flotante de éxito en pantalla usando SnackBar."""
-        try:
-            if self.page:
-                snack = ft.SnackBar(
-                    content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                    bgcolor=ft.Colors.GREEN_700,
-                    duration=3000,
-                )
-                self.page.overlay.append(snack)
-                snack.open = True
-                self.page.update()
-        except (RuntimeError, AttributeError):
-            pass
+        p = self.get_current_page(e)
+        if p:
+            snack = ft.SnackBar(
+                content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                bgcolor=ft.Colors.GREEN_700,
+                duration=3000,
+            )
+            p.overlay.append(snack)
+            snack.open = True
+            p.update()
 
-    def show_alert_info(self, message: str):
+    def show_alert_info(self, message: str, e=None):
         """Muestra una alerta informativa suave en pantalla usando SnackBar."""
-        try:
-            if self.page:
-                snack = ft.SnackBar(
-                    content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                    bgcolor=ft.Colors.BLUE_700,
-                    duration=3000,
-                )
-                self.page.overlay.append(snack)
-                snack.open = True
-                self.page.update()
-        except (RuntimeError, AttributeError):
-            pass
+        p = self.get_current_page(e)
+        if p:
+            snack = ft.SnackBar(
+                content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                bgcolor=ft.Colors.BLUE_700,
+                duration=3000,
+            )
+            p.overlay.append(snack)
+            snack.open = True
+            p.update()
 
     def handle_adjuntar_simulado(self, e):
         """Simula la carga de un archivo adjunto digital."""
         file_name = f"catalogo_prov_{len(self.adjuntos_temp) + 1}.pdf"
         self.adjuntos_temp.append(file_name)
         self.txt_adjuntos_status.value = f"Adjuntos ({len(self.adjuntos_temp)}): {', '.join(self.adjuntos_temp)}"
-        self.update()
+        self.safe_update(e)
 
     def limpiar_form_cliente(self):
         self.cli_cedula.value = ""
