@@ -117,8 +117,9 @@ class VentasView(BaseView):
 
         # ── 1. Cabecera: Selector de Tipo de Venta y Tasa BCV ────────────────
         self.tipo_venta_selector = ft.SegmentedButton(
-            selected={"Formal"},
+            selected=["Formal"],
             segments=[
+
                 ft.Segment(value="Formal", label=ft.Text("Venta Formal (Con Cliente)", weight=ft.FontWeight.BOLD), icon=ft.Icons.BUSINESS),
                 ft.Segment(value="Informal", label=ft.Text("Venta Informal (Mostrador)", weight=ft.FontWeight.BOLD), icon=ft.Icons.STORE),
             ],

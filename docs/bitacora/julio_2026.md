@@ -275,6 +275,15 @@
 - **Verificaciones realizadas:** Simulación del flujo completo de ventas (Formal/Informal, validación de existencias, commit ACID y generación de PDF nativo).
 - **Estado del proyecto:** En desarrollo. Módulo de Ventas y Notas de Entrega PDF completado e integrado en el Dashboard.
 
+## Corrección del Bug de Serialización de Conjuntos (Set) en Flet
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Diagnóstico de `TypeError: can not serialize 'set' object` en `msgpack` al renderizar `SegmentedButton` en `ui/views/ventas_view.py`.
+  - Reemplazo de la sintaxis literal `selected={"Formal"}` (conjunto/set) por `selected=["Formal"]` (lista serializable por msgpack).
+- **Verificaciones realizadas:** Verificación de tipo con `assert isinstance(selected, list)` y prueba de instanciación completa.
+- **Estado del proyecto:** En desarrollo. Bug de empaquetado Flet resuelto y validado.
+
+
 
 
 
