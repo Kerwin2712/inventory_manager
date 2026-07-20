@@ -70,12 +70,14 @@ class CarteraView(BaseView):
                 pass
 
     def handle_tab_change(self, e):
-        """Cambia la pestaña activa (Clientes o Proveedores)."""
+        """Alterna la pestaña activa cambiando visibilidad sin reconstruir controles."""
         if e.control.selected:
             selected_list = list(e.control.selected)
             if selected_list:
                 self.current_tab = selected_list[0]
-                self.rebuild_ui()
+                es_cli = self.current_tab == "clientes"
+                self._clientes_area.visible = es_cli
+                self._proveedores_area.visible = not es_cli
                 self.safe_update(e)
 
     def get_body(self) -> ft.Control:
@@ -103,16 +105,19 @@ class CarteraView(BaseView):
             on_change=self.handle_tab_change,
         )
 
-        if self.current_tab == "clientes":
-            content_area = self.build_clientes_tab(accent, card_bg, text_color, subtext_color, border_color)
-        else:
-            content_area = self.build_proveedores_tab(accent, card_bg, text_color, subtext_color, border_color)
+        # Construir ambas areas al inicio; alternar con visible
+        clientes_content = self.build_clientes_tab(accent, card_bg, text_color, subtext_color, border_color)
+        proveedores_content = self.build_proveedores_tab(accent, card_bg, text_color, subtext_color, border_color)
+
+        self._clientes_area = ft.Container(content=clientes_content, expand=True, visible=self.current_tab == "clientes")
+        self._proveedores_area = ft.Container(content=proveedores_content, expand=True, visible=self.current_tab == "proveedores")
 
         return ft.Column(
             controls=[
                 ft.Row([tabs_selector], alignment=ft.MainAxisAlignment.START),
                 ft.Divider(height=10, color=border_color),
-                ft.Container(content=content_area, expand=True),
+                self._clientes_area,
+                self._proveedores_area,
             ],
             spacing=15,
             expand=True,
@@ -776,16 +781,16 @@ class CarteraView(BaseView):
     # PAGINACIÓN Y CARGA DE TABLAS
     # ==========================================
     def refrescar_datos(self, e=None):
-        """Recarga sólo las filas del DataTable activo sin reconstruir ningún control."""
+        """Recarga las filas de ambos DataTable sin reconstruir ningún control."""
         accent = self.get_accent_color()
         text_color = self.get_text_color()
         try:
-            if self.current_tab == "clientes":
-                self.cargar_tabla_clientes(text_color, accent)
-            else:
-                self.cargar_tabla_proveedores(text_color, accent)
+            self.cargar_tabla_clientes(text_color, accent)
         except AttributeError:
-            # Si los DataTables aún no existen (primera carga), nada que hacer
+            pass
+        try:
+            self.cargar_tabla_proveedores(text_color, accent)
+        except AttributeError:
             pass
         self.safe_update(e)
 
