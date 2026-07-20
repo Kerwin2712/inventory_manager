@@ -1,15 +1,57 @@
 import flet as ft
 from ui.views.base_view import BaseView
+from ui.views.cartera_view import CarteraView
 
 class DashboardView(BaseView):
-    """Vista principal de Dashboard adaptada al tema dinámico."""
+    """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
 
     def __init__(self, user_info: dict = None, on_logout_callback=None):
         self.user_info = user_info or {"username": "usuario", "role": "administrador"}
         self.on_logout_callback = on_logout_callback
+        self.current_section = "Inicio"
         super().__init__(route="/dashboard", title="Dashboard General")
 
+    def handle_nav_change(self, section_name: str):
+        """Cambia la sección activa de la vista principal."""
+        self.current_section = section_name
+        self.rebuild_ui()
+
     def get_body(self) -> ft.Control:
+        # Selección del contenido principal según la sección activa
+        if self.current_section == "Cartera":
+            cartera_view = CarteraView()
+            try:
+                if self.page:
+                    cartera_view.page = self.page
+            except (RuntimeError, AttributeError):
+                pass
+            main_content = cartera_view.get_body()
+        elif self.current_section == "Inicio":
+            main_content = ft.Column(
+                controls=[
+                    self.build_metrics_cards(),
+                    ft.Container(height=10),
+                    self.build_data_sections(),
+                ],
+                scroll=ft.ScrollMode.AUTO,
+                spacing=20,
+            )
+        else:
+            main_content = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.CONSTRUCTION_ROUNDED, size=50, color=self.get_accent_color()),
+                        ft.Text(f"Módulo de {self.current_section}", size=22, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                        ft.Text("Esta sección se encuentra actualmente en desarrollo.", color=self.get_subtext_color()),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=10,
+                ),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+            )
+
         return ft.Row(
             controls=[
                 self.build_sidebar(),
@@ -20,15 +62,7 @@ class DashboardView(BaseView):
                             self.build_header(),
                             ft.Divider(height=10, color=self.get_border_color()),
                             ft.Container(
-                                content=ft.Column(
-                                    controls=[
-                                        self.build_metrics_cards(),
-                                        ft.Container(height=10),
-                                        self.build_data_sections(),
-                                    ],
-                                    scroll=ft.ScrollMode.AUTO,
-                                    spacing=20,
-                                ),
+                                content=main_content,
                                 expand=True,
                             )
                         ],
@@ -46,17 +80,18 @@ class DashboardView(BaseView):
     def build_sidebar(self) -> ft.Control:
         """Construye el Sidebar con fondo blanco en Modo Claro y acento en la opción activa."""
         nav_items = [
-            ("Inicio", ft.Icons.DASHBOARD_ROUNDED, True),
-            ("Ventas", ft.Icons.POINT_OF_SALE_ROUNDED, False),
-            ("Inventario", ft.Icons.INVENTORY_2_ROUNDED, False),
-            ("Cartera", ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, False),
-            ("Gestión de Datos", ft.Icons.DATASET_ROUNDED, False),
+            ("Inicio", ft.Icons.DASHBOARD_ROUNDED),
+            ("Ventas", ft.Icons.POINT_OF_SALE_ROUNDED),
+            ("Inventario", ft.Icons.INVENTORY_2_ROUNDED),
+            ("Cartera", ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED),
+            ("Gestión de Datos", ft.Icons.DATASET_ROUNDED),
         ]
 
         item_controls = []
         accent = self.get_accent_color()
 
-        for label, icon, is_active in nav_items:
+        for label, icon in nav_items:
+            is_active = (label == self.current_section)
             if is_active:
                 bg = accent
                 fg = ft.Colors.WHITE
@@ -75,7 +110,7 @@ class DashboardView(BaseView):
                 padding=ft.Padding.symmetric(horizontal=15, vertical=12),
                 border_radius=8,
                 bgcolor=bg,
-                on_click=lambda e, l=label: print(f"Navegar a {l}"),
+                on_click=lambda e, l=label: self.handle_nav_change(l),
             )
             item_controls.append(btn)
 
@@ -169,9 +204,11 @@ class DashboardView(BaseView):
             on_click=lambda e: self.on_logout_callback() if self.on_logout_callback else None,
         )
 
+        header_title = f"Dashboard - {self.current_section}" if self.current_section != "Inicio" else "Dashboard Principal"
+
         return ft.Row(
             controls=[
-                ft.Text("Dashboard Principal", size=22, weight=ft.FontWeight.BOLD, color=accent),
+                ft.Text(header_title, size=22, weight=ft.FontWeight.BOLD, color=accent),
                 ft.Row(
                     controls=[
                         user_badge,

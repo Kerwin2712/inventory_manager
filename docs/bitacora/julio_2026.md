@@ -144,6 +144,17 @@
     - **RNO-PROV-01:** Validación de matriz asociativa `(Empresa + Teléfono) Ó (Contacto + Teléfono)` y emisión del código de excepción `ERR_PROV_INS_INVALID` si no se cumplen las condiciones.
 - **Estado del proyecto:** En desarrollo. Persistencia y servicios de la cartera de entidades completados y validados.
 
+## Interfaz de Usuario para Cartera de Clientes y Proveedores (CarteraView)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación de la vista `ui/views/cartera_view.py` (`CarteraView` heredando de `BaseView`).
+  - Separación de la interfaz mediante pestañas seleccionables (`SegmentedButton`) para "Clientes" y "Proveedores".
+  - Construcción de los formularios de captura y tablas `DataTable` en tiempo real para listar clientes y proveedores.
+  - Implementación del manejo de excepciones y alertas flotantes `SnackBar` notificando en pantalla errores RNO-CLI-01 y el código `ERR_PROV_INS_INVALID` (RNO-PROV-01).
+  - Conexión de la navegación en la barra lateral (`DashboardView`) permitiendo conmutar al módulo de Cartera de forma fluida.
+- **Estado del proyecto:** En desarrollo. Módulo gráfico de Cartera de Entidades completado e integrado.
+
+
 
 
 

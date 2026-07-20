@@ -118,5 +118,8 @@ class BaseView(ft.View):
         """Reconstruye los controles de la vista con las nuevas propiedades visuales."""
         self.bgcolor = self.get_bg_color()
         self.setup_layout()
-        if self.page:
-            self.page.update()
+        try:
+            if self.page:
+                self.page.update()
+        except (RuntimeError, AttributeError):
+            pass
