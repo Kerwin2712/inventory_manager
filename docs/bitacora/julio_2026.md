@@ -86,6 +86,15 @@
   - Enrutamiento dinámico y prueba visual en `main.py`.
 - **Estado del proyecto:** En desarrollo. Pantalla de Dashboard e infraestructura de temas dinámicos implementadas.
 
+## Aislamiento de Vista de Gestión de Usuarios para la Cuenta Admin Inicial
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Configuración de enrutamiento estricto en `main.py`: el usuario `admin` inicial es redirigido de forma exclusiva a `AdminUsersView` para crear y modificar usuarios, mientras que el resto de los usuarios acceden al `DashboardView`.
+  - Integración de los controles de personalización de temas (modo oscuro/claro y selector de color de acento) en la barra superior de `ui/views/admin_users_view.py`.
+  - Limpieza de `ui/views/dashboard_view.py` removiendo enlaces administrativos irrelevantes para los usuarios convencionales.
+- **Estado del proyecto:** En desarrollo. Separación de responsabilidades y vista exclusiva de administración configuradas.
+
+
 
 
 

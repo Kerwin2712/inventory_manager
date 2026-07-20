@@ -3,12 +3,12 @@ from ui.views.base_view import BaseView
 from services.user_service import create_user, get_all_users, update_user
 
 class AdminUsersView(BaseView):
-    """Vista exclusiva para que el usuario admin cree y gestione otros usuarios."""
+    """Vista exclusiva para que el usuario 'admin' inicial cree y gestione otros usuarios."""
 
     def __init__(self, on_logout_callback=None):
         self.on_logout_callback = on_logout_callback
         self.editing_user_id = None
-        super().__init__(route="/admin_users", title="Panel del Superusuario Admin")
+        super().__init__(route="/admin_users", title="Gestión Exclusiva de Usuarios (Superadmin)")
 
     def get_body(self) -> ft.Control:
         # Controles del formulario
@@ -58,6 +58,48 @@ class AdminUsersView(BaseView):
 
         self.msg_text = ft.Text(value="", size=14, visible=False)
 
+        # Controles de tema (Sol/Luna + Selector de Acento)
+        theme_icon = ft.Icons.LIGHT_MODE_OUTLINED
+        try:
+            if self.page and self.page.theme_mode == ft.ThemeMode.LIGHT:
+                theme_icon = ft.Icons.DARK_MODE_OUTLINED
+        except RuntimeError:
+            pass
+
+        theme_toggle_btn = ft.IconButton(
+            icon=theme_icon,
+            tooltip="Alternar Modo Claro / Oscuro",
+            on_click=self.toggle_theme,
+        )
+
+        color_options = [
+            ("Azul", "#2196F3", ft.Colors.BLUE_400),
+            ("Verde", "#4CAF50", ft.Colors.GREEN_400),
+            ("Rojo", "#E91E63", ft.Colors.PINK_400),
+            ("Naranja", "#FF9800", ft.Colors.ORANGE_400),
+        ]
+
+        color_menu_items = []
+        for name, hex_val, display_color in color_options:
+            color_menu_items.append(
+                ft.PopupMenuItem(
+                    content=ft.Row(
+                        controls=[
+                            ft.Container(width=16, height=16, border_radius=8, bgcolor=display_color),
+                            ft.Text(name),
+                        ],
+                        spacing=10,
+                    ),
+                    on_click=lambda e, h=hex_val: self.change_seed_color(h),
+                )
+            )
+
+        color_picker_btn = ft.PopupMenuButton(
+            icon=ft.Icons.PALETTE_OUTLINED,
+            tooltip="Seleccionar Color de Acento",
+            items=color_menu_items,
+        )
+
         # Tabla para listar usuarios
         self.users_table = ft.DataTable(
             columns=[
@@ -75,7 +117,7 @@ class AdminUsersView(BaseView):
         form_card = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Crear o Modificar Usuario del Sistema", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_200),
+                    ft.Text("Registrar o Modificar Usuario del Sistema", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_200),
                     ft.Row(
                         controls=[
                             self.username_input,
@@ -101,15 +143,24 @@ class AdminUsersView(BaseView):
             bgcolor=ft.Colors.GREY_800,
         )
 
-        return ft.Column(
+        top_header = ft.Row(
             controls=[
+                ft.Text("Panel Exclusivo de Cuentas (Superadmin)", size=16, color=ft.Colors.GREY_400),
                 ft.Row(
                     controls=[
-                        ft.Text("Gestión Exclusiva de Cuentas (Superadmin)", size=15, color=ft.Colors.GREY_400),
-                        logout_btn
+                        theme_toggle_btn,
+                        color_picker_btn,
+                        logout_btn,
                     ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-                ),
+                    spacing=10,
+                )
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+        )
+
+        return ft.Column(
+            controls=[
+                top_header,
                 form_card,
                 ft.Divider(height=20, color=ft.Colors.GREY_700),
                 ft.Text("Lista de Usuarios Registrados", size=18, weight=ft.FontWeight.BOLD),

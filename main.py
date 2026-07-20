@@ -32,31 +32,30 @@ def main(page: ft.Page):
         page.update()
 
     def show_dashboard(user: dict):
-        """Muestra el Dashboard principal del Super Admin."""
+        """Muestra el Dashboard principal para los usuarios del sistema."""
         page.views.clear()
         dashboard_view = DashboardView(
             user_info=user,
             on_logout_callback=show_login,
-            on_navigate_admin_users=lambda: show_admin_users(user)
         )
         page.views.append(dashboard_view)
         page.update()
 
-    def show_admin_users(user: dict):
-        """Muestra el panel de gestión de usuarios."""
+    def show_admin_users():
+        """Muestra la vista aislada para que el usuario 'admin' cree y modifique usuarios."""
         page.views.clear()
-        admin_users_view = AdminUsersView(on_logout_callback=lambda: show_dashboard(user))
+        admin_users_view = AdminUsersView(on_logout_callback=show_login)
         page.views.append(admin_users_view)
         page.update()
 
     def on_login_success(user: dict):
-        """Maneja la navegación tras un inicio de sesión exitoso según el usuario/rol."""
+        """Redirige según el usuario autenticado: 'admin' va a su vista exclusiva de gestión de usuarios; los demás al Dashboard."""
         if user["username"] == "admin":
-            show_dashboard(user)
+            show_admin_users()
         else:
             show_dashboard(user)
 
-    # Arrancar mostrando la pantalla de login (o directamente dashboard)
+    # Arrancar mostrando la pantalla de inicio de sesión
     show_login()
 
 if __name__ == "__main__":

@@ -75,24 +75,6 @@ class DashboardView(BaseView):
             )
             item_controls.append(btn)
 
-        # Acceso directo al panel de usuarios para el Superadmin
-        if self.user_info.get("username") == "admin" and self.on_navigate_admin_users:
-            admin_btn = ft.Container(
-                content=ft.Row(
-                    controls=[
-                        ft.Icon(ft.Icons.MANAGE_ACCOUNTS_ROUNDED, color=ft.Colors.AMBER_400, size=20),
-                        ft.Text("Gestión Cuentas", color=ft.Colors.AMBER_300, weight=ft.FontWeight.BOLD),
-                    ],
-                    spacing=12,
-                ),
-                padding=ft.Padding.symmetric(horizontal=15, vertical=12),
-                border_radius=8,
-                bgcolor=ft.Colors.GREY_800,
-                on_click=lambda e: self.on_navigate_admin_users(),
-            )
-            item_controls.append(ft.Divider(height=15, color=ft.Colors.GREY_800))
-            item_controls.append(admin_btn)
-
         return ft.Container(
             width=220,
             padding=15,
@@ -115,11 +97,12 @@ class DashboardView(BaseView):
 
     def build_header(self) -> ft.Control:
         """Construye el encabezado superior con perfil, notificaciones y controles de tema."""
+        role_label = self.user_info.get('role', 'usuario').capitalize()
         user_badge = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS, color=ft.Colors.BLUE_400, size=22),
-                    ft.Text(f"Super Admin: {self.user_info.get('username')}", weight=ft.FontWeight.BOLD),
+                    ft.Icon(ft.Icons.PERSON, color=ft.Colors.BLUE_400, size=22),
+                    ft.Text(f"{self.user_info.get('username')} ({role_label})", weight=ft.FontWeight.BOLD),
                 ],
                 spacing=8,
             ),
