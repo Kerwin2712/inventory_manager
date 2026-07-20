@@ -319,6 +319,16 @@
 - **Verificaciones realizadas:** Prueba de instanciación con `run_task` ejecutada limpiamente sin advertencias de corrutina.
 - **Estado del proyecto:** En desarrollo. Apertura asíncrona de cuadro de diálogo PDF nativo resuelta y validada.
 
+## Registro Permanente de FilePicker en page.overlay (Solución TimeoutException)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Diagnóstico del error `RuntimeError: TimeoutException: Timeout waiting for invoke method listener for FilePicker` al guardar PDFs.
+  - Registro de una instancia global permanente de `ft.FilePicker()` en `page.overlay` al arrancar `main(page)` en `main.py`.
+  - Actualización de `ensure_file_picker_in_overlay()` en `ui/views/ventas_view.py` para reutilizar automáticamente el `FilePicker` activo en `page.overlay`.
+- **Verificaciones realizadas:** Prueba automatizada verificando la reutilización transparente de `FilePicker` en `page.overlay`.
+- **Estado del proyecto:** En desarrollo. FilePicker nativo registrado permanentemente en el socket de Flet.
+
+
 
 
 

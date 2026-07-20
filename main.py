@@ -21,6 +21,12 @@ def main(page: ft.Page):
     page.title = "Sistema Integrado de Inventario y Ventas"
     page.theme_mode = initial_theme_mode
     page.theme = ft.Theme(color_scheme_seed=saved_color)
+
+    # Registrar FilePicker global persistente en el overlay de la página
+    global_file_picker = ft.FilePicker()
+    page.overlay.append(global_file_picker)
+    page.update()
+
     
     try:
         page.window.maximized = True
