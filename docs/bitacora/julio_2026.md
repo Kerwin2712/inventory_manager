@@ -337,6 +337,16 @@
 - **Verificaciones realizadas:** Prueba automatizada de instanciación aislada de `LoginView`, `DashboardView` y `VentasView`.
 - **Estado del proyecto:** En desarrollo. Interfaz de Login y flujo de ventas aislados y limpios sin advertencias de controles desconocidos.
 
+## Reemplazo Definitivo de Flet FilePicker por Diálogo Nativo de Windows (Tkinter)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Eliminación total de `ft.FilePicker`, listeners `on_result` y referencias a `page.overlay` en `ui/views/ventas_view.py` para resolver de forma definitiva los problemas de sincronización de websocket y `TimeoutException`.
+  - Implementación del método síncrono `abrir_dialogo_guardado` utilizando `tkinter.filedialog.asksaveasfilename` configurado con `-topmost` True para garantizar su despliegue al frente en Windows.
+  - Integración del flujo en `confirmar_generar_pdf`: lectura de `last_pdf_dir`, despliegue del cuadro de diálogo nativo, generación de la Nota de Entrega PDF en la ubicación elegida, actualización de `last_pdf_dir` en SQLite y notificación con `SnackBar`.
+- **Verificaciones realizadas:** Prueba de instanciación síncrona verificando la ausencia de `file_picker` y la presencia del método nativo `abrir_dialogo_guardado`.
+- **Estado del proyecto:** En desarrollo. Diálogo de exportación PDF nativo, síncrono y robusto operativo en Windows.
+
+
 
 
 
