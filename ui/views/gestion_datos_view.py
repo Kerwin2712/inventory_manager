@@ -74,7 +74,7 @@ class GestionDatosView(BaseView):
                 padding=20
             ),
             bgcolor=card_bg,
-            expand=True
+            col={"sm": 12, "lg": 6}
         )
 
         # ── Tarjeta 2: Copias de Seguridad (Exportar a Excel - ERS 1.1) ───────
@@ -103,7 +103,7 @@ class GestionDatosView(BaseView):
                 padding=20
             ),
             bgcolor=card_bg,
-            expand=True
+            col={"sm": 12, "lg": 6}
         )
 
         return ft.Container(
@@ -114,7 +114,7 @@ class GestionDatosView(BaseView):
                 ], spacing=10),
                 ft.Text("Administre las importaciones masivas y la exportación de copias de seguridad de la base de datos.", color=subtext_color),
                 ft.Divider(height=20, color=self.get_border_color()),
-                ft.Row([card_importar, card_exportar], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
+                ft.ResponsiveRow([card_importar, card_exportar], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
             ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True),
             padding=15,
             expand=True
