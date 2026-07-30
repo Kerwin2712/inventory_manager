@@ -392,3 +392,9 @@
   - Eliminación de la propiedad `expand=True` en `left_section` y `right_section` (Dashboard), así como en `card_importar` y `card_exportar` (Gestión de Datos), sustituyéndola por `col={"sm": 12, "lg": 6}` para habilitar un grid adaptativo real y evitar que la altura de los componentes colapse en `0` dentro de columnas con scroll vertical de Flet.
 - **Estado del proyecto:** En desarrollo. Bugs de visualización por conflicto de layout resueltos.
 
+## Limpieza de Base de Datos para Pruebas de Importación
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Ejecución de un script automatizado para vaciar de manera controlada las tablas de negocio (`ventas_detalle`, `ventas`, `productos`, `clientes`, `proveedores`) en `inventory.db` y reiniciar los contadores autoincrementales de SQLite.
+  - Se conservaron intactas las tablas de seguridad (`users` y sus roles) y configuraciones de preferencias (`app_settings`).
+- **Estado del proyecto:** En desarrollo. Base de datos vacía lista para pruebas de carga masiva con datos reales del cliente.
