@@ -110,7 +110,7 @@ class GestionDatosView(BaseView):
             content=ft.Column([
                 ft.Row([
                     ft.Icon(ft.Icons.DATASET_ROUNDED, size=28, color=accent),
-                    ft.Text("Módulo de Gestión de Datos y Respaldos (ERS 1.1)", size=20, weight=ft.FontWeight.BOLD, color=text_color)
+                    ft.Text("Módulo de Gestión de Datos y Respaldos", size=20, weight=ft.FontWeight.BOLD, color=text_color)
                 ], spacing=10),
                 ft.Text("Administre las importaciones masivas y la exportación de copias de seguridad de la base de datos.", color=subtext_color),
                 ft.Divider(height=20, color=self.get_border_color()),
@@ -121,7 +121,7 @@ class GestionDatosView(BaseView):
         )
 
     def handle_importar_click(self, e):
-        """Ejecuta la Carga Masiva defensiva y transaccional desde Excel (ERS 1.1)."""
+        """Ejecuta la Carga Masiva defensiva y transaccional desde Excel."""
         ruta_archivo = self.abrir_dialogo_abrir()
         if not ruta_archivo:
             return
