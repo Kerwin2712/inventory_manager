@@ -397,4 +397,10 @@
 - **Actividades realizadas:**
   - Ejecución de un script automatizado para vaciar de manera controlada las tablas de negocio (`ventas_detalle`, `ventas`, `productos`, `clientes`, `proveedores`) en `inventory.db` y reiniciar los contadores autoincrementales de SQLite.
   - Se conservaron intactas las tablas de seguridad (`users` y sus roles) y configuraciones de preferencias (`app_settings`).
-- **Estado del proyecto:** En desarrollo. Base de datos vacía lista para pruebas de carga masiva con datos reales del cliente.
+
+## Corrección de AttributeError en Gestión de Datos (get_current_page)
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Solución a la excepción `'GestionDatosView' object has no attribute 'get_current_page'` al intentar reportar errores en Carga Masiva.
+  - Migración y definición centralizada de los métodos de ayuda `get_current_page` y `safe_update` en la clase principal [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py) para que estén disponibles de forma heredada en todas las vistas de la aplicación.
+- **Estado del proyecto:** En desarrollo. Manejo de alertas y diálogos de error corregido y validado en Gestión de Datos.
