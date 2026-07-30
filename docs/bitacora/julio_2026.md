@@ -384,37 +384,10 @@
 - **Actividades realizadas**
   - Modificación de formato en titulos para mejora visual.
 - **Estado del proyecto** Completo. Titulos mejorados.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## Corrección de Layout y Rectángulo Gris en Dashboard Principal
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Diagnóstico del colapso visual (rectángulo gris) en las secciones de datos del Dashboard al inicio.
+  - Reemplazo de `ft.Row(wrap=True)` por `ft.ResponsiveRow` en `build_data_sections` en `ui/views/dashboard_view.py`.
+  - Eliminación de la propiedad `expand=True` en `left_section` y `right_section`, configurando en su lugar la propiedad `col={"sm": 12, "lg": 6}` para lograr un comportamiento adaptativo real y evitar el colapso de la altura del contenedor en Flet.
+- **Estado del proyecto:** En desarrollo. Bug de layout resuelto en la pantalla de inicio del Dashboard.
