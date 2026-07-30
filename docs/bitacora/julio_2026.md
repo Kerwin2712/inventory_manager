@@ -404,3 +404,12 @@
   - Solución a la excepción `'GestionDatosView' object has no attribute 'get_current_page'` al intentar reportar errores en Carga Masiva.
   - Migración y definición centralizada de los métodos de ayuda `get_current_page` y `safe_update` en la clase principal [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py) para que estén disponibles de forma heredada en todas las vistas de la aplicación.
 - **Estado del proyecto:** En desarrollo. Manejo de alertas y diálogos de error corregido y validado en Gestión de Datos.
+
+## Importación Adaptativa de Excel y Registro Interactivo de Proveedores Nuevos
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Rediseño de [importacion_service.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/services/importacion_service.py) agregando la función `analizar_proveedores_excel` para escanear y detectar nombres de proveedores en el Excel que no existen en SQLite.
+  - Modificación de `procesar_importacion_excel` para soportar mapeo flexible e insensible a acentos/mayúsculas de las columnas del cliente, y fallback a archivos de una sola pestaña (como `Hoja1`), resolviendo el proveedor por su nombre en la base de datos.
+  - Implementación del flujo de pre-análisis y asistente dinámico de diálogo secuencial (`mostrar_asistente_proveedores_faltantes`) en [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py) para solicitar interactivamente los datos mínimos obligatorios de contacto (Teléfono - RNO-PROV-01) para proveedores nuevos antes de proceder a la importación final.
+- **Estado del proyecto:** En desarrollo. Herramienta de importación masiva adaptada y validada contra formatos reales.
+
