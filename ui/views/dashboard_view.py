@@ -182,7 +182,7 @@ class DashboardView(BaseView):
             content=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.PERSON, color=accent, size=22),
-                    ft.Text(f"{self.user_info.get('username')} ({role_label})", weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                    ft.Text(f"{self.user_info.get('username')} | {role_label}", weight=ft.FontWeight.BOLD, color=self.get_text_color()),
                 ],
                 spacing=8,
             ),

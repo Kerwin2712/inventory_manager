@@ -8,7 +8,7 @@ class AdminUsersView(BaseView):
     def __init__(self, on_logout_callback=None):
         self.on_logout_callback = on_logout_callback
         self.editing_user_id = None
-        super().__init__(route="/admin_users", title="Gestión Exclusiva de Usuarios (Superadmin)")
+        super().__init__(route="/admin_users", title="Gestión de Usuarios | SuperAdmin")
 
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
@@ -155,7 +155,7 @@ class AdminUsersView(BaseView):
                 ft.Row(
                     controls=[
                         user_icon,
-                        ft.Text("Panel Exclusivo de Cuentas (Superadmin)", size=16, color=text_color, weight=ft.FontWeight.BOLD),
+                        ft.Text("Panel de Cuentas | SuperAdmin", size=16, color=text_color, weight=ft.FontWeight.BOLD),
                     ],
                     spacing=8,
                 ),
