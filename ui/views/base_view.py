@@ -123,3 +123,28 @@ class BaseView(ft.View):
                 self.page.update()
         except (RuntimeError, AttributeError):
             pass
+
+    def get_current_page(self, e=None):
+        """Obtiene la instancia de page activa de forma segura."""
+        if e and hasattr(e, "page") and e.page:
+            return e.page
+        if e and hasattr(e, "control") and hasattr(e.control, "page") and e.control.page:
+            return e.control.page
+        try:
+            if self.page:
+                return self.page
+        except (RuntimeError, AttributeError):
+            pass
+        return None
+
+    def safe_update(self, e=None):
+        """Actualiza la interfaz evitando excepciones de renderizado."""
+        p = self.get_current_page(e)
+        if p:
+            p.update()
+        else:
+            try:
+                self.update()
+            except (RuntimeError, AttributeError):
+                pass
+
