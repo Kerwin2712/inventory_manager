@@ -378,7 +378,12 @@
 - **Estado del proyecto:** Completo. Motor de importación masiva transaccional listo para producción.
 
 
+### 30/07/2026 Mejoras visuales
 
+- **Responsable** Kerwin Quintero (Software Developer)
+- **Actividades realizadas**
+  - Modificación de formato en titulos para mejora visual.
+- **Estado del proyecto** Completo. Titulos mejorados.
 
 
 
