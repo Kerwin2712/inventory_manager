@@ -413,3 +413,12 @@
   - Implementación del flujo de pre-análisis y asistente dinámico de diálogo secuencial (`mostrar_asistente_proveedores_faltantes`) en [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py) para solicitar interactivamente los datos mínimos obligatorios de contacto (Teléfono - RNO-PROV-01) para proveedores nuevos antes de proceder a la importación final.
 - **Estado del proyecto:** En desarrollo. Herramienta de importación masiva adaptada y validada contra formatos reales.
 
+## Normalización de Columna Proveedor y Corrección del Asistente de Importación Masiva
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección del bug tipográfico en `services/importacion_service.py`: se agregó la normalización de `"provehedor"` a `"proveedor"` en la función `limpiar_clave`. Esto resuelve la omisión de la columna de proveedor debido a la cabecera escrita con "H" en la plantilla del Excel de prueba.
+  - Habilitación del flujo completo del asistente de importación: ahora la aplicación detecta correctamente a los proveedores faltantes del archivo Excel (`BEVAL`, `RG`, etc.), activando en secuencia los diálogos Flet para registrar sus datos mínimos obligatorios.
+  - Vinculación correcta de `proveedor_id` en cada registro de producto en la base de datos SQLite en lugar de dejarlos en `NULL`.
+- **Estado del proyecto:** En desarrollo. Carga masiva con mapeo estricto e interactivo de proveedores corregido y probado.
+
+

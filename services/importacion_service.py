@@ -13,6 +13,7 @@ def limpiar_clave(k) -> str:
         ("ú", "u"),
         ("_", " "),
         ("-", " "),
+        ("provehedor", "proveedor"),
     )
     for a, b in replacements:
         k_clean = k_clean.replace(a, b)
