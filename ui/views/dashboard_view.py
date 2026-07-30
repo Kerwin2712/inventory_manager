@@ -405,7 +405,7 @@ class DashboardView(BaseView):
             border_radius=10,
             bgcolor=self.get_card_bg(),
             border=ft.Border.all(1, self.get_border_color()),
-            expand=True,
+            col={"sm": 12, "lg": 6},
         )
 
         # ── 2. Auditoría Preventiva (Stock Crítico + Contacto Proveedor - ERS 3.6) ──
@@ -463,14 +463,13 @@ class DashboardView(BaseView):
             border_radius=10,
             bgcolor=self.get_card_bg(),
             border=ft.Border.all(1, self.get_border_color()),
-            expand=True,
+            col={"sm": 12, "lg": 6},
         )
 
-        return ft.Row(
+        return ft.ResponsiveRow(
             controls=[
                 left_section,
                 right_section,
             ],
             spacing=20,
-            wrap=True,
         )
