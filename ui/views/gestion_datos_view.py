@@ -32,15 +32,24 @@ class GestionDatosView(BaseView):
 
     def abrir_dialogo_abrir(self) -> str:
         """Abre un cuadro de diálogo nativo de Windows (Tkinter) para seleccionar un archivo Excel a importar."""
-        root = tk.Tk()
-        root.attributes("-topmost", True)  # Ventana en primer plano
-        root.withdraw()
-        ruta = filedialog.askopenfilename(
-            title="Seleccionar Archivo Excel para Carga Masiva",
-            filetypes=[("Archivos de Excel", "*.xlsx;*.xls"), ("Todos los archivos", "*.*")]
-        )
-        root.destroy()
-        return ruta
+        try:
+            print(">>> [abrir_dialogo_abrir] Instanciando ventana oculta tk.Tk()...")
+            root = tk.Tk()
+            root.attributes("-topmost", True)  # Ventana en primer plano
+            root.withdraw()
+            print(">>> [abrir_dialogo_abrir] Lanzando filedialog.askopenfilename...")
+            ruta = filedialog.askopenfilename(
+                title="Seleccionar Archivo Excel para Carga Masiva",
+                filetypes=[("Archivos de Excel", "*.xlsx;*.xls"), ("Todos los archivos", "*.*")]
+            )
+            print(f">>> [abrir_dialogo_abrir] Diálogo cerrado. Ruta obtenida: '{ruta}'")
+            root.destroy()
+            print(">>> [abrir_dialogo_abrir] Ventana tk destruida con éxito.")
+            return ruta
+        except Exception as ex:
+            import traceback
+            print(f">>> [abrir_dialogo_abrir] EXCEPCIÓN en diálogo de archivo:\n{traceback.format_exc()}")
+            raise ex
 
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
@@ -123,42 +132,49 @@ class GestionDatosView(BaseView):
     def handle_importar_click(self, e):
         """Ejecuta la Carga Masiva analizando primero proveedores nuevos (ERS 1.1)."""
         try:
+            print("\n>>> [GestionDatosView] Clic en IMPORTAR DESDE EXCEL")
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"\n[{datetime.now()}] Iniciando handle_importar_click\n")
             
+            print(">>> [GestionDatosView] Abriendo diálogo de selección de archivo...")
             ruta_archivo = self.abrir_dialogo_abrir()
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] Ruta seleccionada: {ruta_archivo}\n")
+            print(f">>> [GestionDatosView] Ruta de archivo seleccionada: '{ruta_archivo}'")
                 
             if not ruta_archivo:
+                print(">>> [GestionDatosView] Cancelado: No se seleccionó ningún archivo.")
                 with open("import_debug.log", "a", encoding="utf-8") as f:
                     f.write(f"[{datetime.now()}] No se seleccionó archivo\n")
                 return
 
+            print(">>> [GestionDatosView] Importando y analizando proveedores del Excel...")
             from services.importacion_service import analizar_proveedores_excel
             analisis = analizar_proveedores_excel(ruta_archivo)
             
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] Resultado del análisis: {analisis}\n")
+            print(f">>> [GestionDatosView] Resultado del análisis de proveedores: {analisis}")
 
             if not analisis.get("exito"):
+                print(f">>> [GestionDatosView] ERROR en análisis: {analisis.get('mensaje')}")
                 self.show_alert_error(e, analisis.get("mensaje"))
                 return
 
             faltantes = analisis.get("proveedores_faltantes", [])
+            print(f">>> [GestionDatosView] Proveedores faltantes en BD: {faltantes}")
             if faltantes:
-                # Lanzar el asistente secuencial de registro
+                print(f">>> [GestionDatosView] Iniciando asistente interactivo para {len(faltantes)} proveedores faltantes...")
                 self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes)
             else:
+                print(">>> [GestionDatosView] No hay proveedores faltantes. Procediendo con la importación final...")
                 self.ejecutar_importacion_final(e, ruta_archivo)
         except Exception as ex:
             import traceback
             err_msg = traceback.format_exc()
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] EXCEPCIÓN: {err_msg}\n")
-            # Mostrar la excepción en la consola y en la UI de alguna forma si es posible
-            print(f"EXCEPCIÓN EN IMPORTACIÓN: {err_msg}")
-            # Intentar mostrar SnackBar de error de todas formas
+            print(f"\n>>> [GestionDatosView] EXCEPCIÓN CRÍTICA en handle_importar_click:\n{err_msg}")
             try:
                 self.show_alert_error(e, f"Excepción crítica: {str(ex)}")
             except Exception:
@@ -168,10 +184,12 @@ class GestionDatosView(BaseView):
         """Muestra un diálogo dinámico secuencial para completar información de proveedores nuevos."""
         p = self.get_current_page(e)
         if not p:
+            print(">>> [mostrar_asistente_proveedores_faltantes] ERROR: No se pudo obtener la instancia de Page activa.")
             return
 
         nombre_prov = faltantes[idx]
         total_faltantes = len(faltantes)
+        print(f">>> [mostrar_asistente_proveedores_faltantes] Abriendo modal para proveedor '{nombre_prov}' ({idx + 1} de {total_faltantes})...")
 
         # Controles del formulario
         txt_empresa = ft.TextField(
@@ -209,6 +227,7 @@ class GestionDatosView(BaseView):
         )
 
         def cerrar_asistente(e_close):
+            print(">>> [mostrar_asistente_proveedores_faltantes] Asistente cancelado por el usuario.")
             dlg.open = False
             p.update()
             self.show_alert_info(e, "Importación cancelada por el usuario.")
@@ -223,7 +242,10 @@ class GestionDatosView(BaseView):
             correo = txt_correo.value.strip()
             descripcion = txt_descripcion.value.strip()
 
+            print(f">>> [registrar_proveedor] Intentando registrar: Empresa='{empresa}', Teléfono='{telefono}'...")
+
             if not telefono:
+                print(">>> [registrar_proveedor] ERROR: Teléfono vacío")
                 lbl_error.value = "El Teléfono de Contacto es obligatorio por regla de negocio."
                 p.update()
                 return
@@ -237,6 +259,7 @@ class GestionDatosView(BaseView):
                     correo=correo if correo else None,
                     descripcion=descripcion if descripcion else f"Creado automáticamente durante la importación masiva."
                 )
+                print(f">>> [registrar_proveedor] Registrado exitosamente en SQLite.")
                 
                 dlg.open = False
                 p.update()
@@ -246,10 +269,13 @@ class GestionDatosView(BaseView):
                 if sig_idx < total_faltantes:
                     self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes, sig_idx)
                 else:
+                    print(">>> [registrar_proveedor] Todos los proveedores registrados. Procediendo a la importación final...")
                     self.show_alert_success(e, "Todos los proveedores nuevos se registraron correctamente.")
                     self.ejecutar_importacion_final(e, ruta_archivo)
 
             except Exception as ex:
+                import traceback
+                print(f">>> [registrar_proveedor] EXCEPCIÓN al registrar: {traceback.format_exc()}")
                 lbl_error.value = f"Error al registrar: {str(ex)}"
                 p.update()
 
@@ -292,6 +318,7 @@ class GestionDatosView(BaseView):
     def ejecutar_importacion_final(self, e, ruta_archivo):
         """Llama al servicio de importación real para los productos del Excel."""
         try:
+            print(f">>> [ejecutar_importacion_final] Iniciando importación de productos desde: '{ruta_archivo}'")
             from services.importacion_service import procesar_importacion_excel
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] Iniciando ejecutar_importacion_final para: {ruta_archivo}\n")
@@ -300,17 +327,20 @@ class GestionDatosView(BaseView):
             
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] Resultado de la importación final: {res}\n")
+            print(f">>> [ejecutar_importacion_final] Resultado de la importación: {res}")
 
             if res.get("exito"):
+                print(">>> [ejecutar_importacion_final] Importación exitosa, mostrando snackbar verde.")
                 self.show_alert_success(e, res.get("mensaje"))
             else:
+                print(f">>> [ejecutar_importacion_final] Falla en importación: {res.get('mensaje')}. Mostrando diálogo de error.")
                 self.mostrar_dialogo_error(e, res.get("mensaje"))
         except Exception as ex:
             import traceback
             err_msg = traceback.format_exc()
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] EXCEPCIÓN EN IMPORTACIÓN FINAL: {err_msg}\n")
-            print(f"EXCEPCIÓN EN IMPORTACIÓN FINAL: {err_msg}")
+            print(f"\n>>> [ejecutar_importacion_final] EXCEPCIÓN en importación final:\n{err_msg}")
             try:
                 self.show_alert_error(e, f"Excepción crítica en importación final: {str(ex)}")
             except Exception:
