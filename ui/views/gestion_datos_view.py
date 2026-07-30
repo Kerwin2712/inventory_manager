@@ -121,11 +121,153 @@ class GestionDatosView(BaseView):
         )
 
     def handle_importar_click(self, e):
-        """Ejecuta la Carga Masiva defensiva y transaccional desde Excel."""
+        """Ejecuta la Carga Masiva analizando primero proveedores nuevos (ERS 1.1)."""
         ruta_archivo = self.abrir_dialogo_abrir()
         if not ruta_archivo:
             return
 
+        from services.importacion_service import analizar_proveedores_excel
+        analisis = analizar_proveedores_excel(ruta_archivo)
+
+        if not analisis.get("exito"):
+            self.show_alert_error(e, analisis.get("mensaje"))
+            return
+
+        faltantes = analisis.get("proveedores_faltantes", [])
+        if faltantes:
+            # Lanzar el asistente secuencial de registro
+            self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes)
+        else:
+            self.ejecutar_importacion_final(e, ruta_archivo)
+
+    def mostrar_asistente_proveedores_faltantes(self, e, ruta_archivo, faltantes, idx=0):
+        """Muestra un diálogo dinámico secuencial para completar información de proveedores nuevos."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        nombre_prov = faltantes[idx]
+        total_faltantes = len(faltantes)
+
+        # Controles del formulario
+        txt_empresa = ft.TextField(
+            label="Razón Social / Empresa", 
+            value=nombre_prov, 
+            disabled=True, 
+            prefix_icon=ft.Icons.BUSINESS
+        )
+        txt_contacto = ft.TextField(
+            label="Persona de Contacto (Opcional)", 
+            prefix_icon=ft.Icons.PERSON
+        )
+        txt_telefono = ft.TextField(
+            label="Teléfono de Contacto (Obligatorio)*", 
+            prefix_icon=ft.Icons.PHONE,
+            keyboard_type=ft.KeyboardType.PHONE
+        )
+        txt_correo = ft.TextField(
+            label="Correo Electrónico (Opcional)", 
+            prefix_icon=ft.Icons.EMAIL,
+            keyboard_type=ft.KeyboardType.EMAIL
+        )
+        txt_descripcion = ft.TextField(
+            label="Descripción / Notas (Opcional)", 
+            multiline=True, 
+            min_lines=2, 
+            max_lines=3,
+            prefix_icon=ft.Icons.NOTE
+        )
+        lbl_error = ft.Text(
+            "", 
+            color=ft.Colors.RED_500, 
+            size=12, 
+            weight=ft.FontWeight.BOLD
+        )
+
+        def cerrar_asistente(e_close):
+            dlg.open = False
+            p.update()
+            self.show_alert_info(e, "Importación cancelada por el usuario.")
+
+        def registrar_proveedor(e_reg):
+            lbl_error.value = ""
+            p.update()
+
+            empresa = txt_empresa.value.strip()
+            contacto = txt_contacto.value.strip()
+            telefono = txt_telefono.value.strip()
+            correo = txt_correo.value.strip()
+            descripcion = txt_descripcion.value.strip()
+
+            if not telefono:
+                lbl_error.value = "El Teléfono de Contacto es obligatorio por regla de negocio."
+                p.update()
+                return
+
+            try:
+                from services.cartera_service import crear_proveedor
+                crear_proveedor(
+                    empresa=empresa,
+                    contacto=contacto if contacto else None,
+                    telefono=telefono,
+                    correo=correo if correo else None,
+                    descripcion=descripcion if descripcion else f"Creado automáticamente durante la importación masiva."
+                )
+                
+                dlg.open = False
+                p.update()
+
+                # Siguiente o iniciar importación final
+                sig_idx = idx + 1
+                if sig_idx < total_faltantes:
+                    self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes, sig_idx)
+                else:
+                    self.show_alert_success(e, "Todos los proveedores nuevos se registraron correctamente.")
+                    self.ejecutar_importacion_final(e, ruta_archivo)
+
+            except Exception as ex:
+                lbl_error.value = f"Error al registrar: {str(ex)}"
+                p.update()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.ADD_BUSINESS, color=self.get_accent_color(), size=28),
+                ft.Text(f"Proveedor Faltante ({idx + 1} de {total_faltantes})", weight=ft.FontWeight.BOLD)
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(f"El proveedor '{nombre_prov}' no existe. Por favor, completa su información para proceder con la importación.", size=13, color=self.get_subtext_color()),
+                    ft.Divider(height=10),
+                    txt_empresa,
+                    txt_contacto,
+                    txt_telefono,
+                    txt_correo,
+                    txt_descripcion,
+                    lbl_error
+                ], spacing=12, tight=True),
+                width=480,
+                padding=10
+            ),
+            actions=[
+                ft.TextButton("Cancelar Importación", on_click=cerrar_asistente),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.SAVE), ft.Text("Guardar y Continuar")], tight=True),
+                    bgcolor=self.get_accent_color(),
+                    color=ft.Colors.WHITE,
+                    on_click=registrar_proveedor
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+
+        p.dialog = dlg
+        dlg.open = True
+        p.update()
+
+    def ejecutar_importacion_final(self, e, ruta_archivo):
+        """Llama al servicio de importación real para los productos del Excel."""
+        from services.importacion_service import procesar_importacion_excel
         res = procesar_importacion_excel(ruta_archivo)
 
         if res.get("exito"):
