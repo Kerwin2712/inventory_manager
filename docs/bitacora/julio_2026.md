@@ -384,10 +384,11 @@
 - **Actividades realizadas**
   - Modificación de formato en titulos para mejora visual.
 - **Estado del proyecto** Completo. Titulos mejorados.
-## Corrección de Layout y Rectángulo Gris en Dashboard Principal
+## Corrección de Layout y Rectángulos Grises en Módulos de Dashboard y Gestión de Datos
 - **Responsable:** Antigravity (IA Coding Assistant)
 - **Actividades realizadas:**
-  - Diagnóstico del colapso visual (rectángulo gris) en las secciones de datos del Dashboard al inicio.
-  - Reemplazo de `ft.Row(wrap=True)` por `ft.ResponsiveRow` en `build_data_sections` en `ui/views/dashboard_view.py`.
-  - Eliminación de la propiedad `expand=True` en `left_section` y `right_section`, configurando en su lugar la propiedad `col={"sm": 12, "lg": 6}` para lograr un comportamiento adaptativo real y evitar el colapso de la altura del contenedor en Flet.
-- **Estado del proyecto:** En desarrollo. Bug de layout resuelto en la pantalla de inicio del Dashboard.
+  - Diagnóstico del colapso visual (rectángulo gris) en las tarjetas y secciones de datos del Dashboard y en el módulo de Gestión de Datos al inicio.
+  - Reemplazo de `ft.Row(wrap=True)` por `ft.ResponsiveRow` en `build_data_sections` en [dashboard_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/dashboard_view.py) y en el layout de retorno de [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py).
+  - Eliminación de la propiedad `expand=True` en `left_section` y `right_section` (Dashboard), así como en `card_importar` y `card_exportar` (Gestión de Datos), sustituyéndola por `col={"sm": 12, "lg": 6}` para habilitar un grid adaptativo real y evitar que la altura de los componentes colapse en `0` dentro de columnas con scroll vertical de Flet.
+- **Estado del proyecto:** En desarrollo. Bugs de visualización por conflicto de layout resueltos.
+
