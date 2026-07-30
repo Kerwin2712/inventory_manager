@@ -122,23 +122,47 @@ class GestionDatosView(BaseView):
 
     def handle_importar_click(self, e):
         """Ejecuta la Carga Masiva analizando primero proveedores nuevos (ERS 1.1)."""
-        ruta_archivo = self.abrir_dialogo_abrir()
-        if not ruta_archivo:
-            return
+        try:
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"\n[{datetime.now()}] Iniciando handle_importar_click\n")
+            
+            ruta_archivo = self.abrir_dialogo_abrir()
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Ruta seleccionada: {ruta_archivo}\n")
+                
+            if not ruta_archivo:
+                with open("import_debug.log", "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now()}] No se seleccionó archivo\n")
+                return
 
-        from services.importacion_service import analizar_proveedores_excel
-        analisis = analizar_proveedores_excel(ruta_archivo)
+            from services.importacion_service import analizar_proveedores_excel
+            analisis = analizar_proveedores_excel(ruta_archivo)
+            
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Resultado del análisis: {analisis}\n")
 
-        if not analisis.get("exito"):
-            self.show_alert_error(e, analisis.get("mensaje"))
-            return
+            if not analisis.get("exito"):
+                self.show_alert_error(e, analisis.get("mensaje"))
+                return
 
-        faltantes = analisis.get("proveedores_faltantes", [])
-        if faltantes:
-            # Lanzar el asistente secuencial de registro
-            self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes)
-        else:
-            self.ejecutar_importacion_final(e, ruta_archivo)
+            faltantes = analisis.get("proveedores_faltantes", [])
+            if faltantes:
+                # Lanzar el asistente secuencial de registro
+                self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes)
+            else:
+                self.ejecutar_importacion_final(e, ruta_archivo)
+        except Exception as ex:
+            import traceback
+            err_msg = traceback.format_exc()
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] EXCEPCIÓN: {err_msg}\n")
+            # Mostrar la excepción en la consola y en la UI de alguna forma si es posible
+            print(f"EXCEPCIÓN EN IMPORTACIÓN: {err_msg}")
+            # Intentar mostrar SnackBar de error de todas formas
+            try:
+                self.show_alert_error(e, f"Excepción crítica: {str(ex)}")
+            except Exception:
+                pass
 
     def mostrar_asistente_proveedores_faltantes(self, e, ruta_archivo, faltantes, idx=0):
         """Muestra un diálogo dinámico secuencial para completar información de proveedores nuevos."""
@@ -267,13 +291,30 @@ class GestionDatosView(BaseView):
 
     def ejecutar_importacion_final(self, e, ruta_archivo):
         """Llama al servicio de importación real para los productos del Excel."""
-        from services.importacion_service import procesar_importacion_excel
-        res = procesar_importacion_excel(ruta_archivo)
+        try:
+            from services.importacion_service import procesar_importacion_excel
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Iniciando ejecutar_importacion_final para: {ruta_archivo}\n")
+            
+            res = procesar_importacion_excel(ruta_archivo)
+            
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Resultado de la importación final: {res}\n")
 
-        if res.get("exito"):
-            self.show_alert_success(e, res.get("mensaje"))
-        else:
-            self.mostrar_dialogo_error(e, res.get("mensaje"))
+            if res.get("exito"):
+                self.show_alert_success(e, res.get("mensaje"))
+            else:
+                self.mostrar_dialogo_error(e, res.get("mensaje"))
+        except Exception as ex:
+            import traceback
+            err_msg = traceback.format_exc()
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] EXCEPCIÓN EN IMPORTACIÓN FINAL: {err_msg}\n")
+            print(f"EXCEPCIÓN EN IMPORTACIÓN FINAL: {err_msg}")
+            try:
+                self.show_alert_error(e, f"Excepción crítica en importación final: {str(ex)}")
+            except Exception:
+                pass
 
     def mostrar_dialogo_error(self, e, error_msg: str):
         """Muestra un AlertDialog emergente cuando la importación transaccional falla y ejecuta ROLLBACK."""
