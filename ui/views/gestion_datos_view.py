@@ -311,7 +311,8 @@ class GestionDatosView(BaseView):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
-        p.dialog = dlg
+        if dlg not in p.overlay:
+            p.overlay.append(dlg)
         dlg.open = True
         p.update()
 
@@ -376,7 +377,8 @@ class GestionDatosView(BaseView):
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
-        p.dialog = dlg
+        if dlg not in p.overlay:
+            p.overlay.append(dlg)
         dlg.open = True
         p.update()
 

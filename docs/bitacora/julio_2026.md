@@ -419,6 +419,7 @@
   - Corrección del bug tipográfico en `services/importacion_service.py`: se agregó la normalización de `"provehedor"` a `"proveedor"` en la función `limpiar_clave`. Esto resuelve la omisión de la columna de proveedor debido a la cabecera escrita con "H" en la plantilla del Excel de prueba.
   - Habilitación del flujo completo del asistente de importación: ahora la aplicación detecta correctamente a los proveedores faltantes del archivo Excel (`BEVAL`, `RG`, etc.), activando en secuencia los diálogos Flet para registrar sus datos mínimos obligatorios.
   - Vinculación correcta de `proveedor_id` en cada registro de producto en la base de datos SQLite en lugar de dejarlos en `NULL`.
+  - Solución al bloqueo de renderizado de modales en `GestionDatosView`: se reemplazó el uso de la propiedad `page.dialog` por la inserción explícita en `page.overlay` para evitar conflictos en vistas de navegación dinámica e interna en Flet.
 - **Estado del proyecto:** En desarrollo. Carga masiva con mapeo estricto e interactivo de proveedores corregido y probado.
 
 
