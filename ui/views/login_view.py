@@ -17,6 +17,7 @@ class LoginView(BaseView):
         self.username_input = ft.TextField(
             label="Usuario",
             width=320,
+            border_radius=12,
             border_color=accent,
             focused_border_color=accent,
             label_style=ft.TextStyle(color=self.get_subtext_color()),
@@ -28,6 +29,7 @@ class LoginView(BaseView):
             password=True,
             can_reveal_password=True,
             width=320,
+            border_radius=12,
             border_color=accent,
             focused_border_color=accent,
             label_style=ft.TextStyle(color=self.get_subtext_color()),
@@ -37,10 +39,13 @@ class LoginView(BaseView):
         
         # Botón de autenticación
         login_btn = ft.Button(
-            content="Iniciar Sesión",
+            content=ft.Text("Iniciar Sesión", weight=ft.FontWeight.BOLD),
             width=320,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
             on_click=self.handle_login,
         )
         
@@ -53,10 +58,12 @@ class LoginView(BaseView):
         )
         
         # Retorna el contenedor principal centrado
-        return ft.Container(
+        login_card = self.create_card(
             content=ft.Column(
                 controls=[
-                    ft.Icon(icon=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
+                    ft.Icon(name=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
+                    ft.Text("Control de Acceso", size=20, weight=ft.FontWeight.BOLD, color=text_color),
+                    ft.Container(height=5),
                     self.username_input,
                     self.password_input,
                     self.error_text,
@@ -66,8 +73,14 @@ class LoginView(BaseView):
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=15,
             ),
+            padding=30,
+            border_radius=20,
+        )
+        login_card.width = 380
+        
+        return ft.Container(
+            content=login_card,
             alignment=ft.Alignment.CENTER,
-            padding=ft.Padding.only(top=40),
             expand=True,
         )
 

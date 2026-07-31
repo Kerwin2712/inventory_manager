@@ -423,3 +423,34 @@
 - **Estado del proyecto:** En desarrollo. Carga masiva con mapeo estricto e interactivo de proveedores corregido y probado.
 
 
+
+## Rediseño Estético Premium (Esquinas Redondeadas, Sombras y KPIs Flet) - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **BaseView (`ui/views/base_view.py`):**
+    - Adición del método `get_card_shadow` que retorna sombras suaves dinámicas (`ft.BoxShadow`) adaptadas a los modos claro/oscuro.
+    - Implementación del helper `create_card` para encapsular de forma estandarizada los estilos premium con esquinas redondeadas (`border_radius=16`) y elevación en toda la app.
+  - **LoginView (`ui/views/login_view.py`):**
+    - Rediseño de la pantalla de login: el formulario se posiciona ahora flotando en una tarjeta central estilizada con bordes redondeados y sombras.
+    - Homogeneización de campos de texto y botón con esquinas redondeadas (`border_radius=12`).
+  - **DashboardView (`ui/views/dashboard_view.py`):**
+    - Modernización visual de la barra lateral con botones con `border_radius=12`.
+    - Rediseño de los KPIs superiores a un formato de dos columnas con sombras: columna izquierda con ícono llamativo y valor de la métrica en negrita grande, y columna derecha con título de la métrica y subtexto alineados a la derecha.
+    - Modificación de las secciones inferiores de Inteligencia de Negocio y Auditoría Preventiva para usar `create_card` (esquinas 18 y sombras) e inputs dropdown redondeados.
+  - **InventarioView (`ui/views/inventario_view.py`):**
+    - Transición de contenedores planos en el panel BCV, panel de filtros y catálogo a tarjetas premium con `create_card` (border_radius=18, sombras).
+    - Redondeado de inputs de filtros y formularios secuenciales, y botones a `border_radius=12`.
+  - **VentasView (`ui/views/ventas_view.py`):**
+    - Incorporación de `create_card` en la cabecera, búsqueda de clientes, selección de ítems, totales y en la tabla de carrito de compras.
+    - Redondeado de inputs y botones de acción a `border_radius=12`.
+  - **CarteraView (`ui/views/cartera_view.py`):**
+    - Estilización de buscadores, formularios y listados de clientes y proveedores a través de `create_card` (esquinas 16/18 y sombras).
+    - Aplicación de `border_radius=12` a inputs y botones.
+  - **GestionDatosView (`ui/views/gestion_datos_view.py`):**
+    - Sustitución de `ft.Card` plano por `create_card` con border_radius=16 y sombras.
+    - Homogeneización a `border_radius=12` en botones de importación/exportación.
+  - **AdminUsersView (`ui/views/admin_users_view.py`):**
+    - Encapsulado de formularios de creación de usuarios y listado en tarjetas `create_card` redondeadas con sombras.
+    - Redondeado de inputs y botones de acción.
+- **Verificaciones realizadas:** Ejecución exitosa de la aplicación Flet utilizando el entorno virtual local, verificando que inicia limpiamente sin errores de sintaxis o importación.
+- **Estado del proyecto:** En desarrollo. Rediseño visual premium implementado y verificado.

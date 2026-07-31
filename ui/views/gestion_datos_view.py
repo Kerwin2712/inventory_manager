@@ -58,62 +58,58 @@ class GestionDatosView(BaseView):
         card_bg = self.get_card_bg()
 
         # ── Tarjeta 1: Carga Masiva (Importar Excel - ERS 1.1) ─────────────────
-        card_importar = ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Row([
-                        ft.Icon(ft.Icons.UPLOAD_FILE_ROUNDED, size=40, color=accent),
-                        ft.Column([
-                            ft.Text("Carga Masiva de Datos", size=16, weight=ft.FontWeight.BOLD, color=text_color),
-                            ft.Text("Importación masiva de inventario y catálogos en lote desde Excel.", size=12, color=subtext_color)
-                        ], spacing=2)
-                    ], spacing=15),
-                    ft.Divider(),
-                    ft.Text("Permite cargar o actualizar simultáneamente productos, clientes y proveedores desde plantillas estructuradas.", size=13, color=subtext_color),
-                    ft.Container(height=10),
-                    ft.Button(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.FILE_UPLOAD_OUTLINED, color=ft.Colors.WHITE),
-                            ft.Text("IMPORTAR DESDE EXCEL", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-                        ], alignment=ft.MainAxisAlignment.CENTER),
-                        style=ft.ButtonStyle(bgcolor=accent, shape=ft.RoundedRectangleBorder(radius=8)),
-                        on_click=self.handle_importar_click
-                    )
-                ], spacing=12),
-                padding=20
-            ),
-            bgcolor=card_bg,
-            col={"sm": 12, "lg": 6}
+        card_importar = self.create_card(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.UPLOAD_FILE_ROUNDED, size=40, color=accent),
+                    ft.Column([
+                        ft.Text("Carga Masiva de Datos", size=16, weight=ft.FontWeight.BOLD, color=text_color),
+                        ft.Text("Importación masiva de inventario y catálogos en lote desde Excel.", size=12, color=subtext_color)
+                    ], spacing=2)
+                ], spacing=15),
+                ft.Divider(),
+                ft.Text("Permite cargar o actualizar simultáneamente productos, clientes y proveedores desde plantillas estructuradas.", size=13, color=subtext_color),
+                ft.Container(height=10),
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.FILE_UPLOAD_OUTLINED, color=ft.Colors.WHITE),
+                        ft.Text("IMPORTAR DESDE EXCEL", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    style=ft.ButtonStyle(bgcolor=accent, shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=self.handle_importar_click
+                )
+            ], spacing=12),
+            padding=20,
+            border_radius=16
         )
+        card_importar.col = {"sm": 12, "lg": 6}
 
         # ── Tarjeta 2: Copias de Seguridad (Exportar a Excel - ERS 1.1) ───────
-        card_exportar = ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Row([
-                        ft.Icon(ft.Icons.SAVINGS_ROUNDED, size=40, color=ft.Colors.GREEN_600),
-                        ft.Column([
-                            ft.Text("Copias de Seguridad (Backup)", size=16, weight=ft.FontWeight.BOLD, color=text_color),
-                            ft.Text("Exportación completa a libro Excel (.xlsx) con pestañas separadas.", size=12, color=subtext_color)
-                        ], spacing=2)
-                    ], spacing=15),
-                    ft.Divider(),
-                    ft.Text("Genera un respaldo integral exportando Productos, Clientes y Proveedores en hojas separadas.", size=13, color=subtext_color),
-                    ft.Container(height=10),
-                    ft.Button(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.DOWNLOAD_ROUNDED, color=ft.Colors.WHITE),
-                            ft.Text("GENERAR COPIA DE SEGURIDAD (.XLSX)", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-                        ], alignment=ft.MainAxisAlignment.CENTER),
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, shape=ft.RoundedRectangleBorder(radius=8)),
-                        on_click=self.handle_exportar_excel
-                    )
-                ], spacing=12),
-                padding=20
-            ),
-            bgcolor=card_bg,
-            col={"sm": 12, "lg": 6}
+        card_exportar = self.create_card(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.SAVINGS_ROUNDED, size=40, color=ft.Colors.GREEN_600),
+                    ft.Column([
+                        ft.Text("Copias de Seguridad (Backup)", size=16, weight=ft.FontWeight.BOLD, color=text_color),
+                        ft.Text("Exportación completa a libro Excel (.xlsx) con pestañas separadas.", size=12, color=subtext_color)
+                    ], spacing=2)
+                ], spacing=15),
+                ft.Divider(),
+                ft.Text("Genera un respaldo integral exportando Productos, Clientes y Proveedores en hojas separadas.", size=13, color=subtext_color),
+                ft.Container(height=10),
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.DOWNLOAD_ROUNDED, color=ft.Colors.WHITE),
+                        ft.Text("GENERAR COPIA DE SEGURIDAD (.XLSX)", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=self.handle_exportar_excel
+                )
+            ], spacing=12),
+            padding=20,
+            border_radius=16
         )
+        card_exportar.col = {"sm": 12, "lg": 6}
 
         return ft.Container(
             content=ft.Column([

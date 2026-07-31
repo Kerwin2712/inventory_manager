@@ -21,6 +21,7 @@ class AdminUsersView(BaseView):
             border_color=self.get_border_color(),
             label_style=ft.TextStyle(color=self.get_subtext_color()),
             color=text_color,
+            border_radius=12,
         )
         self.password_input = ft.TextField(
             label="Contraseña",
@@ -30,7 +31,8 @@ class AdminUsersView(BaseView):
             border_color=self.get_border_color(),
             label_style=ft.TextStyle(color=self.get_subtext_color()),
             color=text_color,
-            hint_text="Vacío = no cambiar al editar"
+            hint_text="Vacío = no cambiar al editar",
+            border_radius=12,
         )
         self.role_dropdown = ft.Dropdown(
             label="Rol",
@@ -43,25 +45,35 @@ class AdminUsersView(BaseView):
                 ft.dropdown.Option(key="vendedor", text="Vendedor"),
             ],
             value="administrador",
+            border_radius=12,
         )
 
         self.save_btn = ft.Button(
-            content="Guardar Usuario",
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            content=ft.Text("Guardar Usuario", weight=ft.FontWeight.BOLD),
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
             on_click=self.handle_save_user,
         )
 
         self.cancel_btn = ft.OutlinedButton(
             content="Cancelar Edición",
             visible=False,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
             on_click=self.handle_cancel_edit,
         )
 
         logout_btn = ft.Button(
-            content="Cerrar Sesión",
-            bgcolor=ft.Colors.RED_600,
-            color=ft.Colors.WHITE,
+            content=ft.Text("Cerrar Sesión", weight=ft.FontWeight.BOLD),
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.RED_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
             on_click=self.handle_logout,
         )
 
@@ -118,7 +130,7 @@ class AdminUsersView(BaseView):
         self.refresh_table()
 
         # Contenedor del formulario
-        form_card = ft.Container(
+        form_card = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Text("Registrar o Modificar Usuario del Sistema", size=18, weight=ft.FontWeight.BOLD, color=accent),
@@ -143,9 +155,7 @@ class AdminUsersView(BaseView):
                 spacing=15,
             ),
             padding=20,
-            border_radius=10,
-            bgcolor=self.get_card_bg(),
-            border=ft.Border.all(1, self.get_border_color()),
+            border_radius=16,
         )
 
         user_icon = ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS, color=accent, size=22)
@@ -177,9 +187,10 @@ class AdminUsersView(BaseView):
                 form_card,
                 ft.Divider(height=20, color=self.get_border_color()),
                 ft.Text("Lista de Usuarios Registrados", size=18, weight=ft.FontWeight.BOLD, color=text_color),
-                ft.Container(
+                self.create_card(
                     content=self.users_table,
                     padding=10,
+                    border_radius=18
                 )
             ],
             spacing=15,

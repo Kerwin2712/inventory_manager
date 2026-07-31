@@ -134,6 +134,7 @@ class CarteraView(BaseView):
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
+            border_radius=12,
             options=[
                 ft.dropdown.Option("V"),
                 ft.dropdown.Option("E"),
@@ -150,33 +151,38 @@ class CarteraView(BaseView):
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
+            border_radius=12,
             on_submit=self.handle_buscar_cliente,
         )
 
         btn_buscar_cli = ft.Button(
             content="Buscar",
             icon=ft.Icons.SEARCH,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_buscar_cliente,
         )
 
         btn_nuevo_cli = ft.OutlinedButton(
             content="Nuevo Cliente",
             icon=ft.Icons.ADD,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_mostrar_form_cliente,
         )
 
-        search_bar = ft.Container(
+        search_bar = self.create_card(
             content=ft.Row([
                 ft.Row([self.cli_search_tipo, self.cli_search_numero], spacing=5),
                 btn_buscar_cli,
                 btn_nuevo_cli
             ], spacing=15, alignment=ft.MainAxisAlignment.START),
             padding=10,
-            border_radius=8,
-            bgcolor=card_bg,
-            border=ft.Border.all(1, border_color),
+            border_radius=16
         )
 
         # 2. Tarjeta de Resultado de Búsqueda
@@ -189,6 +195,7 @@ class CarteraView(BaseView):
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
+            border_radius=12,
             options=[
                 ft.dropdown.Option("V"),
                 ft.dropdown.Option("E"),
@@ -204,26 +211,33 @@ class CarteraView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER,
             color=text_color,
             border_color=border_color,
-            focused_border_color=accent
+            focused_border_color=accent,
+            border_radius=12,
         )
-        self.cli_nombre = ft.TextField(label="Nombre / Razón Social *", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.cli_telefono = ft.TextField(label="Teléfono", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.cli_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.cli_direccion = ft.TextField(label="Dirección", width=595, multiline=True, max_lines=2, color=text_color, border_color=border_color, focused_border_color=accent)
+        self.cli_nombre = ft.TextField(label="Nombre / Razón Social *", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.cli_telefono = ft.TextField(label="Teléfono", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.cli_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.cli_direccion = ft.TextField(label="Dirección", width=595, multiline=True, max_lines=2, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
 
         self.btn_guardar_cli_label = ft.Text("Guardar Cliente", color=ft.Colors.WHITE)
         btn_guardar_cli = ft.Button(
             content=self.btn_guardar_cli_label,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_guardar_cliente,
         )
         btn_cancelar_cli = ft.OutlinedButton(
             content="Cancelar",
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_ocultar_form_cliente,
         )
 
-        self.cli_form_container = ft.Container(
+        self.cli_form_container = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Text("Formulario de Registro / Edición de Cliente", size=16, weight=ft.FontWeight.BOLD, color=accent),
@@ -238,11 +252,9 @@ class CarteraView(BaseView):
                 spacing=12,
             ),
             padding=15,
-            border_radius=10,
-            bgcolor=card_bg,
-            border=ft.Border.all(1, border_color),
-            visible=False,
+            border_radius=16,
         )
+        self.cli_form_container.visible = False
 
         # 4. Tabla DataGrid con Paginación
         self.dt_clientes = ft.DataTable(
@@ -276,7 +288,7 @@ class CarteraView(BaseView):
                 self.cli_form_container,
                 ft.Container(height=5),
                 ft.Text("Directorio General de Clientes", size=18, weight=ft.FontWeight.BOLD, color=text_color),
-                ft.Container(
+                self.create_card(
                     content=ft.Column(
                         controls=[
                             ft.ListView(controls=[self.dt_clientes], expand=True),
@@ -284,11 +296,8 @@ class CarteraView(BaseView):
                         ],
                         expand=True,
                     ),
-                    height=300,
                     padding=10,
-                    border_radius=10,
-                    bgcolor=card_bg,
-                    border=ft.Border.all(1, border_color),
+                    border_radius=18,
                 ),
             ],
             scroll=ft.ScrollMode.AUTO,
@@ -307,6 +316,7 @@ class CarteraView(BaseView):
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
+            border_radius=12,
             options=[
                 ft.dropdown.Option("J"),
                 ft.dropdown.Option("G"),
@@ -322,33 +332,38 @@ class CarteraView(BaseView):
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
+            border_radius=12,
             on_submit=self.handle_buscar_proveedor,
         )
 
         btn_buscar_prov = ft.Button(
             content="Buscar",
             icon=ft.Icons.SEARCH,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_buscar_proveedor,
         )
 
         btn_nuevo_prov = ft.OutlinedButton(
             content="Nuevo Proveedor",
             icon=ft.Icons.ADD,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_mostrar_form_proveedor,
         )
 
-        search_bar = ft.Container(
+        search_bar = self.create_card(
             content=ft.Row([
                 ft.Row([self.prov_search_tipo, self.prov_search_input], spacing=5),
                 btn_buscar_prov,
                 btn_nuevo_prov
             ], spacing=15, alignment=ft.MainAxisAlignment.START),
             padding=10,
-            border_radius=8,
-            bgcolor=card_bg,
-            border=ft.Border.all(1, border_color),
+            border_radius=16
         )
 
         # 2. Tarjeta de Resultado de Búsqueda
@@ -361,6 +376,7 @@ class CarteraView(BaseView):
             color=text_color,
             border_color=border_color,
             focused_border_color=accent,
+            border_radius=12,
             options=[
                 ft.dropdown.Option("J"),
                 ft.dropdown.Option("G"),
@@ -376,35 +392,45 @@ class CarteraView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER,
             color=text_color,
             border_color=border_color,
-            focused_border_color=accent
+            focused_border_color=accent,
+            border_radius=12,
         )
 
-        self.prov_empresa = ft.TextField(label="Nombre de la Empresa", width=290, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.prov_contacto = ft.TextField(label="Agente de Contacto", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.prov_telefono = ft.TextField(label="Teléfono *", width=250, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.prov_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent)
-        self.prov_desc = ft.TextField(label="Descripción / Categoría", width=595, color=text_color, border_color=border_color, focused_border_color=accent)
+        self.prov_empresa = ft.TextField(label="Nombre de la Empresa", width=290, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.prov_contacto = ft.TextField(label="Agente de Contacto", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.prov_telefono = ft.TextField(label="Teléfono *", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.prov_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.prov_desc = ft.TextField(label="Descripción / Categoría", width=595, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
 
         self.txt_adjuntos_status = ft.Text("Sin archivos adjuntos", size=12, color=subtext_color)
         btn_adjuntar = ft.OutlinedButton(
             content="Adjuntar Catálogo (PDF / Img)",
             icon=ft.Icons.ATTACH_FILE,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_adjuntar_simulado,
         )
 
         self.btn_guardar_prov_label = ft.Text("Guardar Proveedor", color=ft.Colors.WHITE)
         btn_guardar_prov = ft.Button(
             content=self.btn_guardar_prov_label,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_guardar_proveedor,
         )
         btn_cancelar_prov = ft.OutlinedButton(
             content="Cancelar",
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_ocultar_form_proveedor,
         )
 
-        self.prov_form_container = ft.Container(
+        self.prov_form_container = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Text("Formulario de Registro / Edición de Proveedor", size=16, weight=ft.FontWeight.BOLD, color=accent),
@@ -420,11 +446,9 @@ class CarteraView(BaseView):
                 spacing=12,
             ),
             padding=15,
-            border_radius=10,
-            bgcolor=card_bg,
-            border=ft.Border.all(1, border_color),
-            visible=False,
+            border_radius=16,
         )
+        self.prov_form_container.visible = False
 
         # 4. Tabla DataGrid con Paginación
         self.dt_proveedores = ft.DataTable(
@@ -459,7 +483,7 @@ class CarteraView(BaseView):
                 self.prov_form_container,
                 ft.Container(height=5),
                 ft.Text("Catálogo General de Proveedores", size=18, weight=ft.FontWeight.BOLD, color=text_color),
-                ft.Container(
+                self.create_card(
                     content=ft.Column(
                         controls=[
                             ft.ListView(controls=[self.dt_proveedores], expand=True),
@@ -467,11 +491,8 @@ class CarteraView(BaseView):
                         ],
                         expand=True,
                     ),
-                    height=300,
                     padding=10,
-                    border_radius=10,
-                    bgcolor=card_bg,
-                    border=ft.Border.all(1, border_color),
+                    border_radius=18,
                 ),
             ],
             scroll=ft.ScrollMode.AUTO,

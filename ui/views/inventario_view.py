@@ -131,18 +131,22 @@ class InventarioView(BaseView):
             color=text_color,
             border_color=border,
             focused_border_color=accent,
+            border_radius=12,
             on_submit=self._handle_actualizar_tasa,
         )
 
         btn_act_tasa = ft.Button(
-            content="Actualizar Tasa",
+            content=ft.Text("Actualizar Tasa", weight=ft.FontWeight.BOLD),
             icon=ft.Icons.CURRENCY_EXCHANGE,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self._handle_actualizar_tasa,
         )
 
-        return ft.Container(
+        return self.create_card(
             content=ft.Row(
                 controls=[
                     ft.Row([self._lbl_tasa_icon, self._lbl_tasa], spacing=8),
@@ -152,9 +156,7 @@ class InventarioView(BaseView):
                 wrap=True,
             ),
             padding=12,
-            bgcolor=card_bg,
-            border_radius=10,
-            border=ft.Border.all(1, border),
+            border_radius=18
         )
 
     def _handle_actualizar_tasa(self, e):
@@ -185,6 +187,7 @@ class InventarioView(BaseView):
             tf = ft.TextField(
                 label=label, width=width,
                 color=text_color, border_color=border, focused_border_color=accent,
+                border_radius=12,
                 on_change=self._handle_filtro_change,
             )
             return tf
@@ -195,20 +198,26 @@ class InventarioView(BaseView):
         self._f_departamento = campo("Departamento")
 
         btn_ingresar = ft.Button(
-            content="  Ingresar Producto",
+            content=ft.Text("  Ingresar Producto", weight=ft.FontWeight.BOLD),
             icon=ft.Icons.ADD_BOX_ROUNDED,
-            bgcolor=accent,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self._abrir_flujo_ingreso,
         )
 
         btn_limpiar = ft.OutlinedButton(
             content="Limpiar filtros",
             icon=ft.Icons.FILTER_ALT_OFF_OUTLINED,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self._handle_limpiar_filtros,
         )
 
-        return ft.Container(
+        return self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -235,9 +244,7 @@ class InventarioView(BaseView):
                 spacing=10,
             ),
             padding=12,
-            bgcolor=card_bg,
-            border_radius=10,
-            border=ft.Border.all(1, border),
+            border_radius=18
         )
 
     def _handle_filtro_change(self, e):
@@ -276,7 +283,7 @@ class InventarioView(BaseView):
         btn_prev = ft.IconButton(ft.Icons.CHEVRON_LEFT, on_click=self._pagina_anterior)
         btn_next = ft.IconButton(ft.Icons.CHEVRON_RIGHT, on_click=self._pagina_siguiente)
 
-        return ft.Container(
+        return self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -424,6 +431,7 @@ class InventarioView(BaseView):
             color=text_color,
             border_color=self.get_border_color(),
             focused_border_color=accent,
+            border_radius=12,
             on_submit=lambda ev: _verificar(ev),
         )
         lbl_status = ft.Text("", size=12, color=ft.Colors.AMBER_400)
@@ -468,7 +476,10 @@ class InventarioView(BaseView):
                     )),
                     ft.Button(
                         "Sí — Ver Producto",
-                        bgcolor=accent, color=ft.Colors.WHITE,
+                        style=ft.ButtonStyle(
+                            bgcolor=accent, color=ft.Colors.WHITE,
+                            shape=ft.RoundedRectangleBorder(radius=12)
+                        ),
                         on_click=lambda ev2: (
                             _close_dup(ev2),
                             self._close_dialog(ev2),
@@ -502,7 +513,10 @@ class InventarioView(BaseView):
                 ft.Button(
                     "Verificar",
                     icon=ft.Icons.SEARCH,
-                    bgcolor=accent, color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(
+                        bgcolor=accent, color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12)
+                    ),
                     on_click=_verificar,
                 ),
             ],
@@ -524,6 +538,7 @@ class InventarioView(BaseView):
                 width=width, hint_text=hint,
                 keyboard_type=kb,
                 color=text_color, border_color=border, focused_border_color=accent,
+                border_radius=12,
             )
 
         # Controles del formulario
@@ -531,6 +546,7 @@ class InventarioView(BaseView):
             label="Código *", value=codigo,
             width=200, disabled=True,
             color=text_color, border_color=border,
+            border_radius=12,
         )
         f_ref = tf("Referencia *", "referencia")
         f_desc = tf("Descripción General *", "descripcion_general", width=520)
@@ -577,6 +593,7 @@ class InventarioView(BaseView):
             color=text_color,
             border_color=border,
             focused_border_color=accent,
+            border_radius=12,
         )
 
         titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
@@ -621,7 +638,10 @@ class InventarioView(BaseView):
                 ft.Button(
                     "Revisar y Guardar",
                     icon=ft.Icons.FACT_CHECK_OUTLINED,
-                    bgcolor=accent, color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(
+                        bgcolor=accent, color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12)
+                    ),
                     on_click=_guardar,
                 ),
             ],
@@ -688,11 +708,18 @@ class InventarioView(BaseView):
             ),
             actions=[
                 ft.TextButton("Cancelar", on_click=self._close_dialog),
-                ft.OutlinedButton("Editar", icon=ft.Icons.EDIT_OUTLINED, on_click=_editar),
+                ft.OutlinedButton(
+                    "Editar", icon=ft.Icons.EDIT_OUTLINED,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=_editar
+                ),
                 ft.Button(
                     "Aceptar — Guardar",
                     icon=ft.Icons.SAVE_OUTLINED,
-                    bgcolor=accent, color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(
+                        bgcolor=accent, color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12)
+                    ),
                     on_click=_confirmar,
                 ),
             ],
@@ -768,7 +795,11 @@ class InventarioView(BaseView):
             actions=[
                 ft.TextButton("Cancelar", on_click=self._close_dialog),
                 ft.Button(
-                    "Eliminar", bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
+                    "Eliminar",
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12)
+                    ),
                     on_click=_hacer_eliminar,
                 ),
             ],

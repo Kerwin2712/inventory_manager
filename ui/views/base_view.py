@@ -68,6 +68,38 @@ class BaseView(ft.View):
         """Color de bordes y divisores."""
         return ft.Colors.GREY_800 if self.is_dark else "#CBD5E1"
 
+    def get_card_shadow(self) -> list[ft.BoxShadow]:
+        """Retorna una lista de sombras premium para contenedores."""
+        if self.is_dark:
+            return [
+                ft.BoxShadow(
+                    spread_radius=0,
+                    blur_radius=12,
+                    color=ft.Colors.with_opacity(0.35, "#020617"),
+                    offset=ft.Offset(0, 4),
+                )
+            ]
+        else:
+            return [
+                ft.BoxShadow(
+                    spread_radius=0,
+                    blur_radius=12,
+                    color=ft.Colors.with_opacity(0.08, "#475569"),
+                    offset=ft.Offset(0, 4),
+                )
+            ]
+
+    def create_card(self, content: ft.Control, padding: int | ft.Padding = 15, border_radius: int = 16) -> ft.Container:
+        """Crea un contenedor de tarjeta estilizado con bordes redondeados y sombras premium."""
+        return ft.Container(
+            content=content,
+            padding=padding,
+            border_radius=border_radius,
+            bgcolor=self.get_card_bg(),
+            border=ft.Border.all(1, self.get_border_color()),
+            shadow=self.get_card_shadow(),
+        )
+
     def setup_layout(self):
         """Estructura por defecto para las vistas que heredan."""
         header = ft.Text(

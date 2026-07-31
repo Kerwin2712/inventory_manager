@@ -146,7 +146,7 @@ class DashboardView(BaseView):
                     spacing=12,
                 ),
                 padding=ft.Padding.symmetric(horizontal=15, vertical=12),
-                border_radius=8,
+                border_radius=12,
                 bgcolor=bg,
                 on_click=lambda e, l=label: self.handle_nav_change(l),
             )
@@ -282,28 +282,39 @@ class DashboardView(BaseView):
 
         card_widgets = []
         for title, value, subtitle, icon, color in cards_data:
-            c = ft.Card(
-                content=ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Row(
-                                controls=[
-                                    ft.Text(title, size=13, color=self.get_subtext_color(), weight=ft.FontWeight.W_500),
-                                    ft.Icon(icon, color=color, size=24),
-                                ],
-                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            ),
-                            ft.Text(value, size=20, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
-                            ft.Text(subtitle, size=12, color=color),
-                        ],
-                        spacing=8,
-                    ),
-                    padding=20,
-                    width=260,
-                    bgcolor=self.get_card_bg(),
-                    border_radius=10,
+            c = ft.Container(
+                content=ft.Row(
+                    controls=[
+                        # Columna izquierda: Icono y Valor
+                        ft.Column(
+                            controls=[
+                                ft.Icon(icon, color=color, size=32),
+                                ft.Text(value, size=22, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                            ],
+                            spacing=6,
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        # Columna derecha: Título y Subtítulo
+                        ft.Column(
+                            controls=[
+                                ft.Text(title, size=11, color=self.get_subtext_color(), weight=ft.FontWeight.W_600, text_align=ft.TextAlign.RIGHT),
+                                ft.Container(height=8),
+                                ft.Text(subtitle, size=11, color=color if "Críticos" in value or "Bajo" in title else self.get_subtext_color(), text_align=ft.TextAlign.RIGHT),
+                            ],
+                            alignment=ft.MainAxisAlignment.START,
+                            horizontal_alignment=ft.CrossAxisAlignment.END,
+                            expand=True,
+                        )
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
-                elevation=1,
+                padding=18,
+                width=265,
+                bgcolor=self.get_card_bg(),
+                border_radius=18,
+                border=ft.Border.all(1, self.get_border_color()),
+                shadow=self.get_card_shadow(),
             )
             card_widgets.append(c)
 
@@ -332,7 +343,10 @@ class DashboardView(BaseView):
                 ft.dropdown.Option("Año"),
             ],
             width=110,
-            content_padding=5
+            content_padding=5,
+            border_radius=12,
+            border_color=self.get_border_color(),
+            focused_border_color=accent,
         )
         dd_rango.on_change = handle_cambio_rango
 
@@ -343,7 +357,10 @@ class DashboardView(BaseView):
                 ft.dropdown.Option("100", "Top 100"),
             ],
             width=100,
-            content_padding=5
+            content_padding=5,
+            border_radius=12,
+            border_color=self.get_border_color(),
+            focused_border_color=accent,
         )
         dd_limite.on_change = handle_cambio_limite
 
@@ -382,7 +399,7 @@ class DashboardView(BaseView):
                 padding=30
             )
 
-        left_section = ft.Container(
+        left_section = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -402,9 +419,7 @@ class DashboardView(BaseView):
                 spacing=10,
             ),
             padding=15,
-            border_radius=10,
-            bgcolor=self.get_card_bg(),
-            border=ft.Border.all(1, self.get_border_color()),
+            border_radius=18,
             col={"sm": 12, "lg": 6},
         )
 
@@ -444,7 +459,7 @@ class DashboardView(BaseView):
                 padding=30
             )
 
-        right_section = ft.Container(
+        right_section = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -460,9 +475,7 @@ class DashboardView(BaseView):
                 spacing=10,
             ),
             padding=15,
-            border_radius=10,
-            bgcolor=self.get_card_bg(),
-            border=ft.Border.all(1, self.get_border_color()),
+            border_radius=18,
             col={"sm": 12, "lg": 6},
         )
 
