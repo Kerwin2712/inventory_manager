@@ -61,7 +61,7 @@ class LoginView(BaseView):
         login_card = self.create_card(
             content=ft.Column(
                 controls=[
-                    ft.Icon(name=ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
+                    ft.Icon(ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
                     ft.Text("Control de Acceso", size=20, weight=ft.FontWeight.BOLD, color=text_color),
                     ft.Container(height=5),
                     self.username_input,

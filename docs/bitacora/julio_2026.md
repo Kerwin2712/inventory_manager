@@ -454,3 +454,11 @@
     - Redondeado de inputs y botones de acción.
 - **Verificaciones realizadas:** Ejecución exitosa de la aplicación Flet utilizando el entorno virtual local, verificando que inicia limpiamente sin errores de sintaxis o importación.
 - **Estado del proyecto:** En desarrollo. Rediseño visual premium implementado y verificado.
+
+## Corrección de TypeError en Icon de LoginView - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de la instanciación de `ft.Icon` en [login_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/login_view.py): remoción de la palabra clave explícita `name=` al pasar la constante `ft.Icons.LOCK_PERSON_OUTLINED`.
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` sin excepciones de argumento no esperado.
+- **Estado del proyecto:** En desarrollo. Bug de arranque resuelto y validado.
+
