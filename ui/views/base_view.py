@@ -89,7 +89,7 @@ class BaseView(ft.View):
                 )
             ]
 
-    def create_card(self, content: ft.Control, padding: int | ft.Padding = 15, border_radius: int = 16) -> ft.Container:
+    def create_card(self, content: ft.Control, padding: int | ft.Padding = 15, border_radius: int = 16, **kwargs) -> ft.Container:
         """Crea un contenedor de tarjeta estilizado con bordes redondeados y sombras premium."""
         return ft.Container(
             content=content,
@@ -98,6 +98,7 @@ class BaseView(ft.View):
             bgcolor=self.get_card_bg(),
             border=ft.Border.all(1, self.get_border_color()),
             shadow=self.get_card_shadow(),
+            **kwargs
         )
 
     def setup_layout(self):

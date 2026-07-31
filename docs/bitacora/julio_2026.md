@@ -462,3 +462,11 @@
 - **Verificaciones realizadas:** Ejecución limpia de `python main.py` sin excepciones de argumento no esperado.
 - **Estado del proyecto:** En desarrollo. Bug de arranque resuelto y validado.
 
+## Inclusión de kwargs en BaseView.create_card() - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Inclusión de `**kwargs` en la firma e instanciación interna de `create_card` dentro de [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py). Esto habilita la transferencia dinámica de propiedades como `col`, `visible` o `width` a `ft.Container`, solucionando el error al renderizar el Dashboard y vistas posteriores tras el login.
+- **Verificaciones realizadas:** Verificación de ejecución limpia y carga de vistas tras inicio de sesión.
+- **Estado del proyecto:** En desarrollo. Carga del Dashboard corregida y validada.
+
+
