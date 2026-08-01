@@ -127,7 +127,7 @@ class LoginView(BaseView):
             )
         ]
 
-        # Contenedor de la tarjeta del login ajustado al contenido
+        # Contenedor de la tarjeta del login ajustado al contenido con altura fija
         login_card = ft.Container(
             content=ft.Column(
                 controls=[
@@ -141,6 +141,7 @@ class LoginView(BaseView):
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=20,
+                tight=True,
             ),
             bgcolor="#21222C" if self.is_dark else ft.Colors.WHITE,
             border=ft.Border.all(1, "#2C2D3A" if self.is_dark else "#E2E8F0"),
@@ -148,6 +149,7 @@ class LoginView(BaseView):
             padding=ft.Padding(30, 40, 30, 40),
             border_radius=16,
             width=380,
+            height=370,
         )
         
         # Contenedor principal con fondo plano negro/gris oscuro
