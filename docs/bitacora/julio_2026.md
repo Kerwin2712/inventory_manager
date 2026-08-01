@@ -550,6 +550,14 @@
 - **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando la interacción entre carritos, conmutación de clientes y actualización dinámica de la tasa BCV.
 - **Estado del proyecto:** En desarrollo. Ventas multicarrito, integración desde Cartera/Inventario y control global de tasa BCV completados.
 
+## Corrección de Evento en Dropdown de Ventas - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de `TypeError: Dropdown.__init__() got an unexpected keyword argument 'on_change'` en [ventas_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/ventas_view.py), asignando `dd_carritos.on_change = self.handle_cambiar_carrito` como propiedad posterior al constructor.
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando el renderizado correcto del selector de carritos sin excepciones.
+- **Estado del proyecto:** En desarrollo. Corrección de compatibilidad en Dropdown de Ventas aplicada.
+
+
 
 
 

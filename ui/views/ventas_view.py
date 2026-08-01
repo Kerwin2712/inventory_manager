@@ -71,8 +71,8 @@ class VentasView(BaseView):
             options=options_carritos,
             width=200,
             border_radius=12,
-            on_change=self.handle_cambiar_carrito
         )
+        self.dd_carritos.on_change = self.handle_cambiar_carrito
 
         btn_nuevo_carrito = ft.IconButton(
             icon=ft.Icons.ADD_SHOPPING_CART,
