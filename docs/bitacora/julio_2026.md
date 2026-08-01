@@ -522,6 +522,15 @@
 - **Verificaciones realizadas:** Ejecución de `python main.py` comprobando la creación/edición de proveedores con RIF y la migración limpia en SQLite.
 - **Estado del proyecto:** En desarrollo. Soporte completo de Cédula/RIF en Proveedores implementado.
 
+## Limpieza y Reinicio de Base de Datos SQLite - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Ejecución de vaciado controlado de tablas operativas (`ventas_detalle`, `ventas`, `productos`, `proveedores`, `clientes`) e inicialización de secuencias autonuméricas.
+  - Preservación de la cuenta de usuario superadmin `admin` y de la tabla de configuraciones `app_settings`.
+- **Verificaciones realizadas:** Verificación de vaciado limpio de registros y reinicio del estado de prueba.
+- **Estado del proyecto:** En desarrollo. Base de datos vaciada y lista para pruebas de importación.
+
+
 
 
 
