@@ -1,14 +1,18 @@
 # Registro Diario de Desarrollo - Agosto 2026
 
-## Rediseño del Contenedor de Login y Limpieza de Layout - 01/08/2026
+## Rediseño y Optimización Visual Premium de la Vista de Login - 01/08/2026
 - **Responsable:** Antigravity (IA Coding Assistant)
 - **Actividades realizadas:**
   - **LoginView ([login_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/login_view.py)):**
-    - Sobreescritura del método `setup_layout` para omitir la renderización del Header ("Control de Acceso") y del divisor de la clase base `BaseView`, logrando una visualización limpia.
-    - Reducción del tamaño vertical de la tarjeta de inicio de sesión eliminando contenedores vacíos de espaciado.
-    - Corrección de `AttributeError` en Flet al reemplazar la propiedad `ft.padding.symmetric` por una inicialización directa y compatible mediante `ft.Padding(30, 25, 30, 25)`.
-    - Implementación de un bloque de captura de excepciones en `setup_layout` para mostrar gráficamente en pantalla cualquier error de inicialización en lugar de detener el programa.
+    - Sobreescritura del método `setup_layout` para omitir el Header ("Control de Acceso") y el divisor de `BaseView`, logrando un fondo limpio de login.
+    - Implementación de un fondo con gradiente lineal (`ft.LinearGradient`) en modo claro y oscuro para otorgar profundidad estética premium.
+    - Rediseño de la cabecera del login incorporando un contenedor tipo insignia circular translúcida (`avatar_icon`) para el icono de seguridad, y títulos/subtítulos con fuentes y tamaños estilizados.
+    - Configuración de campos de texto (`username_input` y `password_input`) con iconos descriptivos de prefijo (`PERSON_ROUNDED` y `LOCK_ROUNDED`) y bordes suaves de bajo contraste que se realzan reactivamente al enfocarse.
+    - Adición de un botón de inicio de sesión elevado (`ft.ElevatedButton`) con icono y estilo moderno.
+    - Ajuste del contenedor de login mediante esquinas redondeadas (`border_radius=24`) y una sombra de caja (`ft.BoxShadow`) profunda y difusa.
+    - Corrección del error de atributo en padding mediante `ft.Padding(30, 30, 30, 30)`.
+    - Envoltura de la inicialización de layout en un bloque de control de excepciones `try-except`.
   - **BaseView ([base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py)):**
-    - Envoltura del método `setup_layout` en un bloque `try-except` generalizado para capturar fallos al renderizar el cuerpo (`get_body()`) de cualquier vista heredada, mostrando un mensaje de error estilizado y evitando la caída del programa.
-- **Verificaciones realizadas:** Ejecución de la aplicación comprobando el inicio limpio de la ventana de login con la tarjeta en formato de rectángulo compacto, centrado, y validación del manejo robusto de excepciones.
-- **Estado del proyecto:** En desarrollo. Pantalla de login optimizada y resiliencia ante errores de inicialización mejorada globalmente.
+    - Adición de un bloque `try-except` genérico en `setup_layout` para evitar que errores en el renderizado de cualquier vista colapsen la aplicación, desplegando en su lugar una tarjeta informativa estilizada de error.
+- **Verificaciones realizadas:** Ejecución de la aplicación verificando el arranque correcto del login con diseño premium tipo tarjeta flotante sobre gradiente, y validando la resiliencia de la interfaz ante excepciones de renderizado.
+- **Estado del proyecto:** En desarrollo. Pantalla de login rediseñada con altos estándares estéticos y robustez mejorada.
