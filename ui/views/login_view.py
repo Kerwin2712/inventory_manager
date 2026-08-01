@@ -17,13 +17,33 @@ class LoginView(BaseView):
                 self.get_body()
             ]
         except Exception as e:
-            # Captura y muestra errores de renderizado
+            # Imprime el traceback en la consola
+            import traceback
+            import sys
+            traceback.print_exc(file=sys.stderr)
+            
+            error_details = f"Error: {str(e)}\n\n{traceback.format_exc()}"
+            
+            def handle_copy(e_click):
+                p = self.get_current_page(e_click)
+                if p:
+                    p.set_clipboard(error_details)
+                    self.show_alert_info("Detalles del error copiados al portapapeles.", e_click)
+
             self.controls = [
                 ft.Container(
                     content=ft.Column([
                         ft.Text("Error en Login", size=20, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
-                        ft.Text(str(e), color=self.get_text_color())
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Text(str(e), color=self.get_text_color(), text_align=ft.TextAlign.CENTER),
+                        ft.Container(height=5),
+                        ft.ElevatedButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.COPY_ALL_ROUNDED, size=18),
+                                ft.Text("Copiar detalles del error", weight=ft.FontWeight.BOLD)
+                            ], tight=True),
+                            on_click=handle_copy
+                        )
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                     alignment=ft.Alignment.CENTER,
                     expand=True
                 )
