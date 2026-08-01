@@ -943,46 +943,8 @@ class CarteraView(BaseView):
             self.refrescar_datos(e)
 
     # ==========================================
-    # ALERTAS FLOTANTES ROBUSTAS
+    # ALERTAS HEREDADAS DE BASEVIEW
     # ==========================================
-    def show_alert_error(self, message: str, e=None):
-        """Muestra una alerta flotante de error en pantalla usando SnackBar."""
-        p = self.get_current_page(e)
-        if p:
-            snack = ft.SnackBar(
-                content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.RED_700,
-                duration=4000,
-            )
-            p.overlay.append(snack)
-            snack.open = True
-            p.update()
-
-    def show_alert_success(self, message: str, e=None):
-        """Muestra una alerta flotante de éxito en pantalla usando SnackBar."""
-        p = self.get_current_page(e)
-        if p:
-            snack = ft.SnackBar(
-                content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.GREEN_700,
-                duration=3000,
-            )
-            p.overlay.append(snack)
-            snack.open = True
-            p.update()
-
-    def show_alert_info(self, message: str, e=None):
-        """Muestra una alerta informativa suave en pantalla usando SnackBar."""
-        p = self.get_current_page(e)
-        if p:
-            snack = ft.SnackBar(
-                content=ft.Text(message, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.BLUE_700,
-                duration=3000,
-            )
-            p.overlay.append(snack)
-            snack.open = True
-            p.update()
 
     def handle_adjuntar_simulado(self, e):
         """Simula la carga de un archivo adjunto digital."""

@@ -468,39 +468,3 @@ class GestionDatosView(BaseView):
 
         except Exception as ex:
             self.show_alert_error(e, f"Error al generar la copia de seguridad Excel: {ex}")
-
-    def show_alert_success(self, e, msg: str):
-        p = self.get_current_page(e)
-        if p:
-            s = ft.SnackBar(
-                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.GREEN_700,
-                duration=4000
-            )
-            p.overlay.append(s)
-            s.open = True
-            p.update()
-
-    def show_alert_error(self, e, msg: str):
-        p = self.get_current_page(e)
-        if p:
-            s = ft.SnackBar(
-                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.RED_700,
-                duration=4000
-            )
-            p.overlay.append(s)
-            s.open = True
-            p.update()
-
-    def show_alert_info(self, e, msg: str):
-        p = self.get_current_page(e)
-        if p:
-            s = ft.SnackBar(
-                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=self.get_accent_color(),
-                duration=3500
-            )
-            p.overlay.append(s)
-            s.open = True
-            p.update()

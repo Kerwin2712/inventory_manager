@@ -266,3 +266,54 @@ class BaseView(ft.View):
         dialog.open = True
         p.update()
 
+    def show_alert_success(self, msg_or_e, e_or_msg=None):
+        """Muestra una notificación flotante de éxito."""
+        if isinstance(msg_or_e, str):
+            msg, e = msg_or_e, e_or_msg
+        else:
+            e, msg = msg_or_e, e_or_msg or ""
+        p = self.get_current_page(e)
+        if p:
+            s = ft.SnackBar(
+                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                bgcolor=ft.Colors.GREEN_700,
+                duration=3500
+            )
+            p.overlay.append(s)
+            s.open = True
+            p.update()
+
+    def show_alert_error(self, msg_or_e, e_or_msg=None):
+        """Muestra una notificación flotante de error."""
+        if isinstance(msg_or_e, str):
+            msg, e = msg_or_e, e_or_msg
+        else:
+            e, msg = msg_or_e, e_or_msg or ""
+        p = self.get_current_page(e)
+        if p:
+            s = ft.SnackBar(
+                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                bgcolor=ft.Colors.RED_700,
+                duration=4000
+            )
+            p.overlay.append(s)
+            s.open = True
+            p.update()
+
+    def show_alert_info(self, msg_or_e, e_or_msg=None):
+        """Muestra una notificación flotante informativa."""
+        if isinstance(msg_or_e, str):
+            msg, e = msg_or_e, e_or_msg
+        else:
+            e, msg = msg_or_e, e_or_msg or ""
+        p = self.get_current_page(e)
+        if p:
+            s = ft.SnackBar(
+                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                bgcolor=ft.Colors.BLUE_700,
+                duration=3500
+            )
+            p.overlay.append(s)
+            s.open = True
+            p.update()
+

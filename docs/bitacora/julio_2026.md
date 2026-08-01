@@ -564,6 +564,15 @@
 - **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando la funcionalidad interactiva de los chips de productos recomendados.
 - **Estado del proyecto:** En desarrollo. Chips de recomendación de productos 100% compatibles.
 
+## Unificación de Alertas Flotantes Polimórficas en BaseView - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Definición de métodos `show_alert_success`, `show_alert_error`, `show_alert_info` flexibles y polimórficos directamente en [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py), resolviendo `AttributeError: 'VentasView' object has no attribute 'show_alert_success'`.
+  - Eliminación de declaraciones redundantes en subclases ([cartera_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/cartera_view.py) y [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py)).
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando notificaciones flotantes en todas las pantallas del sistema.
+- **Estado del proyecto:** En desarrollo. Sistema de alertas unificado y disponible globalmente.
+
+
 
 
 
