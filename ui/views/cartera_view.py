@@ -538,6 +538,7 @@ class CarteraView(BaseView):
                                         ft.Text(f"Cliente Encontrado: {cliente['nombre']}", size=16, weight=ft.FontWeight.BOLD, color=text_color),
                                     ], spacing=10),
                                     ft.Row([
+                                        ft.Button("🛒 Iniciar Venta", icon=ft.Icons.SHOPPING_CART_CHECKOUT, bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE, on_click=lambda ev, c=cliente: self.handle_iniciar_venta_con_cliente(c, ev)),
                                         ft.OutlinedButton("Editar", icon=ft.Icons.EDIT, on_click=lambda ev, c=cliente: self.preparar_edicion_cliente(c, ev)),
                                         ft.Button("Eliminar", icon=ft.Icons.DELETE_OUTLINED, bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE, on_click=lambda ev, c=cliente["cedula_rif"]: self.handle_eliminar_cliente(c, ev)),
                                     ], spacing=10),
@@ -570,6 +571,18 @@ class CarteraView(BaseView):
             self.btn_guardar_cli_label.value = "Guardar Cliente"
             self.cli_form_container.visible = True
             self.safe_update(e)
+
+    def handle_iniciar_venta_con_cliente(self, cliente: dict, e=None):
+        """Asocia el cliente al carrito de compras activo y navega al módulo de ventas."""
+        try:
+            from services.cart_manager import vincular_cliente_a_carrito, obtener_carrito_activo
+            c = vincular_cliente_a_carrito(cliente)
+            self.show_alert_success(f"¡Venta iniciada para '{cliente['nombre']}' en {c['id']}!", e)
+            p = self.get_current_page(e)
+            if p:
+                p.go("/ventas")
+        except Exception as ex:
+            self.show_alert_error(f"Error al iniciar venta: {ex}", e)
 
     def preparar_edicion_cliente(self, cliente: dict, e=None):
         self.cli_result_container.visible = False
@@ -851,6 +864,7 @@ class CarteraView(BaseView):
                         ft.DataCell(ft.Text(c["correo"] or "-", color=text_color)),
                         ft.DataCell(
                             ft.Row([
+                                ft.IconButton(ft.Icons.SHOPPING_CART_CHECKOUT, icon_color=ft.Colors.GREEN_600, tooltip="Iniciar Venta con este Cliente", on_click=lambda ev, item=c: self.handle_iniciar_venta_con_cliente(item, ev)),
                                 ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar", on_click=lambda ev, item=c: self.preparar_edicion_cliente(item, ev)),
                                 ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, tooltip="Eliminar", on_click=lambda ev, item=c["cedula_rif"]: self.handle_eliminar_cliente(item, ev)),
                             ], spacing=0)

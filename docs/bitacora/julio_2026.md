@@ -539,6 +539,18 @@
 - **Verificaciones realizadas:** Ejecución de `python main.py` comprobando las alertas de campos obligatorios y la renderización limpia del RIF en la tabla de Cartera.
 - **Estado del proyecto:** En desarrollo. Campos obligatorios de proveedores y renderizado de RIF en Cartera completados.
 
+## Ventas Multicarrito, Integración Trilateral y Control de Tasa BCV - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Creación del gestor de estado global de carritos en [cart_manager.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/services/cart_manager.py), permitiendo gestionar múltiples carritos simultáneos (`Carrito 1`, `Carrito 2`, etc.).
+  - Implementación del modal reutilizable de actualización de Tasa BCV con indicación de tiempo transcurrido en [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py).
+  - Integración de botones **"🛒 Iniciar Venta"** en la tabla y tarjeta de búsqueda de clientes en [cartera_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/cartera_view.py).
+  - Adición del botón **"🛒 Añadir al Carrito"** con diálogo de cantidad en la tabla de productos de [inventario_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/inventario_view.py).
+  - Evolución de [ventas_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/ventas_view.py): selector de carritos múltiples, panel de recomendaciones de productos populares, edición emergente de renglones y desglose de resumen bimoneda ($ Efectivo, $ en Bs, Bs. BCV y antigüedad de la tasa).
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando la interacción entre carritos, conmutación de clientes y actualización dinámica de la tasa BCV.
+- **Estado del proyecto:** En desarrollo. Ventas multicarrito, integración desde Cartera/Inventario y control global de tasa BCV completados.
+
+
 
 
 

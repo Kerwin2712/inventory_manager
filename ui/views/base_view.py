@@ -181,3 +181,88 @@ class BaseView(ft.View):
             except (RuntimeError, AttributeError):
                 pass
 
+    def mostrar_modal_tasa_bcv(self, e=None, callback_al_guardar=None):
+        """Despliega un modal global para actualizar la Tasa BCV desde cualquier vista."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        from services.bcv_service import obtener_estado_tasa, actualizar_tasa
+        estado = obtener_estado_tasa()
+        tasa_actual = estado.get("tasa", 0.0)
+        desc_antiguedad = estado.get("descripcion", "")
+
+        txt_tasa = ft.TextField(
+            label="Tasa BCV (Bs. / $)",
+            value=f"{tasa_actual:.2f}" if tasa_actual > 0 else "",
+            prefix_icon=ft.Icons.ATTACH_MONEY,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            autofocus=True,
+            border_radius=12
+        )
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def guardar_tasa(e_save):
+            lbl_err.value = ""
+            try:
+                val = float(txt_tasa.value.strip().replace(",", "."))
+                if val <= 0:
+                    raise ValueError()
+                actualizar_tasa(val)
+                dialog.open = False
+                p.update()
+                
+                # Notificación de éxito
+                s = ft.SnackBar(
+                    content=ft.Text(f"Tasa BCV actualizada a {val:,.2f} Bs/$", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    bgcolor=ft.Colors.GREEN_700,
+                    duration=3000
+                )
+                p.overlay.append(s)
+                s.open = True
+                p.update()
+
+                if callback_al_guardar:
+                    callback_al_guardar(val)
+                elif hasattr(self, "rebuild_ui"):
+                    self.rebuild_ui()
+            except Exception:
+                lbl_err.value = "Ingrese un número mayor a 0 (ej: 732.48)."
+                p.update()
+
+        def cerrar(e_close):
+            dialog.open = False
+            p.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Row([
+                ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color=self.get_accent_color()),
+                ft.Text("Actualizar Tasa de Cambio BCV", weight=ft.FontWeight.BOLD)
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(f"Antigüedad: {desc_antiguedad}", size=13, color=self.get_subtext_color(), weight=ft.FontWeight.W_600),
+                    ft.Divider(height=10),
+                    txt_tasa,
+                    lbl_err
+                ], spacing=10, tight=True),
+                width=380,
+                padding=10
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=cerrar),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.SAVE), ft.Text("Guardar Tasa")], tight=True),
+                    bgcolor=self.get_accent_color(),
+                    color=ft.Colors.WHITE,
+                    on_click=guardar_tasa
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+        )
+
+        if dialog not in p.overlay:
+            p.overlay.append(dialog)
+        dialog.open = True
+        p.update()
+

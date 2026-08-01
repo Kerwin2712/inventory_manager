@@ -366,6 +366,11 @@ class InventarioView(BaseView):
                         ft.DataCell(
                             ft.Row([
                                 ft.IconButton(
+                                    ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400,
+                                    tooltip="Añadir al Carrito de Ventas",
+                                    on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
+                                ),
+                                ft.IconButton(
                                     ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar",
                                     on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev),
                                 ),
@@ -380,6 +385,91 @@ class InventarioView(BaseView):
                 )
             )
         self._dt.rows = rows
+
+    def _abrir_modal_agregar_carrito(self, prod: dict, e=None):
+        """Abre un diálogo emergente para ingresar la cantidad y agregar un producto al carrito de ventas."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        cant_input = ft.TextField(
+            label="Cantidad a agregar",
+            value="1",
+            width=150,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            autofocus=True,
+            border_radius=12
+        )
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def confirmar_agregar(ev_confirm):
+            try:
+                cant = float(cant_input.value.strip())
+                if cant <= 0:
+                    raise ValueError("La cantidad debe ser mayor a 0.")
+                stock = float(prod.get("existencia", 0))
+                if cant > stock:
+                    lbl_err.value = f"Existencia insuficiente ({stock:.0f} disponible)."
+                    p.update()
+                    return
+
+                from services.cart_manager import agregar_o_actualizar_producto, obtener_carrito_activo
+                c_act, _ = agregar_o_actualizar_producto(prod, cantidad=cant)
+                dlg.open = False
+                p.update()
+
+                # Notificación flotante con botón para ir a Ventas
+                s = ft.SnackBar(
+                    content=ft.Text(f"✓ {cant:.0f} ud(s) de '{prod.get('nombre_referencia_corto') or prod['codigo']}' agregadas a {c_act['id']}", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    bgcolor=ft.Colors.GREEN_700,
+                    action="IR A VENTAS",
+                    on_action=lambda ev_go: p.go("/ventas"),
+                    duration=4000
+                )
+                p.overlay.append(s)
+                s.open = True
+                p.update()
+            except ValueError as ex:
+                lbl_err.value = str(ex) if str(ex) else "Ingrese un número válido."
+                p.update()
+
+        def cerrar(ev_close):
+            dlg.open = False
+            p.update()
+
+        dlg = ft.AlertDialog(
+            title=ft.Row([
+                ft.Icon(ft.Icons.ADD_SHOPPING_CART, color=ft.Colors.GREEN_400),
+                ft.Text("Añadir al Carrito de Ventas", weight=ft.FontWeight.BOLD)
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(f"Producto: {prod.get('nombre_referencia_corto') or prod.get('descripcion_general')}", weight=ft.FontWeight.BOLD),
+                    ft.Text(f"Código: {prod['codigo']} | Stock disponible: {prod.get('existencia', 0):.0f} Uds", size=12, color=self.get_subtext_color()),
+                    ft.Text(f"Precio: ${prod.get('precio_dolares', 0):.2f} / Bs {prod.get('precio_bcv', 0):.2f}", size=12, color=self.get_subtext_color()),
+                    ft.Divider(height=10),
+                    cant_input,
+                    lbl_err
+                ], spacing=8, tight=True),
+                width=380,
+                padding=10
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=cerrar),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.SHOPPING_CART_CHECKOUT), ft.Text("Agregar")], tight=True),
+                    bgcolor=ft.Colors.GREEN_700,
+                    color=ft.Colors.WHITE,
+                    on_click=confirmar_agregar
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+        )
+
+        if dlg not in p.overlay:
+            p.overlay.append(dlg)
+        dlg.open = True
+        p.update()
 
     def _refrescar_tabla(self, e=None):
         try:
