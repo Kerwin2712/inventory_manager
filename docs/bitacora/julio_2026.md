@@ -503,6 +503,15 @@
 - **Verificaciones realizadas:** Cambio de paleta de acentos en tiempo de ejecución (Azul, Verde, Rojo, Naranja), comprobando la actualización instantánea de todos los elementos gráficos.
 - **Estado del proyecto:** En desarrollo. Reactividad del tema de acento completada en Dashboard y Gestión de Datos.
 
+## Depuración de Archivos del Repositorio e Inclusión en .gitignore - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Remoción definitiva de `INVENTARIO_DE_PRUEBA_COMPLETO.xlsx` del repositorio Git y del árbol de archivos local mediante `git rm -f`.
+  - Configuración de exclusiones explícitas `*.db-wal` y `*.db-shm` en [.gitignore](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/.gitignore) para prevenir la inclusión de archivos de transacciones SQLite temporales en el control de versiones.
+- **Verificaciones realizadas:** Confirmación del estado de Git y validación de reglas de exclusión.
+- **Estado del proyecto:** En desarrollo. Repositorio depurado y reglas de exclusión de base de datos actualizadas.
+
+
 
 
 

@@ -223,6 +223,8 @@ graphify-out/
 # SQLite Database
 inventory.db
 *.db
+*.db-wal
+*.db-shm
 
 # PDF Exports
 exports/
