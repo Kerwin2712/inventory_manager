@@ -5,11 +5,11 @@
 - **Actividades realizadas:**
   - **LoginView ([login_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/login_view.py)):**
     - Sobreescritura del método `setup_layout` para omitir el Header ("Control de Acceso") y el divisor de `BaseView`, logrando un fondo limpio de login.
-    - Implementación de un fondo con gradiente lineal (`ft.LinearGradient`) en modo claro y oscuro para otorgar profundidad estética premium.
-    - Rediseño de la cabecera del login incorporando un contenedor tipo insignia circular translúcida (`avatar_icon`) para el icono de seguridad, y títulos/subtítulos con fuentes y tamaños estilizados.
-    - Configuración de campos de texto (`username_input` y `password_input`) con iconos descriptivos de prefijo (`PERSON_ROUNDED` y `LOCK_ROUNDED`) y bordes suaves de bajo contraste que se realzan reactivamente al enfocarse.
-    - Adición de un botón de inicio de sesión elevado (`ft.ElevatedButton`) con icono y estilo moderno.
-    - Ajuste del contenedor de login mediante esquinas redondeadas (`border_radius=24`) y una sombra de caja (`ft.BoxShadow`) profunda y difusa.
+    - Configuración del fondo general plano de la ventana a un tono oscuro neutro (`#0B0C10` en modo oscuro y `#F1F5F9` en modo claro) de acuerdo al diseño minimalista solicitado.
+    - Eliminación del avatar e icono de seguridad superior para adoptar un título único estilizado y en negrita: "Iniciar sesión" (size=24, weight=BOLD).
+    - Ajuste de los campos de texto (`username_input` y `password_input`) eliminando los iconos prefijos y aplicando bordes redondeados (`border_radius=8`), relleno oscuro (`#1D1E27`) y bordes en tono gris (`#343644`), los cuales cambian reactivamente a un celeste claro (`#90CAF9`) al enfocarse.
+    - Implementación de un botón de inicio de sesión de tipo píldora (`border_radius=22` y `height=44`) con fondo oscuro (`#15161D`) y texto celeste (`#90CAF9`) conforme a la referencia visual.
+    - Reducción del tamaño del contenedor de login (`border_radius=16` y `width=380`) con espaciado interno equilibrado (`padding=30` horizontal y `40` vertical) logrando una estructura rectangular compacta y perfectamente ajustada al contenido.
     - Corrección del error de atributo en padding mediante `ft.Padding(30, 30, 30, 30)`.
     - Corrección de `AttributeError` en Flet al reemplazar las coordenadas del gradiente lineal `ft.alignment.top_left`/`bottom_right` por las constantes universales en mayúscula `ft.Alignment.TOP_LEFT` y `ft.Alignment.BOTTOM_RIGHT`.
     - Envoltura de la inicialización del layout en un bloque `try-except` con volcado de traceback a la consola (`sys.stderr`) e integración de un botón interactivo "Copiar detalles del error" con compatibilidad de portapapeles polimórfico (`page.clipboard` y fallback `page.set_clipboard`).
