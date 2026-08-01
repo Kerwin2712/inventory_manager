@@ -49,8 +49,8 @@ class BaseView(ft.View):
         return "#0F172A" if self.is_dark else "#F1F5F9"
 
     def get_sidebar_bg(self) -> str:
-        """Fondo de la barra lateral (blanco impecable en modo claro)."""
-        return "#1E293B" if self.is_dark else ft.Colors.WHITE
+        """Fondo de la barra lateral (gris sofisticado en modo claro)."""
+        return "#1E293B" if self.is_dark else "#E2E8F0"
 
     def get_card_bg(self) -> str:
         """Fondo para tarjetas, tablas y contenedores."""

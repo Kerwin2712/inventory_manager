@@ -99,7 +99,6 @@ class DashboardView(BaseView):
         return ft.Row(
             controls=[
                 self.build_sidebar(),
-                ft.VerticalDivider(width=1, color=self.get_border_color()),
                 ft.Container(
                     content=ft.Column(
                         controls=[
@@ -122,7 +121,7 @@ class DashboardView(BaseView):
         )
 
     def build_sidebar(self) -> ft.Control:
-        """Construye el Sidebar con estado minimizado/expandido y tooltips."""
+        """Construye el Sidebar flotante redondeado con estado minimizado/expandido y tooltips."""
         nav_items = [
             ("Inicio", ft.Icons.DASHBOARD_ROUNDED),
             ("Ventas", ft.Icons.POINT_OF_SALE_ROUNDED),
@@ -208,8 +207,11 @@ class DashboardView(BaseView):
         return ft.Container(
             width=sidebar_width,
             padding=sidebar_padding,
+            margin=ft.Margin(10, 10, 5, 10),
+            border_radius=16,
             bgcolor=self.get_sidebar_bg(),
-            border=ft.Border.only(right=ft.BorderSide(1, self.get_border_color())),
+            border=ft.Border.all(1, self.get_border_color()),
+            shadow=self.get_card_shadow(),
             content=ft.Column(
                 controls=[
                     header_control,

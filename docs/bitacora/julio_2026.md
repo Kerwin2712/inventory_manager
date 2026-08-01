@@ -479,5 +479,14 @@
 - **Verificaciones realizadas:** Ejecución limpia de `python main.py` y comprobación del comportamiento interactivo del sidebar.
 - **Estado del proyecto:** En desarrollo. Sidebar minimizable con tooltips implementado y probado.
 
+## Redondeado de Sidebar y Paleta de Grises en Modo Claro - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Modificación de `get_sidebar_bg()` en [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py) para retornar un tono gris Slate 200 (`#E2E8F0`) en modo claro, eliminando los blancos puros sin contraste.
+  - Estilización flotante de la barra lateral en [dashboard_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/dashboard_view.py) asignando `border_radius=16`, margen exterior, borde perimetral y sombras de elevación `get_card_shadow()`.
+- **Verificaciones realizadas:** Prueba de renderizado de la aplicación en modo claro y oscuro, confirmando el comportamiento estético flotante y redondeado de la barra lateral.
+- **Estado del proyecto:** En desarrollo. Sidebar redondeada flotante y paleta de grises en modo claro aplicadas.
+
+
 
 
