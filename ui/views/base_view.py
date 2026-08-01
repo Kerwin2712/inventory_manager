@@ -118,14 +118,34 @@ class BaseView(ft.View):
                 self.get_body()
             ]
         except Exception as e:
-            # Renderizado seguro en caso de error
+            # Renderizado seguro en caso de error con impresión de traceback en consola
+            import traceback
+            import sys
+            traceback.print_exc(file=sys.stderr)
+            
+            error_details = f"Error: {str(e)}\n\n{traceback.format_exc()}"
+            
+            def handle_copy(e_click):
+                p = self.get_current_page(e_click)
+                if p:
+                    p.set_clipboard(error_details)
+                    self.show_alert_info("Detalles del error copiados al portapapeles.", e_click)
+
             self.bgcolor = self.get_bg_color()
             self.controls = [
                 ft.Container(
                     content=ft.Column([
                         ft.Text("Error al Cargar Módulo", size=24, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
                         ft.Text(f"Detalle: {str(e)}", color=self.get_text_color(), size=16),
-                        ft.Divider(height=20, color=self.get_border_color()),
+                        ft.Divider(height=10, color=self.get_border_color()),
+                        ft.ElevatedButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.COPY_ALL_ROUNDED, size=18),
+                                ft.Text("Copiar detalles del error", weight=ft.FontWeight.BOLD)
+                            ], tight=True),
+                            on_click=handle_copy
+                        ),
+                        ft.Divider(height=10, color=self.get_border_color()),
                         ft.Text("Por favor, verifique el archivo de configuración o contacte al administrador.", color=self.get_subtext_color())
                     ], spacing=10),
                     padding=30,
