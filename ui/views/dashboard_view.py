@@ -19,7 +19,13 @@ class DashboardView(BaseView):
         self.current_section = "Inicio"
         self.rango_top_ventas = "Hoy"
         self.limite_top_ventas = 10
+        self.sidebar_collapsed = False
         super().__init__(route="/dashboard", title="Dashboard General")
+
+    def toggle_sidebar(self, e=None):
+        """Conmuta el estado minimizado/expandido de la barra lateral."""
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        self.rebuild_ui()
 
     def handle_nav_change(self, section_name: str):
         """Cambia la sección activa de la vista principal."""
@@ -116,7 +122,7 @@ class DashboardView(BaseView):
         )
 
     def build_sidebar(self) -> ft.Control:
-        """Construye el Sidebar con fondo blanco en Modo Claro y acento en la opción activa."""
+        """Construye el Sidebar con estado minimizado/expandido y tooltips."""
         nav_items = [
             ("Inicio", ft.Icons.DASHBOARD_ROUNDED),
             ("Ventas", ft.Icons.POINT_OF_SALE_ROUNDED),
@@ -137,27 +143,48 @@ class DashboardView(BaseView):
                 bg = None
                 fg = self.get_text_color()
 
-            btn = ft.Container(
-                content=ft.Row(
-                    controls=[
-                        ft.Icon(icon, color=fg, size=20),
-                        ft.Text(label, color=fg, weight=ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL),
-                    ],
-                    spacing=12,
-                ),
-                padding=ft.Padding.symmetric(horizontal=15, vertical=12),
-                border_radius=12,
-                bgcolor=bg,
-                on_click=lambda e, l=label: self.handle_nav_change(l),
-            )
+            if self.sidebar_collapsed:
+                btn = ft.Container(
+                    content=ft.Icon(icon, color=fg, size=22),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=12),
+                    border_radius=12,
+                    bgcolor=bg,
+                    alignment=ft.Alignment.CENTER,
+                    tooltip=label,
+                    on_click=lambda e, l=label: self.handle_nav_change(l),
+                )
+            else:
+                btn = ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(icon, color=fg, size=20),
+                            ft.Text(label, color=fg, weight=ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL),
+                        ],
+                        spacing=12,
+                    ),
+                    padding=ft.Padding.symmetric(horizontal=15, vertical=12),
+                    border_radius=12,
+                    bgcolor=bg,
+                    on_click=lambda e, l=label: self.handle_nav_change(l),
+                )
             item_controls.append(btn)
 
-        return ft.Container(
-            width=230,
-            padding=15,
-            bgcolor=self.get_sidebar_bg(),
-            border=ft.Border.only(right=ft.BorderSide(1, self.get_border_color())),
-            content=ft.Column(
+        if self.sidebar_collapsed:
+            header_control = ft.Row(
+                controls=[
+                    ft.IconButton(
+                        icon=ft.Icons.MENU_ROUNDED,
+                        icon_color=accent,
+                        tooltip="Expandir menú",
+                        on_click=self.toggle_sidebar,
+                    )
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+            )
+            sidebar_width = 70
+            sidebar_padding = 10
+        else:
+            header_control = ft.Row(
                 controls=[
                     ft.Row(
                         controls=[
@@ -166,6 +193,26 @@ class DashboardView(BaseView):
                         ],
                         spacing=10,
                     ),
+                    ft.IconButton(
+                        icon=ft.Icons.CHEVRON_LEFT_ROUNDED,
+                        icon_color=self.get_subtext_color(),
+                        tooltip="Colapsar menú",
+                        on_click=self.toggle_sidebar,
+                    )
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            )
+            sidebar_width = 230
+            sidebar_padding = 15
+
+        return ft.Container(
+            width=sidebar_width,
+            padding=sidebar_padding,
+            bgcolor=self.get_sidebar_bg(),
+            border=ft.Border.only(right=ft.BorderSide(1, self.get_border_color())),
+            content=ft.Column(
+                controls=[
+                    header_control,
                     ft.Divider(height=20, color=self.get_border_color()),
                     ft.Column(controls=item_controls, spacing=5, expand=True),
                 ],

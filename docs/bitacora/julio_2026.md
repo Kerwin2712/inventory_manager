@@ -469,4 +469,15 @@
 - **Verificaciones realizadas:** Verificación de ejecución limpia y carga de vistas tras inicio de sesión.
 - **Estado del proyecto:** En desarrollo. Carga del Dashboard corregida y validada.
 
+## Implementación de Sidebar Minimizable con Tooltips - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Adición de la variable de estado `self.sidebar_collapsed` y del método `toggle_sidebar()` en [dashboard_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/dashboard_view.py).
+  - Implementación de layout dinámico para la barra lateral (`width=70` colapsada vs `width=230` expandida).
+  - Configuración de íconos centrados y despliegue automático de `tooltip` con el nombre de cada módulo al situarse la sidebar en estado colapsado.
+  - Inclusión de botones intuitivos de alternancia (`CHEVRON_LEFT_ROUNDED` / `MENU_ROUNDED`) en la cabecera del sidebar.
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` y comprobación del comportamiento interactivo del sidebar.
+- **Estado del proyecto:** En desarrollo. Sidebar minimizable con tooltips implementado y probado.
+
+
 
