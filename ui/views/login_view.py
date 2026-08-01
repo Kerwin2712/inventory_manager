@@ -182,8 +182,8 @@ class LoginView(BaseView):
             alignment=ft.Alignment.CENTER,
             expand=True,
             gradient=ft.LinearGradient(
-                begin=ft.alignment.top_left,
-                end=ft.alignment.bottom_right,
+                begin=ft.Alignment.TOP_LEFT,
+                end=ft.Alignment.BOTTOM_RIGHT,
                 colors=["#0F172A", "#1E1B4B"] if self.is_dark else ["#F8FAFC", "#E2E8F0"],
             )
         )
