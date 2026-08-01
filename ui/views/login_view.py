@@ -33,15 +33,41 @@ class LoginView(BaseView):
         accent = self.get_accent_color()
         text_color = self.get_text_color()
 
-        # Campos de entrada de datos
+        # Insignia de seguridad circular superior
+        avatar_icon = ft.Container(
+            content=ft.Icon(ft.Icons.LOCK_PERSON_OUTLINED, size=32, color=accent),
+            bgcolor=ft.Colors.with_opacity(0.1, accent),
+            width=64,
+            height=64,
+            border_radius=32,
+            alignment=ft.Alignment.CENTER,
+        )
+
+        # Textos estilizados de cabecera
+        title_text = ft.Text(
+            "Bienvenido al Sistema",
+            size=22,
+            weight=ft.FontWeight.BOLD,
+            color=text_color,
+            text_align=ft.TextAlign.CENTER,
+        )
+        subtitle_text = ft.Text(
+            "Ingrese sus credenciales de seguridad",
+            size=13,
+            color=self.get_subtext_color(),
+            text_align=ft.TextAlign.CENTER,
+        )
+
+        # Campos de entrada de datos con prefijo y borde dinámico
         self.username_input = ft.TextField(
             label="Usuario",
             width=320,
             border_radius=12,
-            border_color=accent,
+            border_color=self.get_border_color(),
             focused_border_color=accent,
             label_style=ft.TextStyle(color=self.get_subtext_color()),
             color=text_color,
+            prefix_icon=ft.Icons.PERSON_ROUNDED,
             on_submit=self.handle_login,
         )
         self.password_input = ft.TextField(
@@ -50,17 +76,26 @@ class LoginView(BaseView):
             can_reveal_password=True,
             width=320,
             border_radius=12,
-            border_color=accent,
+            border_color=self.get_border_color(),
             focused_border_color=accent,
             label_style=ft.TextStyle(color=self.get_subtext_color()),
             color=text_color,
+            prefix_icon=ft.Icons.LOCK_ROUNDED,
             on_submit=self.handle_login,
         )
         
-        # Botón de autenticación
-        login_btn = ft.Button(
-            content=ft.Text("Iniciar Sesión", weight=ft.FontWeight.BOLD),
+        # Botón de autenticación elevado con ícono
+        login_btn = ft.ElevatedButton(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.LOGIN_ROUNDED, size=18, color=ft.Colors.WHITE),
+                    ft.Text("Iniciar Sesión", weight=ft.FontWeight.BOLD, size=15),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                tight=True,
+            ),
             width=320,
+            height=46,
             style=ft.ButtonStyle(
                 bgcolor=accent,
                 color=ft.Colors.WHITE,
@@ -73,33 +108,58 @@ class LoginView(BaseView):
         self.error_text = ft.Text(
             value="",
             color=ft.Colors.RED_500,
-            size=14,
+            size=13,
             visible=False,
+            text_align=ft.TextAlign.CENTER,
         )
         
-        # Retorna el contenedor principal centrado
-        login_card = self.create_card(
+        # Sombra premium de elevación
+        shadow = [
+            ft.BoxShadow(
+                spread_radius=1,
+                blur_radius=25,
+                color=ft.Colors.with_opacity(0.4, "#020617") if self.is_dark else ft.Colors.with_opacity(0.12, "#475569"),
+                offset=ft.Offset(0, 10),
+            )
+        ]
+
+        # Construcción de tarjeta con bordes e interacciones premium
+        login_card = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
-                    ft.Text("Control de Acceso", size=20, weight=ft.FontWeight.BOLD, color=text_color),
+                    avatar_icon,
+                    ft.Column([
+                        title_text,
+                        subtitle_text,
+                    ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Container(height=4), # Espaciador
                     self.username_input,
                     self.password_input,
                     self.error_text,
+                    ft.Container(height=4), # Espaciador
                     login_btn,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=15,
             ),
-            padding=ft.Padding(30, 25, 30, 25),
-            border_radius=20,
+            bgcolor=self.get_card_bg(),
+            border=ft.Border.all(1.5, ft.Colors.with_opacity(0.15, accent) if self.is_dark else self.get_border_color()),
+            shadow=shadow,
+            padding=ft.Padding(30, 30, 30, 30),
+            border_radius=24,
+            width=380,
         )
-        login_card.width = 380
         
+        # Contenedor principal con gradiente de profundidad de fondo
         return ft.Container(
             content=login_card,
             alignment=ft.Alignment.CENTER,
             expand=True,
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
+                colors=["#0F172A", "#1E1B4B"] if self.is_dark else ["#F8FAFC", "#E2E8F0"],
+            )
         )
 
     def handle_login(self, e):
