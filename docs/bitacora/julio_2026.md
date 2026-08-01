@@ -495,6 +495,15 @@
 - **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando el nuevo icono de salida y el contraste del fondo.
 - **Estado del proyecto:** En desarrollo. Ícono de puerta de salida y contraste de fondo claro aplicados.
 
+## Vinculación Dinámica de Íconos y Botones al Tema de Acento - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Sustitución de colores estáticos (verdes y ámbar) en los íconos de las tarjetas de métricas "Ventas del Día", "Alertas de Stock Bajo" y en el ícono de cabecera de "Auditoría Preventiva" en [dashboard_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/dashboard_view.py) por `self.get_accent_color()`.
+  - Reemplazo de colores estáticos en la tarjeta de "Copias de Seguridad (Backup)" en [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py) para que su ícono y el botón `GENERAR COPIA DE SEGURIDAD` utilicen `accent` de forma reactiva.
+- **Verificaciones realizadas:** Cambio de paleta de acentos en tiempo de ejecución (Azul, Verde, Rojo, Naranja), comprobando la actualización instantánea de todos los elementos gráficos.
+- **Estado del proyecto:** En desarrollo. Reactividad del tema de acento completada en Dashboard y Gestión de Datos.
+
+
 
 
 

@@ -324,9 +324,9 @@ class DashboardView(BaseView):
         criticos_sub = "Requieren reposición" if metricas['total_criticos'] > 0 else "Sin alertas activas"
 
         cards_data = [
-            ("Ventas del Día", ventas_val, variacion_str, ft.Icons.ATTACH_MONEY_ROUNDED, ft.Colors.GREEN_500),
+            ("Ventas del Día", ventas_val, variacion_str, ft.Icons.ATTACH_MONEY_ROUNDED, self.get_accent_color()),
             ("Productos en Stock", stock_val, stock_sub, ft.Icons.INVENTORY_ROUNDED, self.get_accent_color()),
-            ("Alertas de Stock Bajo", criticos_val, criticos_sub, ft.Icons.WARNING_AMBER_ROUNDED, ft.Colors.AMBER_500 if metricas['total_criticos'] > 0 else ft.Colors.GREEN_500),
+            ("Alertas de Stock Bajo", criticos_val, criticos_sub, ft.Icons.WARNING_AMBER_ROUNDED, self.get_accent_color()),
         ]
 
         card_widgets = []
@@ -513,7 +513,7 @@ class DashboardView(BaseView):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.REPORT_PROBLEM_ROUNDED, color=ft.Colors.AMBER_500),
+                            ft.Icon(ft.Icons.REPORT_PROBLEM_ROUNDED, color=accent),
                             ft.Text("Auditoría Preventiva (Stock Crítico < 5)", size=15, weight=ft.FontWeight.BOLD, color=text_color),
                         ],
                         spacing=10,

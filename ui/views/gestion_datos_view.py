@@ -88,7 +88,7 @@ class GestionDatosView(BaseView):
         card_exportar = self.create_card(
             content=ft.Column([
                 ft.Row([
-                    ft.Icon(ft.Icons.SAVINGS_ROUNDED, size=40, color=ft.Colors.GREEN_600),
+                    ft.Icon(ft.Icons.SAVINGS_ROUNDED, size=40, color=accent),
                     ft.Column([
                         ft.Text("Copias de Seguridad (Backup)", size=16, weight=ft.FontWeight.BOLD, color=text_color),
                         ft.Text("Exportación completa a libro Excel (.xlsx) con pestañas separadas.", size=12, color=subtext_color)
@@ -102,7 +102,7 @@ class GestionDatosView(BaseView):
                         ft.Icon(ft.Icons.DOWNLOAD_ROUNDED, color=ft.Colors.WHITE),
                         ft.Text("GENERAR COPIA DE SEGURIDAD (.XLSX)", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
                     ], alignment=ft.MainAxisAlignment.CENTER),
-                    style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, shape=ft.RoundedRectangleBorder(radius=12)),
+                    style=ft.ButtonStyle(bgcolor=accent, shape=ft.RoundedRectangleBorder(radius=12)),
                     on_click=self.handle_exportar_excel
                 )
             ], spacing=12),
