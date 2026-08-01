@@ -9,6 +9,13 @@ class LoginView(BaseView):
         self.on_login_success = on_login_success
         super().__init__(route="/login", title="Control de Acceso")
 
+    def setup_layout(self):
+        # Layout limpio para el login, sin cabeceras redundantes
+        self.bgcolor = self.get_bg_color()
+        self.controls = [
+            self.get_body()
+        ]
+
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
         text_color = self.get_text_color()
@@ -63,17 +70,15 @@ class LoginView(BaseView):
                 controls=[
                     ft.Icon(ft.Icons.LOCK_PERSON_OUTLINED, size=50, color=accent),
                     ft.Text("Control de Acceso", size=20, weight=ft.FontWeight.BOLD, color=text_color),
-                    ft.Container(height=5),
                     self.username_input,
                     self.password_input,
                     self.error_text,
-                    ft.Container(height=10),
                     login_btn,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=15,
             ),
-            padding=30,
+            padding=ft.padding.symmetric(vertical=25, horizontal=30),
             border_radius=20,
         )
         login_card.width = 380
