@@ -386,7 +386,7 @@ class CarteraView(BaseView):
             ],
         )
         self.prov_num_doc = ft.TextField(
-            label="Número RIF / Cédula",
+            label="Número RIF / Cédula *",
             hint_text="Solo números",
             width=200,
             keyboard_type=ft.KeyboardType.NUMBER,
@@ -396,7 +396,7 @@ class CarteraView(BaseView):
             border_radius=12,
         )
 
-        self.prov_empresa = ft.TextField(label="Nombre de la Empresa", width=290, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.prov_empresa = ft.TextField(label="Nombre de la Empresa *", width=290, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
         self.prov_contacto = ft.TextField(label="Agente de Contacto", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
         self.prov_telefono = ft.TextField(label="Teléfono *", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
         self.prov_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
@@ -687,7 +687,7 @@ class CarteraView(BaseView):
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),
-                            ft.Text(f"ID: {prov['id']} | Teléfono: {prov['telefono']} | Correo: {prov['correo'] or '-'}", color=text_color),
+                            ft.Text(f"ID: {prov['id']} | RIF: {prov.get('rif') or '-'} | Teléfono: {prov['telefono']} | Correo: {prov['correo'] or '-'}", color=text_color),
                             ft.Text(f"Descripción / Categoría: {prov['descripcion'] or '-'}", color=self.get_subtext_color()),
                         ],
                         spacing=8,
@@ -747,13 +747,19 @@ class CarteraView(BaseView):
     def handle_guardar_proveedor(self, e):
         try:
             num_limpio = "".join(filter(str.isdigit, (self.prov_num_doc.value or "").strip()))
-            rif_formateado = format_documento(self.prov_tipo_doc.value, num_limpio) if num_limpio else None
+            if not num_limpio:
+                raise ValueError("El campo Cédula / RIF es obligatorio.")
+            empresa_val = (self.prov_empresa.value or "").strip()
+            if not empresa_val:
+                raise ValueError("El Nombre / Razón Social de la Empresa es obligatorio.")
+
+            rif_formateado = format_documento(self.prov_tipo_doc.value, num_limpio)
             desc_final = self.prov_desc.value or ""
 
             if self.prov_editing_id:
                 actualizar_proveedor(
                     proveedor_id=self.prov_editing_id,
-                    empresa=self.prov_empresa.value,
+                    empresa=empresa_val,
                     contacto=self.prov_contacto.value,
                     telefono=self.prov_telefono.value,
                     correo=self.prov_correo.value,
@@ -764,7 +770,7 @@ class CarteraView(BaseView):
                 self.show_alert_success("¡Proveedor actualizado exitosamente!", e)
             else:
                 crear_proveedor(
-                    empresa=self.prov_empresa.value,
+                    empresa=empresa_val,
                     contacto=self.prov_contacto.value,
                     telefono=self.prov_telefono.value,
                     correo=self.prov_correo.value,
@@ -883,9 +889,12 @@ class CarteraView(BaseView):
 
         rows = []
         for p in pagina_items:
-            desc = p["descripcion"] or "-"
-            tipo, num = parse_documento(desc, default_tipo="J")
-            rif_display = format_documento(tipo, num) if num else "-"
+            rif_display = p.get("rif")
+            if not rif_display and p.get("descripcion"):
+                tipo, num = parse_documento(p["descripcion"], default_tipo="J")
+                rif_display = format_documento(tipo, num) if num else "-"
+            elif not rif_display:
+                rif_display = "-"
 
             rows.append(
                 ft.DataRow(

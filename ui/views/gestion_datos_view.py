@@ -189,13 +189,13 @@ class GestionDatosView(BaseView):
 
         # Controles del formulario
         txt_empresa = ft.TextField(
-            label="Razón Social / Empresa", 
+            label="Razón Social / Empresa (Obligatorio)*", 
             value=nombre_prov, 
             disabled=True, 
             prefix_icon=ft.Icons.BUSINESS
         )
         txt_rif = ft.TextField(
-            label="Cédula / RIF (Opcional)", 
+            label="Cédula / RIF (Obligatorio)*", 
             prefix_icon=ft.Icons.BADGE
         )
         txt_contacto = ft.TextField(
@@ -244,6 +244,18 @@ class GestionDatosView(BaseView):
             descripcion = txt_descripcion.value.strip()
 
             print(f">>> [registrar_proveedor] Intentando registrar: Empresa='{empresa}', RIF='{rif}', Teléfono='{telefono}'...")
+
+            if not rif:
+                print(">>> [registrar_proveedor] ERROR: RIF vacío")
+                lbl_error.value = "La Cédula / RIF es obligatoria."
+                p.update()
+                return
+
+            if not empresa:
+                print(">>> [registrar_proveedor] ERROR: Empresa vacía")
+                lbl_error.value = "La Razón Social / Empresa es obligatoria."
+                p.update()
+                return
 
             if not telefono:
                 print(">>> [registrar_proveedor] ERROR: Teléfono vacío")

@@ -530,6 +530,16 @@
 - **Verificaciones realizadas:** Verificación de vaciado limpio de registros y reinicio del estado de prueba.
 - **Estado del proyecto:** En desarrollo. Base de datos vaciada y lista para pruebas de importación.
 
+## Cédula/RIF y Nombre Obligatorios + Corrección de Visualización en Cartera - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Actualización de `validar_reglas_negocio` en [models.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/core/models.py) para que `rif`, `nombre_empresa` y `telefono` sean campos estrictamente obligatorios en Proveedores.
+  - Inclusión de validaciones en [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py) impidiendo registrar proveedores sin RIF o Razón Social en el asistente modal de Carga Masiva.
+  - Corrección de `cargar_tabla_proveedores` y la tarjeta de búsqueda en [cartera_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/cartera_view.py) para extraer y mostrar `p.get("rif")` directamente desde la columna de SQLite.
+- **Verificaciones realizadas:** Ejecución de `python main.py` comprobando las alertas de campos obligatorios y la renderización limpia del RIF en la tabla de Cartera.
+- **Estado del proyecto:** En desarrollo. Campos obligatorios de proveedores y renderizado de RIF en Cartera completados.
+
+
 
 
 

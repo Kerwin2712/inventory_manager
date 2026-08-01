@@ -50,27 +50,24 @@ class Proveedor:
         tel = (self.telefono or "").strip()
         empresa = (self.nombre_empresa or "").strip()
         agente = (self.agente_contacto or "").strip()
+        rif_val = (self.rif or "").strip()
 
         self.telefono = tel
         self.nombre_empresa = empresa if empresa else None
         self.agente_contacto = agente if agente else None
-        if self.rif:
-            self.rif = self.rif.strip()
+        self.rif = rif_val if rif_val else None
+
         if self.email:
             self.email = self.email.strip()
         if self.categoria_descripcion:
             self.categoria_descripcion = self.categoria_descripcion.strip()
 
-        # Condición A: Nombre Empresa Y Teléfono
-        condicion_a = bool(empresa and tel)
-        # Condición B: Agente Contacto Y Teléfono
-        condicion_b = bool(agente and tel)
-
-        if not tel or not (condicion_a or condicion_b):
-            raise ValueError(
-                "ERR_PROV_INS_INVALID: RNO-PROV-01 incumplida. "
-                "Se requiere el número de teléfono y al menos el Nombre de la Empresa o del Agente de Contacto."
-            )
+        if not self.rif:
+            raise ValueError("RNO-PROV-01: El campo Cédula / RIF es obligatorio para el proveedor.")
+        if not self.nombre_empresa:
+            raise ValueError("RNO-PROV-01: El Nombre / Razón Social de la Empresa es obligatorio.")
+        if not self.telefono:
+            raise ValueError("RNO-PROV-01: El número de teléfono de contacto es obligatorio.")
 
 
 @dataclass
