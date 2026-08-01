@@ -11,10 +11,23 @@ class LoginView(BaseView):
 
     def setup_layout(self):
         # Layout limpio para el login, sin cabeceras redundantes
-        self.bgcolor = self.get_bg_color()
-        self.controls = [
-            self.get_body()
-        ]
+        try:
+            self.bgcolor = self.get_bg_color()
+            self.controls = [
+                self.get_body()
+            ]
+        except Exception as e:
+            # Captura y muestra errores de renderizado
+            self.controls = [
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Error en Login", size=20, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
+                        ft.Text(str(e), color=self.get_text_color())
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    alignment=ft.Alignment.CENTER,
+                    expand=True
+                )
+            ]
 
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
@@ -78,7 +91,7 @@ class LoginView(BaseView):
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=15,
             ),
-            padding=ft.padding.symmetric(vertical=25, horizontal=30),
+            padding=ft.Padding(30, 25, 30, 25),
             border_radius=20,
         )
         login_card.width = 380
