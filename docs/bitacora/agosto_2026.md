@@ -11,6 +11,7 @@
     - Adición de un botón de inicio de sesión elevado (`ft.ElevatedButton`) con icono y estilo moderno.
     - Ajuste del contenedor de login mediante esquinas redondeadas (`border_radius=24`) y una sombra de caja (`ft.BoxShadow`) profunda y difusa.
     - Corrección del error de atributo en padding mediante `ft.Padding(30, 30, 30, 30)`.
+    - Corrección de `AttributeError` en Flet al reemplazar las coordenadas del gradiente lineal `ft.alignment.top_left`/`bottom_right` por las constantes universales en mayúscula `ft.Alignment.TOP_LEFT` y `ft.Alignment.BOTTOM_RIGHT`.
     - Envoltura de la inicialización del layout en un bloque `try-except` con volcado de traceback a la consola (`sys.stderr`) e integración de un botón interactivo "Copiar detalles del error" con compatibilidad de portapapeles polimórfico (`page.clipboard` y fallback `page.set_clipboard`).
   - **BaseView ([base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py)):**
     - Adición de un bloque `try-except` genérico en `setup_layout` que captura y vuelca el traceback de inicialización en consola, ofreciendo además un botón interactivo de copia del error compatible de forma polimórfica con múltiples versiones de Flet.
