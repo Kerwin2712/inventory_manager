@@ -557,6 +557,14 @@
 - **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando el renderizado correcto del selector de carritos sin excepciones.
 - **Estado del proyecto:** En desarrollo. Corrección de compatibilidad en Dropdown de Ventas aplicada.
 
+## Reemplazo de ActionChip por Chips Estilizados en Ventas - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Corrección de `AttributeError: module 'flet' has no attribute 'ActionChip'` en [ventas_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/ventas_view.py), reemplazando la dependencia por `ft.Container` con bordes redondeados y efecto ink compatible con todas las versiones de Flet.
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando la funcionalidad interactiva de los chips de productos recomendados.
+- **Estado del proyecto:** En desarrollo. Chips de recomendación de productos 100% compatibles.
+
+
 
 
 

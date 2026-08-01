@@ -231,10 +231,18 @@ class VentasView(BaseView):
             nombre_c = pr.get("nombre_referencia_corto") or pr.get("referencia") or pr["codigo"]
             precio_str = f"${pr['precio_dolares']:.2f}"
             chips_recomendaciones.append(
-                ft.ActionChip(
-                    label=ft.Text(f"{nombre_c} ({precio_str})", size=11, weight=ft.FontWeight.BOLD),
-                    avatar=ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=self.get_accent_color()),
-                    on_click=lambda e, p=pr: self.agregar_producto_directo(p, 1.0, e)
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=self.get_accent_color()),
+                        ft.Text(f"{nombre_c} ({precio_str})", size=11, weight=ft.FontWeight.BOLD, color=self.get_text_color())
+                    ], tight=True, spacing=4),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+                    border_radius=20,
+                    bgcolor=self.get_card_bg(),
+                    border=ft.Border.all(1, self.get_border_color()),
+                    on_click=lambda e, p=pr: self.agregar_producto_directo(p, 1.0, e),
+                    ink=True,
+                    tooltip=f"Haga clic para añadir 1 unidad de {nombre_c} al carrito"
                 )
             )
 
