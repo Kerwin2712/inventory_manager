@@ -103,19 +103,36 @@ class BaseView(ft.View):
 
     def setup_layout(self):
         """Estructura por defecto para las vistas que heredan."""
-        header = ft.Text(
-            self.view_title,
-            size=26,
-            weight=ft.FontWeight.BOLD,
-            color=self.get_accent_color(),
-        )
-        
-        self.bgcolor = self.get_bg_color()
-        self.controls = [
-            header,
-            ft.Divider(height=10, color=self.get_border_color()),
-            self.get_body()
-        ]
+        try:
+            header = ft.Text(
+                self.view_title,
+                size=26,
+                weight=ft.FontWeight.BOLD,
+                color=self.get_accent_color(),
+            )
+            
+            self.bgcolor = self.get_bg_color()
+            self.controls = [
+                header,
+                ft.Divider(height=10, color=self.get_border_color()),
+                self.get_body()
+            ]
+        except Exception as e:
+            # Renderizado seguro en caso de error
+            self.bgcolor = self.get_bg_color()
+            self.controls = [
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Error al Cargar Módulo", size=24, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
+                        ft.Text(f"Detalle: {str(e)}", color=self.get_text_color(), size=16),
+                        ft.Divider(height=20, color=self.get_border_color()),
+                        ft.Text("Por favor, verifique el archivo de configuración o contacte al administrador.", color=self.get_subtext_color())
+                    ], spacing=10),
+                    padding=30,
+                    alignment=ft.Alignment.CENTER,
+                    expand=True
+                )
+            ]
 
     def get_body(self) -> ft.Control:
         """Método plantilla a implementar por cada pantalla."""
