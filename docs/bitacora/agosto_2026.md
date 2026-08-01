@@ -11,8 +11,8 @@
     - Adición de un botón de inicio de sesión elevado (`ft.ElevatedButton`) con icono y estilo moderno.
     - Ajuste del contenedor de login mediante esquinas redondeadas (`border_radius=24`) y una sombra de caja (`ft.BoxShadow`) profunda y difusa.
     - Corrección del error de atributo en padding mediante `ft.Padding(30, 30, 30, 30)`.
-    - Envoltura de la inicialización del layout en un bloque `try-except` con volcado de traceback a la consola (`sys.stderr`) e integración de un botón interactivo "Copiar detalles del error" para facilitar la captura y envío de excepciones mediante el portapapeles.
+    - Envoltura de la inicialización del layout en un bloque `try-except` con volcado de traceback a la consola (`sys.stderr`) e integración de un botón interactivo "Copiar detalles del error" con compatibilidad de portapapeles polimórfico (`page.clipboard` y fallback `page.set_clipboard`).
   - **BaseView ([base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py)):**
-    - Adición de un bloque `try-except` genérico en `setup_layout` que captura y vuelca el traceback de inicialización de cualquier vista en consola, mostrando además un botón interactivo de copia del error al portapapeles.
+    - Adición de un bloque `try-except` genérico en `setup_layout` que captura y vuelca el traceback de inicialización en consola, ofreciendo además un botón interactivo de copia del error compatible de forma polimórfica con múltiples versiones de Flet.
 - **Verificaciones realizadas:** Ejecución de la aplicación verificando el arranque correcto del login con diseño premium tipo tarjeta flotante sobre gradiente, y validando la resiliencia de la interfaz ante excepciones de renderizado.
 - **Estado del proyecto:** En desarrollo. Pantalla de login rediseñada con altos estándares estéticos y robustez mejorada.
