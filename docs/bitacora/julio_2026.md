@@ -511,6 +511,18 @@
 - **Verificaciones realizadas:** Confirmación del estado de Git y validación de reglas de exclusión.
 - **Estado del proyecto:** En desarrollo. Repositorio depurado y reglas de exclusión de base de datos actualizadas.
 
+## Incorporación de Cédula / RIF a la Cartera de Proveedores - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Inclusión del atributo `rif` en la clase de dominio `Proveedor` en [models.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/core/models.py).
+  - Actualización del esquema SQLite en [database.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/core/database.py) con la columna `rif TEXT` y migración automática `ALTER TABLE`.
+  - Adaptación de las funciones CRUD en [cartera_service.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/services/cartera_service.py) (`crear_proveedor`, `obtener_proveedor`, `buscar_proveedores`, `actualizar_proveedor`).
+  - Adición del campo `txt_rif` en el asistente modal de Carga Masiva en [gestion_datos_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py).
+  - Vinculación del campo `RIF` en el formulario y la tabla de proveedores en [cartera_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/cartera_view.py).
+- **Verificaciones realizadas:** Ejecución de `python main.py` comprobando la creación/edición de proveedores con RIF y la migración limpia en SQLite.
+- **Estado del proyecto:** En desarrollo. Soporte completo de Cédula/RIF en Proveedores implementado.
+
+
 
 
 

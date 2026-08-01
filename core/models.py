@@ -37,6 +37,7 @@ class Proveedor:
     nombre_empresa: str | None = None
     agente_contacto: str | None = None
     email: str | None = None
+    rif: str | None = None
     categoria_descripcion: str | None = None
     adjuntos_digitales: list[str] = field(default_factory=list)
     id: int | None = None
@@ -53,6 +54,8 @@ class Proveedor:
         self.telefono = tel
         self.nombre_empresa = empresa if empresa else None
         self.agente_contacto = agente if agente else None
+        if self.rif:
+            self.rif = self.rif.strip()
         if self.email:
             self.email = self.email.strip()
         if self.categoria_descripcion:

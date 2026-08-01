@@ -194,6 +194,10 @@ class GestionDatosView(BaseView):
             disabled=True, 
             prefix_icon=ft.Icons.BUSINESS
         )
+        txt_rif = ft.TextField(
+            label="Cédula / RIF (Opcional)", 
+            prefix_icon=ft.Icons.BADGE
+        )
         txt_contacto = ft.TextField(
             label="Persona de Contacto (Opcional)", 
             prefix_icon=ft.Icons.PERSON
@@ -233,12 +237,13 @@ class GestionDatosView(BaseView):
             p.update()
 
             empresa = txt_empresa.value.strip()
+            rif = txt_rif.value.strip()
             contacto = txt_contacto.value.strip()
             telefono = txt_telefono.value.strip()
             correo = txt_correo.value.strip()
             descripcion = txt_descripcion.value.strip()
 
-            print(f">>> [registrar_proveedor] Intentando registrar: Empresa='{empresa}', Teléfono='{telefono}'...")
+            print(f">>> [registrar_proveedor] Intentando registrar: Empresa='{empresa}', RIF='{rif}', Teléfono='{telefono}'...")
 
             if not telefono:
                 print(">>> [registrar_proveedor] ERROR: Teléfono vacío")
@@ -253,6 +258,7 @@ class GestionDatosView(BaseView):
                     contacto=contacto if contacto else None,
                     telefono=telefono,
                     correo=correo if correo else None,
+                    rif=rif if rif else None,
                     descripcion=descripcion if descripcion else f"Creado automáticamente durante la importación masiva."
                 )
                 print(f">>> [registrar_proveedor] Registrado exitosamente en SQLite.")
@@ -286,6 +292,7 @@ class GestionDatosView(BaseView):
                     ft.Text(f"El proveedor '{nombre_prov}' no existe. Por favor, completa su información para proceder con la importación.", size=13, color=self.get_subtext_color()),
                     ft.Divider(height=10),
                     txt_empresa,
+                    txt_rif,
                     txt_contacto,
                     txt_telefono,
                     txt_correo,

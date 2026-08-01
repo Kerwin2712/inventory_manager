@@ -722,11 +722,17 @@ class CarteraView(BaseView):
         self.prov_result_container.visible = False
         self.prov_editing_id = prov["id"]
         
-        # Extraer RIF/Cédula si está presente en la descripción o campos
-        desc = prov["descripcion"] or ""
-        tipo, num = parse_documento(desc, default_tipo="J")
-        self.prov_tipo_doc.value = tipo
-        self.prov_num_doc.value = num
+        # Extraer RIF/Cédula desde el campo rif o descripcion como fallback
+        rif_val = prov.get("rif") or ""
+        if rif_val:
+            tipo, num = parse_documento(rif_val, default_tipo="J")
+            self.prov_tipo_doc.value = tipo
+            self.prov_num_doc.value = num
+        else:
+            desc = prov["descripcion"] or ""
+            tipo, num = parse_documento(desc, default_tipo="J")
+            self.prov_tipo_doc.value = tipo
+            self.prov_num_doc.value = num
         
         self.prov_empresa.value = prov["empresa"] or ""
         self.prov_contacto.value = prov["contacto"] or ""
@@ -741,11 +747,8 @@ class CarteraView(BaseView):
     def handle_guardar_proveedor(self, e):
         try:
             num_limpio = "".join(filter(str.isdigit, (self.prov_num_doc.value or "").strip()))
-            rif_formateado = format_documento(self.prov_tipo_doc.value, num_limpio) if num_limpio else ""
-            
+            rif_formateado = format_documento(self.prov_tipo_doc.value, num_limpio) if num_limpio else None
             desc_final = self.prov_desc.value or ""
-            if rif_formateado and rif_formateado not in desc_final:
-                desc_final = f"RIF: {rif_formateado} | {desc_final}".strip(" |")
 
             if self.prov_editing_id:
                 actualizar_proveedor(
@@ -754,6 +757,7 @@ class CarteraView(BaseView):
                     contacto=self.prov_contacto.value,
                     telefono=self.prov_telefono.value,
                     correo=self.prov_correo.value,
+                    rif=rif_formateado,
                     descripcion=desc_final,
                     adjuntos=self.adjuntos_temp,
                 )
@@ -764,6 +768,7 @@ class CarteraView(BaseView):
                     contacto=self.prov_contacto.value,
                     telefono=self.prov_telefono.value,
                     correo=self.prov_correo.value,
+                    rif=rif_formateado,
                     descripcion=desc_final,
                     adjuntos=self.adjuntos_temp,
                 )
@@ -779,7 +784,7 @@ class CarteraView(BaseView):
     def handle_eliminar_proveedor(self, proveedor_id: int, e=None):
         try:
             eliminar_proveedor(proveedor_id)
-            self.show_alert_success(f"Proveedor ID '{proveedor_id}' eliminado correctamente.", e)
+            self.show_alert_success("¡Proveedor eliminado exitosamente!", e)
             self.prov_result_container.visible = False
             self.refrescar_datos(e)
         except ValueError as ex:

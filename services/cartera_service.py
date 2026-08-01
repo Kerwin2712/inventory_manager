@@ -153,7 +153,7 @@ def listar_clientes() -> list[dict]:
 # SERVICIOS PARA LA CARTERA DE PROVEEDORES
 # ==========================================
 
-def crear_proveedor(empresa: str = None, contacto: str = None, telefono: str = "", correo: str = None, descripcion: str = None, adjuntos: list[str] = None) -> dict:
+def crear_proveedor(empresa: str = None, contacto: str = None, telefono: str = "", correo: str = None, descripcion: str = None, adjuntos: list[str] = None, rif: str = None) -> dict:
     """
     Crea un nuevo proveedor en SQLite tras validar la Regla RNO-PROV-01 (ERR_PROV_INS_INVALID).
     """
@@ -165,6 +165,7 @@ def crear_proveedor(empresa: str = None, contacto: str = None, telefono: str = "
         nombre_empresa=empresa,
         agente_contacto=contacto,
         email=correo,
+        rif=rif,
         categoria_descripcion=descripcion,
         adjuntos_digitales=adjuntos,
     )
@@ -175,8 +176,8 @@ def crear_proveedor(empresa: str = None, contacto: str = None, telefono: str = "
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO proveedores (empresa, contacto, telefono, correo, descripcion, adjuntos)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO proveedores (empresa, contacto, telefono, correo, descripcion, adjuntos, rif)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 prov_model.nombre_empresa,
@@ -185,6 +186,7 @@ def crear_proveedor(empresa: str = None, contacto: str = None, telefono: str = "
                 prov_model.email,
                 prov_model.categoria_descripcion,
                 adjuntos_json,
+                prov_model.rif,
             )
         )
         conn.commit()
@@ -210,17 +212,17 @@ def obtener_proveedor(proveedor_id: int) -> dict | None:
 
 
 def buscar_proveedores(criterio: str) -> list[dict]:
-    """Busca proveedores por coincidencias en empresa, contacto o teléfono."""
+    """Busca proveedores por coincidencias en empresa, contacto, RIF o teléfono."""
     criterio = f"%{(criterio or '').strip()}%"
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT * FROM proveedores
-            WHERE empresa LIKE ? OR contacto LIKE ? OR telefono LIKE ?
+            WHERE empresa LIKE ? OR contacto LIKE ? OR telefono LIKE ? OR rif LIKE ?
             ORDER BY id ASC
             """,
-            (criterio, criterio, criterio)
+            (criterio, criterio, criterio, criterio)
         )
         rows = cursor.fetchall()
         resultado = []
@@ -234,7 +236,7 @@ def buscar_proveedores(criterio: str) -> list[dict]:
         return resultado
 
 
-def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str = None, telefono: str = None, correo: str = None, descripcion: str = None, adjuntos: list[str] = None) -> dict:
+def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str = None, telefono: str = None, correo: str = None, descripcion: str = None, adjuntos: list[str] = None, rif: str = None) -> dict:
     """Actualiza un proveedor existente en SQLite aplicando RNO-PROV-01."""
     prov_actual = obtener_proveedor(proveedor_id)
     if not prov_actual:
@@ -244,6 +246,7 @@ def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str =
     nuevo_contacto = contacto if contacto is not None else prov_actual["contacto"]
     nuevo_telefono = telefono if telefono is not None else prov_actual["telefono"]
     nuevo_correo = correo if correo is not None else prov_actual["correo"]
+    nuevo_rif = rif if rif is not None else prov_actual.get("rif")
     nueva_desc = descripcion if descripcion is not None else prov_actual["descripcion"]
     nuevos_adjuntos = adjuntos if adjuntos is not None else prov_actual["adjuntos"]
 
@@ -252,6 +255,7 @@ def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str =
         nombre_empresa=nueva_empresa,
         agente_contacto=nuevo_contacto,
         email=nuevo_correo,
+        rif=nuevo_rif,
         categoria_descripcion=nueva_desc,
         adjuntos_digitales=nuevos_adjuntos,
     )
@@ -263,7 +267,7 @@ def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str =
         cursor.execute(
             """
             UPDATE proveedores
-            SET empresa = ?, contacto = ?, telefono = ?, correo = ?, descripcion = ?, adjuntos = ?, updated_at = CURRENT_TIMESTAMP
+            SET empresa = ?, contacto = ?, telefono = ?, correo = ?, descripcion = ?, adjuntos = ?, rif = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
@@ -273,6 +277,7 @@ def actualizar_proveedor(proveedor_id: int, empresa: str = None, contacto: str =
                 prov_model.email,
                 prov_model.categoria_descripcion,
                 adjuntos_json,
+                prov_model.rif,
                 proveedor_id,
             )
         )

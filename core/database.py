@@ -54,12 +54,17 @@ def init_db():
                 contacto TEXT,
                 telefono TEXT NOT NULL,
                 correo TEXT,
+                rif TEXT,
                 descripcion TEXT,
                 adjuntos TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        try:
+            cursor.execute("ALTER TABLE proveedores ADD COLUMN rif TEXT")
+        except Exception:
+            pass
         
         # Crear tabla de productos — Módulo de Inventario (Sección 2 ERS)
         cursor.execute("PRAGMA foreign_keys = ON")
