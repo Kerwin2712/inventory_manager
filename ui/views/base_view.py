@@ -45,8 +45,8 @@ class BaseView(ft.View):
         return BaseView.current_seed_color
 
     def get_bg_color(self) -> str:
-        """Fondo neutro de la aplicación (evita tintes no deseados)."""
-        return "#0F172A" if self.is_dark else "#F1F5F9"
+        """Fondo neutro de la aplicación con mayor contraste para destacar elementos."""
+        return "#0F172A" if self.is_dark else "#CBD5E1"
 
     def get_sidebar_bg(self) -> str:
         """Fondo de la barra lateral (gris sofisticado en modo claro)."""

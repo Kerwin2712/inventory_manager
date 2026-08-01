@@ -487,6 +487,15 @@
 - **Verificaciones realizadas:** Prueba de renderizado de la aplicación en modo claro y oscuro, confirmando el comportamiento estético flotante y redondeado de la barra lateral.
 - **Estado del proyecto:** En desarrollo. Sidebar redondeada flotante y paleta de grises en modo claro aplicadas.
 
+## Ícono de Salida en Cabecera y Contraste de Fondo en Modo Claro - 31/07/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - Sustitución del botón de texto "Salir" por `ft.IconButton(ft.Icons.LOGOUT_ROUNDED, ...)` en la cabecera principal en [dashboard_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/dashboard_view.py).
+  - Ajuste del fondo de pantalla en modo claro a `#CBD5E1` en `get_bg_color()` dentro de [base_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/base_view.py), otorgando mayor profundidad visual y haciendo resaltar las tarjetas blancas (`#FFFFFF`) y la sidebar (`#E2E8F0`).
+- **Verificaciones realizadas:** Ejecución limpia de `python main.py` comprobando el nuevo icono de salida y el contraste del fondo.
+- **Estado del proyecto:** En desarrollo. Ícono de puerta de salida y contraste de fondo claro aplicados.
+
+
 
 
 

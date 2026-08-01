@@ -284,10 +284,10 @@ class DashboardView(BaseView):
             items=color_menu_items,
         )
 
-        logout_btn = ft.Button(
-            content="Salir",
-            bgcolor=ft.Colors.RED_600,
-            color=ft.Colors.WHITE,
+        logout_btn = ft.IconButton(
+            icon=ft.Icons.LOGOUT_ROUNDED,
+            icon_color=ft.Colors.RED_400 if self.is_dark else ft.Colors.RED_600,
+            tooltip="Cerrar Sesión",
             on_click=lambda e: self.on_logout_callback() if self.on_logout_callback else None,
         )
 
