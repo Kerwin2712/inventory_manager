@@ -27,7 +27,13 @@ class LoginView(BaseView):
             def handle_copy(e_click):
                 p = self.get_current_page(e_click)
                 if p:
-                    p.set_clipboard(error_details)
+                    try:
+                        p.clipboard = error_details
+                    except AttributeError:
+                        try:
+                            p.set_clipboard(error_details)
+                        except AttributeError:
+                            pass
                     self.show_alert_info("Detalles del error copiados al portapapeles.", e_click)
 
             self.controls = [
