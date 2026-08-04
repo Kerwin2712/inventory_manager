@@ -223,6 +223,12 @@ class VentasView(BaseView):
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
             on_click=self.handle_agregar_producto
         )
+        self.btn_buscar_inventario = ft.OutlinedButton(
+            content=ft.Row([ft.Icon(ft.Icons.INVENTORY_2_OUTLINED), ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD)]),
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+            tooltip="Abrir el inventario con filtros para seleccionar un producto (ERS 3.3 — Flujo Inverso)",
+            on_click=self.abrir_modal_buscar_inventario
+        )
 
         # ── Panel de Recomendaciones Rápidas (Productos Frecuentes) ───────────
         prods_recomendados = listar_productos(per_page=6)
@@ -254,7 +260,7 @@ class VentasView(BaseView):
         panel_agregar_prod = self.create_card(
             content=ft.Column([
                 ft.Text("BÚSQUEDA Y SELECCIÓN DE ARTÍCULOS", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
-                ft.Row([self.criterio_busqueda_dd, self.prod_search_input, self.cant_input, self.btn_agregar_prod], alignment=ft.MainAxisAlignment.START),
+                ft.Row([self.criterio_busqueda_dd, self.prod_search_input, self.cant_input, self.btn_agregar_prod, self.btn_buscar_inventario], alignment=ft.MainAxisAlignment.START, wrap=True),
                 panel_recomendaciones
             ], spacing=10),
             padding=15,
@@ -442,6 +448,86 @@ class VentasView(BaseView):
         self.agregar_producto_directo(prod_encontrado, cant_deseada, e)
         self.prod_search_input.value = ""
         self.cant_input.value = "1"
+
+    def abrir_modal_buscar_inventario(self, e):
+        """Flujo Inverso (ERS 3.3): abre el Inventario en un modal con filtro de
+        búsqueda; al seleccionar un producto, se retorna directamente a la
+        línea de venta en curso (se agrega al carrito activo)."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        txt_busqueda = ft.TextField(
+            label="Filtrar por código, referencia, descripción, marca o departamento",
+            autofocus=True,
+            border_radius=12,
+            prefix_icon=ft.Icons.SEARCH,
+        )
+        lista_resultados = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=340)
+
+        def _agregar_desde_modal(prod: dict, ev):
+            dlg.open = False
+            self.safe_update(ev)
+            try:
+                cant = float(self.cant_input.value or "1")
+                if cant <= 0:
+                    cant = 1.0
+            except ValueError:
+                cant = 1.0
+            self.agregar_producto_directo(prod, cant, ev)
+
+        def _refrescar(ev=None):
+            termino = (txt_busqueda.value or "").strip()
+            productos = listar_productos(busqueda=termino, per_page=30) if termino else listar_productos(per_page=30)
+            if not productos:
+                lista_resultados.controls = [
+                    ft.Text("No se encontraron productos.", color=self.get_subtext_color())
+                ]
+            else:
+                lista_resultados.controls = [
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Column([
+                                    ft.Text(f"{pr['codigo']} — {pr.get('nombre_referencia_corto') or pr['referencia']}", weight=ft.FontWeight.BOLD, color=self.get_text_color(), size=13),
+                                    ft.Text(f"${pr['precio_dolares']:.2f} | Bs {pr['precio_bcv']:.2f} | Stock: {pr['existencia']:.0f} | {pr.get('departamento','-')}", size=11, color=self.get_subtext_color()),
+                                ], spacing=2, tight=True, expand=True),
+                                ft.IconButton(
+                                    icon=ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_600,
+                                    tooltip="Agregar a la venta en curso",
+                                    on_click=lambda ev2, prod=pr: _agregar_desde_modal(prod, ev2),
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        padding=8, border_radius=10, bgcolor=self.get_card_bg(),
+                        border=ft.Border.all(1, self.get_border_color()),
+                    )
+                    for pr in productos
+                ]
+            self.safe_update(ev)
+
+        txt_busqueda.on_change = _refrescar
+
+        def cerrar(ev):
+            dlg.open = False
+            self.safe_update(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=self.get_accent_color()), ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD)], spacing=10),
+            content=ft.Container(
+                content=ft.Column([txt_busqueda, ft.Divider(height=6), lista_resultados], spacing=10, tight=True),
+                width=560,
+            ),
+            actions=[ft.TextButton("Cerrar", on_click=cerrar)],
+        )
+
+        _refrescar()
+        if dlg not in p.overlay:
+            p.overlay.append(dlg)
+        dlg.open = True
+        p.update()
 
     def handle_remover_item(self, e, codigo):
         remover_item_de_carrito(codigo)

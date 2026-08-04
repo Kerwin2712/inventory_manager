@@ -32,6 +32,15 @@ class DashboardView(BaseView):
         self.current_section = section_name
         self.rebuild_ui()
 
+    def procesar_venta_desde_inventario(self, producto: dict):
+        """Flujo Directo Inventario→Ventas (ERS 3.3): instancia una nueva nota
+        de venta, carga el producto con cantidad=1 y navega a Ventas."""
+        from services.cart_manager import crear_nuevo_carrito, agregar_o_actualizar_producto
+        crear_nuevo_carrito()
+        agregar_o_actualizar_producto(producto, cantidad=1.0)
+        self.current_section = "Ventas"
+        self.rebuild_ui()
+
     def get_body(self) -> ft.Control:
         # Selección del contenido principal según la sección activa
         if self.current_section == "Ventas":
@@ -53,7 +62,7 @@ class DashboardView(BaseView):
             main_content = cartera_view.get_body()
 
         elif self.current_section == "Inventario":
-            inv_view = InventarioView()
+            inv_view = InventarioView(on_procesar_venta=self.procesar_venta_desde_inventario)
             try:
                 if self.page:
                     inv_view.page = self.page

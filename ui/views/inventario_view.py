@@ -14,8 +14,11 @@ class InventarioView(BaseView):
 
     ITEMS_PER_PAGE = 15
 
-    def __init__(self, on_back_callback=None):
+    def __init__(self, on_back_callback=None, on_procesar_venta=None):
         self.on_back_callback = on_back_callback
+        # Callback (ERS 3.3 — Flujo Directo Inventario→Ventas): recibe el
+        # producto seleccionado y navega automáticamente a Ventas cargándolo.
+        self.on_procesar_venta = on_procesar_venta
         self._page_num = 1
 
         # ── Estado del formulario de ingreso ────────────────────────────────
@@ -391,6 +394,11 @@ class InventarioView(BaseView):
                         ft.DataCell(
                             ft.Row([
                                 ft.IconButton(
+                                    ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
+                                    tooltip="Procesar Venta (abre Ventas con este ítem, cant.=1)",
+                                    on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
+                                ),
+                                ft.IconButton(
                                     ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400,
                                     tooltip="Añadir al Carrito de Ventas",
                                     on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
@@ -406,10 +414,27 @@ class InventarioView(BaseView):
                                 ),
                             ], spacing=0)
                         ),
-                    ]
+                    ],
                 )
             )
         self._dt.rows = rows
+
+    def _procesar_venta_directo(self, prod: dict, e=None):
+        """Flujo Directo (ERS 3.3): instancia una nueva nota de venta, carga el
+        producto con cantidad=1 y navega automáticamente al módulo de Ventas."""
+        if float(prod.get("existencia", 0)) <= 0:
+            self._snack(
+                f"'{prod.get('nombre_referencia_corto') or prod['codigo']}' no tiene existencia disponible.",
+                ft.Colors.RED_700, e
+            )
+            return
+        if self.on_procesar_venta:
+            self.on_procesar_venta(prod)
+        else:
+            self._snack(
+                "Esta acción requiere el Dashboard (navegación a Ventas no disponible en este contexto).",
+                ft.Colors.AMBER_700, e
+            )
 
     def _abrir_modal_agregar_carrito(self, prod: dict, e=None):
         """Abre un diálogo emergente para ingresar la cantidad y agregar un producto al carrito de ventas."""
