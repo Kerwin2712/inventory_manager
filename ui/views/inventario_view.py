@@ -711,12 +711,49 @@ class InventarioView(BaseView):
 
         titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
 
+        def _limpiar_errores():
+            for campo in (f_ref, f_desc, f_depto, f_precio_usd):
+                campo.error_text = None
+
         def _guardar(ev):
-            self._close_dialog(ev)
+            # ── Requisito de guardado mínimo (ERS 3.1 paso 4) ────────────────
+            # Validar ANTES de mostrar la confirmación del paso 3, resaltando
+            # en rojo los campos omitidos. Si falla, el diálogo permanece
+            # abierto y no se procede.
+            _limpiar_errores()
+            hay_error = False
+
+            if not (f_ref.value or "").strip():
+                f_ref.error_text = "Campo obligatorio"
+                hay_error = True
+            if not (f_desc.value or "").strip():
+                f_desc.error_text = "Campo obligatorio"
+                hay_error = True
+            if not (f_depto.value or "").strip():
+                f_depto.error_text = "Campo obligatorio"
+                hay_error = True
+
+            try:
+                existencia_val = float((f_existencia.value or "0").replace(",", "."))
+            except ValueError:
+                existencia_val = 0.0
             try:
                 usd_val = float((f_precio_usd.value or "0").replace(",", "."))
             except ValueError:
                 usd_val = 0.0
+
+            # Stock=0 omite la exigencia de precio; Stock>0 exige Precio USD
+            # (el Precio BCV es un campo calculado, no una fuente alternativa).
+            if existencia_val > 0 and usd_val <= 0:
+                f_precio_usd.error_text = "Requerido si Existencia > 0"
+                hay_error = True
+
+            if hay_error:
+                self._snack("Complete los campos obligatorios resaltados en rojo.", ft.Colors.RED_700, ev)
+                self._safe_update(ev)
+                return
+
+            self._close_dialog(ev)
             datos = {
                 "codigo": codigo,
                 "referencia": f_ref.value,
@@ -808,6 +845,12 @@ class InventarioView(BaseView):
             prod_actual = obtener_producto(datos["codigo"]) if self._editing_codigo else None
             self._mostrar_paso2_dialogo(ev, codigo=datos["codigo"], datos_iniciales=prod_actual or datos)
 
+        def _cancelar_todo(ev):
+            """Cancelar en el paso 3 descarta todo y vuelve al paso 1 (ERS 3.1 paso 5)."""
+            self._close_dialog(ev)
+            self._form_codigo_verificado = False
+            self._editing_codigo = None
+
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Row([
@@ -825,7 +868,7 @@ class InventarioView(BaseView):
                 padding=10,
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
+                ft.TextButton("Cancelar", on_click=_cancelar_todo),
                 ft.OutlinedButton(
                     "Editar", icon=ft.Icons.EDIT_OUTLINED,
                     style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
