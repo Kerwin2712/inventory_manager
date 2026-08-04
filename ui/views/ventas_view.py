@@ -1,11 +1,12 @@
 import os
+import re
 import tkinter as tk
 from tkinter import filedialog
 import flet as ft
 from ui.views.base_view import BaseView
 from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
-from services.cartera_service import buscar_cliente_por_cedula
+from services.cartera_service import buscar_cliente_por_cedula, crear_cliente
 from services.inventario_service import listar_productos
 from services.ventas_service import procesar_venta
 from services.pdf_service import generar_nota_entrega_pdf
@@ -23,6 +24,16 @@ from services.cart_manager import (
     remover_item_de_carrito,
     vaciar_carrito_activo
 )
+
+# ERS 3.4: formato exigido para la Venta Formal — [V-00.000.000 ó J-00000000-0].
+# Letra de nacionalidad/tipo (V/E/J/G/P) + guion + dígitos (agrupados con
+# puntos o corridos) + dígito verificador opcional con guion (RIF).
+_PATRON_CEDULA_RIF = re.compile(r"^[VEJGPvejgp]-(\d{6,9}|\d{1,3}(\.\d{3}){1,3})(-\d)?$")
+
+
+def _formato_cedula_rif_valido(texto: str) -> bool:
+    """Valida el formato de Cédula/RIF exigido por el ERS 3.4 antes de buscar."""
+    return bool(_PATRON_CEDULA_RIF.match((texto or "").strip()))
 
 
 class VentasView(BaseView):
@@ -383,9 +394,17 @@ class VentasView(BaseView):
         self.rebuild_ui()
 
     def handle_buscar_cliente(self, e):
-        query = self.cli_search_input.value or ""
-        if not query.strip():
+        query = (self.cli_search_input.value or "").strip()
+        if not query:
             self.show_alert_error(e, "Ingrese una Cédula o RIF para buscar.")
+            return
+
+        # ERS 3.4: formato obligatorio [V-00.000.000 ó J-00000000-0] antes de buscar.
+        if not _formato_cedula_rif_valido(query):
+            self.show_alert_error(
+                e,
+                "Formato de Cédula/RIF inválido. Use V-00.000.000 o J-00000000-0."
+            )
             return
 
         cliente = buscar_cliente_por_cedula(query)
@@ -394,7 +413,81 @@ class VentasView(BaseView):
             self.show_alert_success(e, f"Cliente '{cliente['nombre']}' vinculado a la venta.")
             self.rebuild_ui()
         else:
-            self.show_alert_error(e, f"El cliente '{query}' no está registrado en la base de datos.")
+            # ERS 3.4: si no coincide con la Cartera de Clientes, se abre el
+            # Módulo 1.2 para registrarlo sin abandonar la venta en curso.
+            self.abrir_modal_crear_cliente(query, e)
+
+    def abrir_modal_crear_cliente(self, cedula_sugerida: str, e=None):
+        """Abre el Módulo 1.2 (Cartera de Clientes) para registrar al cliente
+        no encontrado, aplicando RNO-CLI-01, y lo vincula a la venta en curso."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        f_cedula = ft.TextField(label="Cédula/RIF *", value=cedula_sugerida, border_radius=12, width=200)
+        f_nombre = ft.TextField(label="Nombre / Razón Social *", autofocus=True, border_radius=12, expand=True)
+        f_telefono = ft.TextField(label="Teléfono", border_radius=12, width=200)
+        f_direccion = ft.TextField(label="Dirección", border_radius=12, expand=True)
+        f_correo = ft.TextField(label="Correo (opcional)", border_radius=12, expand=True)
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _crear(ev):
+            try:
+                nuevo = crear_cliente(
+                    nombre=f_nombre.value,
+                    cedula_rif=f_cedula.value,
+                    direccion=f_direccion.value,
+                    telefono=f_telefono.value,
+                    correo=f_correo.value,
+                )
+                dlg.open = False
+                self.safe_update(ev)
+                vincular_cliente_a_carrito(nuevo)
+                self.show_alert_success(ev, f"Cliente '{nuevo['nombre']}' registrado y vinculado a la venta.")
+                self.rebuild_ui()
+            except ValueError as ex:
+                lbl_err.value = str(ex)
+                self.safe_update(ev)
+
+        def cerrar(ev):
+            dlg.open = False
+            self.safe_update(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.PERSON_ADD_ALT_1, color=self.get_accent_color()),
+                ft.Text("Cliente no registrado — Cartera de Clientes", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        "El cliente no está registrado. Complete sus datos (Módulo 1.2) "
+                        "para vincularlo automáticamente a esta venta:",
+                        size=12, color=self.get_subtext_color()
+                    ),
+                    ft.Row([f_cedula, f_telefono], spacing=10),
+                    f_nombre,
+                    f_direccion,
+                    f_correo,
+                    lbl_err,
+                ], spacing=10, tight=True),
+                width=460,
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=cerrar),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.SAVE), ft.Text("Crear y Vincular")], tight=True),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=_crear,
+                ),
+            ],
+        )
+        if dlg not in p.overlay:
+            p.overlay.append(dlg)
+        dlg.open = True
+        p.update()
 
     def agregar_producto_directo(self, producto: dict, cantidad: float, e=None):
         """Agrega un producto directamente al carrito activo."""
