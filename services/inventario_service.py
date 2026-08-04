@@ -187,14 +187,35 @@ def actualizar_producto(
     return resultado
 
 
+# Columnas de texto directo del inventario (ERS 3.2) filtrables por LIKE independiente.
+_FILTROS_TEXTO = (
+    "codigo", "referencia", "departamento", "descripcion_general", "marca",
+    "fecha_ultima_modificacion", "codigo_barras", "nombre_referencia_corto",
+)
+# Columnas numéricas, filtrables como texto parcial sobre su representación.
+_FILTROS_NUMERICOS = ("precio_dolares", "precio_bcv", "existencia")
+
+
 def listar_productos(
     departamento: str = "",
     busqueda: str = "",
     proveedor_id: int | None = None,
+    filtros: dict | None = None,
     page: int = 1,
     per_page: int = 20,
 ) -> list[dict]:
-    """Lista productos con filtros opcionales de departamento, texto libre y proveedor."""
+    """Lista productos con filtros opcionales.
+
+    - `busqueda`: texto libre combinado con OR sobre varias columnas (búsqueda
+      rápida tipo escáner, usada por el módulo de Ventas).
+    - `filtros`: diccionario con una clave por cada una de las 12 columnas del
+      inventario (ERS 3.2 — Filtros en Cascada). Cada filtro no vacío se
+      combina con los demás mediante AND independientes (coincidencia parcial
+      LIKE '%texto%'), nunca concatenados en un solo término de búsqueda.
+      Claves soportadas: codigo, referencia, departamento, descripcion_general,
+      marca, precio_dolares, precio_bcv, proveedor, fecha_ultima_modificacion,
+      existencia, codigo_barras, nombre_referencia_corto.
+    """
     query = "SELECT * FROM productos WHERE 1=1"
     params: list = []
 
@@ -204,12 +225,38 @@ def listar_productos(
 
     if busqueda:
         termino = f"%{busqueda.strip()}%"
-        query += " AND (codigo LIKE ? OR referencia LIKE ? OR descripcion_general LIKE ? OR marca LIKE ?)"
-        params.extend([termino, termino, termino, termino])
+        query += (
+            " AND (codigo LIKE ? OR referencia LIKE ? OR descripcion_general LIKE ?"
+            " OR marca LIKE ? OR codigo_barras LIKE ? OR nombre_referencia_corto LIKE ?)"
+        )
+        params.extend([termino] * 6)
 
     if proveedor_id is not None:
         query += " AND proveedor_id = ?"
         params.append(proveedor_id)
+
+    # ── Filtros en cascada por columna (ERS 3.2): AND independientes ────────
+    filtros = filtros or {}
+
+    for columna in _FILTROS_TEXTO:
+        valor = (filtros.get(columna) or "").strip()
+        if valor:
+            query += f" AND {columna} LIKE ?"
+            params.append(f"%{valor}%")
+
+    for columna in _FILTROS_NUMERICOS:
+        valor = (filtros.get(columna) or "").strip()
+        if valor:
+            query += f" AND CAST({columna} AS TEXT) LIKE ?"
+            params.append(f"%{valor}%")
+
+    proveedor_texto = (filtros.get("proveedor") or "").strip()
+    if proveedor_texto:
+        query += (
+            " AND proveedor_id IN "
+            "(SELECT id FROM proveedores WHERE empresa LIKE ? OR contacto LIKE ?)"
+        )
+        params.extend([f"%{proveedor_texto}%", f"%{proveedor_texto}%"])
 
     query += " ORDER BY departamento, codigo"
     offset = (max(1, page) - 1) * per_page

@@ -192,10 +192,20 @@ class InventarioView(BaseView):
             )
             return tf
 
+        # Panel de consultas con un campo dedicado por cada una de las 12
+        # columnas del inventario (ERS 3.2), combinables simultáneamente.
         self._f_codigo = campo("Código")
+        self._f_referencia = campo("Referencia")
+        self._f_departamento = campo("Departamento")
         self._f_descripcion = campo("Descripción", 250)
         self._f_marca = campo("Marca")
-        self._f_departamento = campo("Departamento")
+        self._f_precio_usd = campo("Precio $", 120)
+        self._f_precio_bcv = campo("Precio Bs", 120)
+        self._f_proveedor = campo("Proveedor")
+        self._f_fecha_mod = campo("Últ. Modificación", 160)
+        self._f_existencia = campo("Existencia", 110)
+        self._f_codigo_barras = campo("Código de Barras")
+        self._f_nombre_corto = campo("Nombre Corto")
 
         btn_ingresar = ft.Button(
             content=ft.Text("  Ingresar Producto", weight=ft.FontWeight.BOLD),
@@ -231,15 +241,22 @@ class InventarioView(BaseView):
                     ft.Row(
                         controls=[
                             self._f_codigo,
+                            self._f_referencia,
+                            self._f_departamento,
                             self._f_descripcion,
                             self._f_marca,
-                            self._f_departamento,
-                            btn_limpiar,
-                            btn_ingresar,
+                            self._f_precio_usd,
+                            self._f_precio_bcv,
+                            self._f_proveedor,
+                            self._f_fecha_mod,
+                            self._f_existencia,
+                            self._f_codigo_barras,
+                            self._f_nombre_corto,
                         ],
                         spacing=12,
                         wrap=True,
                     ),
+                    ft.Row(controls=[btn_limpiar, btn_ingresar], spacing=12),
                 ],
                 spacing=10,
             ),
@@ -251,11 +268,17 @@ class InventarioView(BaseView):
         self._page_num = 1
         self._refrescar_tabla(e)
 
+    def _campos_filtro(self) -> list[ft.TextField]:
+        return [
+            self._f_codigo, self._f_referencia, self._f_departamento,
+            self._f_descripcion, self._f_marca, self._f_precio_usd,
+            self._f_precio_bcv, self._f_proveedor, self._f_fecha_mod,
+            self._f_existencia, self._f_codigo_barras, self._f_nombre_corto,
+        ]
+
     def _handle_limpiar_filtros(self, e):
-        self._f_codigo.value = ""
-        self._f_descripcion.value = ""
-        self._f_marca.value = ""
-        self._f_departamento.value = ""
+        for campo in self._campos_filtro():
+            campo.value = ""
         self._page_num = 1
         self._refrescar_tabla(e)
 
@@ -324,28 +347,30 @@ class InventarioView(BaseView):
         if accent is None:
             accent = self.get_accent_color()
 
-        codigo_q = (getattr(self, "_f_codigo", None) and self._f_codigo.value or "").strip()
-        desc_q = (getattr(self, "_f_descripcion", None) and self._f_descripcion.value or "").strip()
-        marca_q = (getattr(self, "_f_marca", None) and self._f_marca.value or "").strip()
-        depto_q = (getattr(self, "_f_departamento", None) and self._f_departamento.value or "").strip()
-
-        # Búsqueda combinada AND — filtros en cascada
-        busqueda = " ".join(filter(None, [codigo_q, desc_q, marca_q]))
+        # Filtros en cascada (ERS 3.2): un input independiente por columna,
+        # combinados con AND — nunca concatenados en un solo término de búsqueda.
+        filtros = {
+            "codigo": getattr(self, "_f_codigo", None) and self._f_codigo.value,
+            "referencia": getattr(self, "_f_referencia", None) and self._f_referencia.value,
+            "departamento": getattr(self, "_f_departamento", None) and self._f_departamento.value,
+            "descripcion_general": getattr(self, "_f_descripcion", None) and self._f_descripcion.value,
+            "marca": getattr(self, "_f_marca", None) and self._f_marca.value,
+            "precio_dolares": getattr(self, "_f_precio_usd", None) and self._f_precio_usd.value,
+            "precio_bcv": getattr(self, "_f_precio_bcv", None) and self._f_precio_bcv.value,
+            "proveedor": getattr(self, "_f_proveedor", None) and self._f_proveedor.value,
+            "fecha_ultima_modificacion": getattr(self, "_f_fecha_mod", None) and self._f_fecha_mod.value,
+            "existencia": getattr(self, "_f_existencia", None) and self._f_existencia.value,
+            "codigo_barras": getattr(self, "_f_codigo_barras", None) and self._f_codigo_barras.value,
+            "nombre_referencia_corto": getattr(self, "_f_nombre_corto", None) and self._f_nombre_corto.value,
+        }
 
         todos = listar_productos(
-            departamento=depto_q,
-            busqueda=busqueda,
+            filtros=filtros,
             page=self._page_num,
             per_page=self.ITEMS_PER_PAGE,
         )
 
-        # Filtro adicional por código exacto si hay valor
-        if codigo_q:
-            todos = [p for p in todos if codigo_q.lower() in p["codigo"].lower()]
-
-        total_all = listar_productos(
-            departamento=depto_q, busqueda=busqueda, page=1, per_page=9999
-        )
+        total_all = listar_productos(filtros=filtros, page=1, per_page=9999)
         total = len(total_all)
         total_pags = max(1, (total + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
