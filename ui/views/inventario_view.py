@@ -6,6 +6,7 @@ from services.inventario_service import (
     listar_productos, eliminar_producto,
 )
 from services.cartera_service import listar_proveedores
+from services.reportes_service import obtener_historial_producto
 
 
 class InventarioView(BaseView):
@@ -14,11 +15,13 @@ class InventarioView(BaseView):
 
     ITEMS_PER_PAGE = 15
 
-    def __init__(self, on_back_callback=None, on_procesar_venta=None):
+    def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False):
         self.on_back_callback = on_back_callback
         # Callback (ERS 3.3 — Flujo Directo Inventario→Ventas): recibe el
         # producto seleccionado y navega automáticamente a Ventas cargándolo.
         self.on_procesar_venta = on_procesar_venta
+        # ERS 3.6: el historial clínico de producto es exclusivo admin/gerencia.
+        self.es_admin = es_admin
         self._page_num = 1
 
         # ── Estado del formulario de ingreso ────────────────────────────────
@@ -403,6 +406,11 @@ class InventarioView(BaseView):
                                     tooltip="Añadir al Carrito de Ventas",
                                     on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
                                 ),
+                                *([ft.IconButton(
+                                    ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300,
+                                    tooltip="Historial Clínico del Producto (ERS 3.6 — admin/gerencia)",
+                                    on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev),
+                                )] if self.es_admin else []),
                                 ft.IconButton(
                                     ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar",
                                     on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev),
@@ -418,6 +426,71 @@ class InventarioView(BaseView):
                 )
             )
         self._dt.rows = rows
+
+    def _abrir_modal_historial(self, codigo: str, e=None):
+        """Historial Clínico de Producto (ERS 3.6): movimientos cronológicos
+        de venta y proveedor vigente. Exclusivo admin/gerencia."""
+        p = self.get_current_page(e)
+        if not p or not self.es_admin:
+            return
+
+        try:
+            data = obtener_historial_producto(codigo)
+        except ValueError as ex:
+            self._snack(str(ex), ft.Colors.RED_700, e)
+            return
+
+        prod = data["producto"]
+        prov = data["proveedor_actual"]
+        movimientos = data["movimientos_venta"]
+
+        info_prov = (
+            f"{prov['empresa'] or prov['contacto'] or '-'} | Tel: {prov.get('telefono') or 'N/A'}"
+            if prov else "Sin proveedor asignado"
+        )
+
+        filas_mov = []
+        if movimientos:
+            for m in movimientos[:50]:
+                filas_mov.append(
+                    ft.Row([
+                        ft.Text(str(m["fecha"]), size=12, color=self.get_text_color(), width=140),
+                        ft.Text(m["tipo_venta"], size=12, color=self.get_subtext_color(), width=70),
+                        ft.Text(f"Cant: {float(m['cantidad']):.2f}", size=12, color=ft.Colors.AMBER_400, width=90),
+                        ft.Text(m.get("cliente_id") or "Mostrador", size=12, color=self.get_subtext_color()),
+                    ], spacing=10)
+                )
+        else:
+            filas_mov.append(ft.Text("Sin movimientos de venta registrados.", color=self.get_subtext_color()))
+
+        def cerrar(ev):
+            dlg.open = False
+            self._safe_update(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.HISTORY_ROUNDED, color=ft.Colors.PURPLE_300),
+                ft.Text(f"Historial Clínico — {prod.get('nombre_referencia_corto') or codigo}", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(f"Proveedor actual: {info_prov}", size=13, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                    ft.Text(f"Total histórico vendido: {data['total_vendido']:.2f} uds.", size=12, color=self.get_subtext_color()),
+                    ft.Text(
+                        "Nota: el esquema no registra aún un historial de compras/reposición por "
+                        "proveedor; solo se muestra el proveedor vigente.",
+                        size=11, color=self.get_subtext_color(), italic=True,
+                    ),
+                    ft.Divider(height=10),
+                    ft.Text("Movimientos de venta (más reciente primero):", size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                    ft.Column(controls=filas_mov, spacing=6, scroll=ft.ScrollMode.AUTO, height=260),
+                ], spacing=8, tight=True),
+                width=520,
+            ),
+            actions=[ft.TextButton("Cerrar", on_click=cerrar)],
+        )
+        self._open_dialog(dlg, e)
 
     def _procesar_venta_directo(self, prod: dict, e=None):
         """Flujo Directo (ERS 3.3): instancia una nueva nota de venta, carga el

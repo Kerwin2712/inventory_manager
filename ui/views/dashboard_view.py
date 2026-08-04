@@ -7,11 +7,16 @@ from ui.views.gestion_datos_view import GestionDatosView
 from services.reportes_service import (
     obtener_metricas_dashboard,
     obtener_top_ventas,
-    obtener_alertas_stock
+    obtener_alertas_stock,
+    obtener_stock_minimo,
+    actualizar_stock_minimo,
 )
 
 class DashboardView(BaseView):
     """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
+
+    # ERS 3.6: módulo exclusivo de uso administrativo/gerencial.
+    ROLES_CON_ACCESO_AUDITORIA = ("administrador", "superadmin", "gerencia")
 
     def __init__(self, user_info: dict = None, on_logout_callback=None):
         self.user_info = user_info or {"username": "usuario", "role": "administrador"}
@@ -21,6 +26,11 @@ class DashboardView(BaseView):
         self.limite_top_ventas = 10
         self.sidebar_collapsed = False
         super().__init__(route="/dashboard", title="Dashboard General")
+
+    @property
+    def es_admin(self) -> bool:
+        """ERS 3.6: acceso al módulo de auditoría/reportes restringido a admin/gerencia."""
+        return (self.user_info or {}).get("role") in self.ROLES_CON_ACCESO_AUDITORIA
 
     def toggle_sidebar(self, e=None):
         """Conmuta el estado minimizado/expandido de la barra lateral."""
@@ -62,7 +72,10 @@ class DashboardView(BaseView):
             main_content = cartera_view.get_body()
 
         elif self.current_section == "Inventario":
-            inv_view = InventarioView(on_procesar_venta=self.procesar_venta_desde_inventario)
+            inv_view = InventarioView(
+                on_procesar_venta=self.procesar_venta_desde_inventario,
+                es_admin=self.es_admin,
+            )
             try:
                 if self.page:
                     inv_view.page = self.page
@@ -80,12 +93,30 @@ class DashboardView(BaseView):
             main_content = gd_view.get_body()
 
         elif self.current_section == "Inicio":
+            # ERS 3.6: el panel de Inteligencia de Negocio y Auditoría de Stock
+            # es exclusivo para roles administrativos/gerenciales.
+            secciones_inicio = [self.build_metrics_cards(), ft.Container(height=10)]
+            if self.es_admin:
+                secciones_inicio.append(self.build_data_sections())
+            else:
+                secciones_inicio.append(
+                    self.create_card(
+                        content=ft.Row(
+                            controls=[
+                                ft.Icon(ft.Icons.LOCK_OUTLINE_ROUNDED, color=self.get_subtext_color()),
+                                ft.Text(
+                                    "El panel de Inteligencia de Negocio y Auditoría de Stock (ERS 3.6) "
+                                    "está reservado para usuarios administrativos/gerenciales.",
+                                    color=self.get_subtext_color(), size=13,
+                                ),
+                            ],
+                            spacing=10,
+                        ),
+                        padding=18, border_radius=16,
+                    )
+                )
             main_content = ft.Column(
-                controls=[
-                    self.build_metrics_cards(),
-                    ft.Container(height=10),
-                    self.build_data_sections(),
-                ],
+                controls=secciones_inicio,
                 scroll=ft.ScrollMode.AUTO,
                 spacing=20,
             )
@@ -482,7 +513,32 @@ class DashboardView(BaseView):
         )
 
         # ── 2. Auditoría Preventiva (Stock Crítico + Contacto Proveedor - ERS 3.6) ──
-        alertas_stock = obtener_alertas_stock(minimo=5.0)
+        stock_minimo_actual = obtener_stock_minimo()
+        alertas_stock = obtener_alertas_stock(minimo=stock_minimo_actual)
+
+        def handle_guardar_stock_minimo(e):
+            try:
+                nuevo_val = float((inp_stock_minimo.value or "0").replace(",", "."))
+                actualizar_stock_minimo(nuevo_val)
+                self.show_alert_success(e, f"Stock mínimo actualizado a {nuevo_val:.0f}.")
+                self.rebuild_ui()
+            except ValueError as ex:
+                self.show_alert_error(e, str(ex))
+
+        inp_stock_minimo = ft.TextField(
+            label="Stock mínimo",
+            value=f"{stock_minimo_actual:.0f}",
+            width=110,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            border_radius=12,
+            content_padding=8,
+            on_submit=handle_guardar_stock_minimo,
+        )
+        btn_guardar_stock_minimo = ft.IconButton(
+            icon=ft.Icons.SAVE_OUTLINED, icon_color=accent,
+            tooltip="Guardar nuevo stock mínimo parametrizado (ERS 3.6)",
+            on_click=handle_guardar_stock_minimo,
+        )
 
         if alertas_stock:
             stock_rows = []
@@ -522,10 +578,14 @@ class DashboardView(BaseView):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.REPORT_PROBLEM_ROUNDED, color=accent),
-                            ft.Text("Auditoría Preventiva (Stock Crítico < 5)", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ft.Row([
+                                ft.Icon(ft.Icons.REPORT_PROBLEM_ROUNDED, color=accent),
+                                ft.Text(f"Auditoría Preventiva (Stock Crítico < {stock_minimo_actual:.0f})", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ], spacing=10),
+                            ft.Row([inp_stock_minimo, btn_guardar_stock_minimo], spacing=2),
                         ],
-                        spacing=10,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        wrap=True,
                     ),
                     ft.Divider(height=10, color=self.get_border_color()),
                     stock_content,

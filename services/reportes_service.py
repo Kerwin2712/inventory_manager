@@ -1,11 +1,39 @@
 import sqlite3
-from core.database import get_connection
+from core.database import get_connection, get_setting, set_setting
 
-def obtener_alertas_stock(minimo: float = 5.0) -> list[dict]:
+# ERS 3.6: "Auditoría preventiva ... cuando la Existencia cae por debajo del
+# stock mínimo PARAMETRIZADO". Se persiste en app_settings en vez de un
+# literal fijo en el código.
+_KEY_STOCK_MINIMO = "stock_minimo"
+_STOCK_MINIMO_DEFAULT = 5.0
+
+
+def obtener_stock_minimo() -> float:
+    """Recupera el stock mínimo parametrizado (ERS 3.6), con valor por defecto."""
+    try:
+        return float(get_setting(_KEY_STOCK_MINIMO, str(_STOCK_MINIMO_DEFAULT)))
+    except (TypeError, ValueError):
+        return _STOCK_MINIMO_DEFAULT
+
+
+def actualizar_stock_minimo(valor: float) -> float:
+    """Actualiza el stock mínimo parametrizado usado por la auditoría preventiva."""
+    valor = float(valor)
+    if valor <= 0:
+        raise ValueError("El stock mínimo debe ser un valor positivo mayor a cero.")
+    set_setting(_KEY_STOCK_MINIMO, str(valor))
+    return valor
+
+
+def obtener_alertas_stock(minimo: float | None = None) -> list[dict]:
     """
     Consulta la tabla productos y retorna los ítems donde existencia < minimo,
     haciendo un JOIN con proveedores para aislar y devolver el contacto del proveedor (ERS 3.6).
+    Si `minimo` no se especifica, usa el valor parametrizado en app_settings.
     """
+    if minimo is None:
+        minimo = obtener_stock_minimo()
+
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -145,12 +173,13 @@ def obtener_metricas_dashboard() -> dict:
     total_unidades = float(row_stock["total_unidades"] or 0.0)
     total_categorias = int(row_stock["total_categorias"] or 0)
 
-    # 3. Alertas de Stock Bajo
+    # 3. Alertas de Stock Bajo (usa el stock mínimo parametrizado — ERS 3.6)
+    stock_minimo = obtener_stock_minimo()
     cursor.execute("""
         SELECT COUNT(*) AS total_criticos
         FROM productos
-        WHERE existencia < 5
-    """)
+        WHERE existencia < ?
+    """, (stock_minimo,))
     total_criticos = int(cursor.fetchone()["total_criticos"] or 0)
 
     conn.close()
@@ -162,4 +191,55 @@ def obtener_metricas_dashboard() -> dict:
         "total_unidades": total_unidades,
         "total_categorias": total_categorias,
         "total_criticos": total_criticos
+    }
+
+
+def obtener_historial_producto(codigo: str) -> dict:
+    """Historial clínico de un producto (ERS 3.6): movimientos cronológicos
+    de venta (cuándo, cantidad, tipo de venta y cliente) y el proveedor
+    actualmente asociado.
+
+    NOTA / limitación conocida: el esquema actual no registra un historial de
+    COMPRAS/reposición por proveedor (solo el `proveedor_id` vigente en
+    `productos`) — el ERS pide también "cuándo se compró, a qué proveedor",
+    lo cual requeriría una tabla de órdenes de compra que no existe todavía.
+    Esta función documenta y expone el proveedor vigente como aproximación.
+    """
+    codigo = (codigo or "").strip()
+    if not codigo:
+        raise ValueError("Debe especificar un código de producto.")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM productos WHERE codigo = ?", (codigo,))
+        row_prod = cursor.fetchone()
+        if not row_prod:
+            raise ValueError(f"El producto con código '{codigo}' no existe.")
+        producto = dict(row_prod)
+
+        cursor.execute("""
+            SELECT v.id AS venta_id, v.fecha, v.tipo_venta, v.cliente_id,
+                   vd.cantidad, vd.precio_unitario_usd, vd.precio_unitario_bcv, vd.subtotal_usd
+            FROM ventas_detalle vd
+            INNER JOIN ventas v ON vd.venta_id = v.id
+            WHERE vd.producto_codigo = ?
+            ORDER BY v.fecha DESC
+        """, (codigo,))
+        movimientos_venta = [dict(r) for r in cursor.fetchall()]
+
+        proveedor_actual = None
+        if producto.get("proveedor_id"):
+            cursor.execute(
+                "SELECT empresa, contacto, telefono, correo FROM proveedores WHERE id = ?",
+                (producto["proveedor_id"],)
+            )
+            row_prov = cursor.fetchone()
+            if row_prov:
+                proveedor_actual = dict(row_prov)
+
+    return {
+        "producto": producto,
+        "proveedor_actual": proveedor_actual,
+        "movimientos_venta": movimientos_venta,
+        "total_vendido": sum(float(m["cantidad"]) for m in movimientos_venta),
     }
