@@ -47,7 +47,7 @@ inventory_manager/
 ## 🛠️ Funcionamiento de los Módulos Principales
 
 ### 1. Capa de Seguridad y Persistencia Base (`core/`)
-- **`config.py`**: Centraliza la lectura de variables desde `.env` (`RECUPERAR_PASS`) y la ubicación de la base de datos `inventory.db`.
+- **`config.py`**: Centraliza la lectura de variables desde `.env` (`RECUPERAR_PASS`) y la ubicación de la base de datos `inventory.db`. Si `DATABASE_PATH` no se define explícitamente, se calcula por defecto en el directorio de datos de usuario del sistema (`%APPDATA%\SistemaInventario\inventory.db` en Windows) en lugar de la carpeta de instalación, para que un instalador (Inno Setup) no la sobrescriba/elimine al actualizar la aplicación.
 - **`security.py`**:
   - `hash_password(password)`: Genera un hash con sal aleatoria de 16 bytes mediante `PBKDF2-HMAC-SHA256` con 100,000 iteraciones (formato `salt_hex:hash_hex`).
   - `verify_password(password, stored_hash)`: Compara la contraseña utilizando `hmac.compare_digest` para prevenir ataques de tiempo.

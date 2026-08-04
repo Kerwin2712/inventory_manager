@@ -56,8 +56,9 @@ Crea un archivo llamado `.env` en la raíz del proyecto (o edita el existente) y
 
 ```env
 RECUPERAR_PASS=123456789
-DATABASE_PATH=inventory.db
 ```
+
+> **Ubicación de la base de datos:** si no defines `DATABASE_PATH`, la aplicación guarda `inventory.db` automáticamente en el directorio de datos de usuario del sistema (`%APPDATA%\SistemaInventario\inventory.db` en Windows). Esto es intencional: mantiene la base de datos fuera de la carpeta de instalación para que un instalador (Inno Setup) no la sobrescriba ni la elimine al actualizar la aplicación. Solo define `DATABASE_PATH` en el `.env` si necesitas forzar una ruta distinta (por ejemplo, en desarrollo local).
 
 ---
 

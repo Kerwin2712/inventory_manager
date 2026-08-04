@@ -78,4 +78,7 @@ def main(page: ft.Page):
     show_login()
 
 if __name__ == "__main__":
-    ft.run(main)
+    # Modo web (navegador) para poder ejecutar y probar la app en entornos
+    # sin soporte de escritorio (sin Flutter/ventana nativa disponible).
+    # Para producción de escritorio, usar: ft.run(main)
+    ft.run(main, view=ft.AppView.WEB_BROWSER, port=8550)
