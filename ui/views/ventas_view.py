@@ -285,15 +285,22 @@ class VentasView(BaseView):
         )
 
         # ── 5. Resumen de Venta Bimoneda Detallado ─────────────────────────────
+        # Venezuela maneja dos precios USD independientes por línea: el de
+        # pago en Efectivo (subtotal_usd) y el de referencia BCV, cuyo monto
+        # en Bolívares ya viene calculado en cada renglón (subtotal_bcv). El
+        # equivalente en dólares "si se paga en Bolívares" se obtiene
+        # dividiendo ese monto Bs por la tasa vigente — NUNCA es el mismo
+        # número que el total en Efectivo (antes se mostraba duplicado).
         tot_usd = sum(item["subtotal_usd"] for item in carrito_activo["items"])
         tot_bcv = sum(item["subtotal_bcv"] for item in carrito_activo["items"])
+        tot_usd_bcv_equivalente = round(tot_bcv / self.tasa_bcv, 2) if self.tasa_bcv > 0 else 0.0
 
         self.lbl_subtotal_usd = ft.Text(f"$ {tot_usd:,.2f}", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600)
         self.lbl_subtotal_bcv = ft.Text(f"Bs. {tot_bcv:,.2f}", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700)
-        
-        # Desglose en USD Efectivo vs USD Pago en Bs
+
+        # Desglose: Total $ Efectivo vs Total $ BCV (referencia) vs Total Bs
         self.lbl_total_usd_efectivo = ft.Text(f"$ {tot_usd:,.2f}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_700)
-        self.lbl_total_usd_pago_bs = ft.Text(f"$ {tot_usd:,.2f}", size=14, weight=ft.FontWeight.W_600, color=self.get_subtext_color())
+        self.lbl_total_usd_pago_bs = ft.Text(f"$ {tot_usd_bcv_equivalente:,.2f}", size=14, weight=ft.FontWeight.W_600, color=self.get_subtext_color())
         self.lbl_total_bcv = ft.Text(f"Bs. {tot_bcv:,.2f}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_800)
         self.lbl_antiguedad_resumen = ft.Text(f"Tasa: {self.tasa_bcv:,.2f} Bs/$ ({self.tasa_antiguedad})", size=10, color=self.get_subtext_color())
 
@@ -305,7 +312,7 @@ class VentasView(BaseView):
                 ft.Row([ft.Text("Subtotal (Bs):", weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_subtotal_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Divider(height=6),
                 ft.Row([ft.Text("Total $ (Efectivo):", size=15, weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_total_usd_efectivo], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.Row([ft.Text("Total $ (Pago en Bs):", size=13, color=self.get_subtext_color()), self.lbl_total_usd_pago_bs], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row([ft.Text("Total $ (Referencia BCV):", size=13, color=self.get_subtext_color()), self.lbl_total_usd_pago_bs], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([ft.Text("TOTAL A PAGAR (Bs):", size=15, weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_total_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([self.lbl_antiguedad_resumen], alignment=ft.MainAxisAlignment.END),
                 ft.Container(height=8),
@@ -357,10 +364,12 @@ class VentasView(BaseView):
     def on_tasa_actualizada(self, nueva_tasa: float):
         """Callback invocado al actualizar la tasa BCV en el modal global."""
         self.actualizar_estado_tasa_local()
-        # Recalcular precios en bolívares de los renglones
+        # Recalcular el monto en Bolívares de cada renglón a partir de su
+        # Precio USD BCV de referencia (no del Precio USD Efectivo).
         c = obtener_carrito_activo()
         for item in c["items"]:
-            item["precio_bcv"] = round(item["precio_usd"] * self.tasa_bcv, 2)
+            ref_bcv = item.get("precio_usd_bcv_ref", item["precio_usd"])
+            item["precio_bcv"] = round(ref_bcv * self.tasa_bcv, 2)
             item["subtotal_bcv"] = round(item["cantidad"] * item["precio_bcv"], 2)
         self.rebuild_ui()
 

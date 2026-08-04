@@ -110,17 +110,23 @@ def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bc
     Añade un producto al carrito especificado o activo.
     Retorna (carrito_actualizado, fue_agregado_nuevo).
 
-    Precio BCV (col. 7 ERS) siempre se recalcula con la tasa BCV vigente
-    (Precio $ x tasa) en el momento de agregar al carrito; nunca se confía
-    en un valor almacenado potencialmente desactualizado.
+    Venezuela maneja dos precios en dólares por producto: el Precio USD
+    Efectivo (`precio_dolares`, lo que se paga en dólares físicos) y el
+    Precio USD BCV (`precio_bcv`, referencia independiente en dólares para
+    pago en Bolívares). El monto en Bolívares del renglón SIEMPRE se
+    recalcula en vivo como Precio USD BCV x tasa BCV vigente — nunca se
+    confía en un monto ya convertido y potencialmente desactualizado. Si el
+    producto no tiene un Precio USD BCV propio configurado, se usa el
+    Precio USD Efectivo como referencia de conversión.
     """
     c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
     items = c["items"]
 
     codigo = producto["codigo"]
     precio_usd = float(producto.get("precio_dolares", 0.0))
+    precio_usd_bcv_ref = float(producto.get("precio_bcv", 0.0)) or precio_usd
     tasa_actual = tasa_bcv if tasa_bcv else obtener_estado_tasa().get("tasa", 0.0)
-    precio_bcv = round(precio_usd * tasa_actual, 2)
+    precio_bcv = round(precio_usd_bcv_ref * tasa_actual, 2)
     nombre_corto = producto.get("nombre_referencia_corto") or producto.get("referencia") or producto.get("descripcion_general", "")
 
     existente = next((i for i in items if i["codigo"] == codigo), None)
@@ -136,6 +142,10 @@ def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bc
             "nombre_corto": nombre_corto,
             "cantidad": cantidad,
             "precio_usd": precio_usd,
+            # Referencia USD BCV del producto, conservada en el renglón para
+            # poder recalcular el monto en Bolívares si la tasa cambia
+            # a mitad de la venta (ver VentasView.on_tasa_actualizada).
+            "precio_usd_bcv_ref": precio_usd_bcv_ref,
             "precio_bcv": precio_bcv,
             "subtotal_usd": cantidad * precio_usd,
             "subtotal_bcv": cantidad * precio_bcv,
@@ -147,13 +157,18 @@ def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bc
 
 def editar_item_en_carrito(codigo: str, nueva_cantidad: float, nuevo_precio_usd: float, tasa_bcv: float | None = None, id_carrito: str = None) -> bool:
     """Modifica la cantidad y/o el precio unitario de un renglón del carrito.
-    Precio BCV se recalcula con la tasa BCV vigente (col. 7 ERS)."""
+    El monto en Bolívares se recalcula con la tasa BCV vigente a partir del
+    precio USD editado (simplificación: el diálogo de edición manual usa un
+    único precio USD para ambas divisas en vez de mantener Efectivo/BCV
+    por separado; el precio BCV propio del producto solo se usa al agregarlo
+    por primera vez desde Inventario/Ventas)."""
     c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
     tasa_actual = tasa_bcv if tasa_bcv else obtener_estado_tasa().get("tasa", 0.0)
     for item in c["items"]:
         if item["codigo"] == codigo:
             item["cantidad"] = nueva_cantidad
             item["precio_usd"] = nuevo_precio_usd
+            item["precio_usd_bcv_ref"] = nuevo_precio_usd
             item["precio_bcv"] = round(nuevo_precio_usd * tasa_actual, 2)
             item["subtotal_usd"] = nueva_cantidad * item["precio_usd"]
             item["subtotal_bcv"] = nueva_cantidad * item["precio_bcv"]

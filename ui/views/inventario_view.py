@@ -205,8 +205,8 @@ class InventarioView(BaseView):
         self._f_departamento = campo("Departamento")
         self._f_descripcion = campo("Descripción", 250)
         self._f_marca = campo("Marca")
-        self._f_precio_usd = campo("Precio $", 120)
-        self._f_precio_bcv = campo("Precio Bs", 120)
+        self._f_precio_usd = campo("Precio $ (Efectivo)", 130)
+        self._f_precio_bcv = campo("Precio $ (BCV)", 120)
         self._f_proveedor = campo("Proveedor")
         self._f_fecha_mod = campo("Últ. Modificación", 160)
         self._f_existencia = campo("Existencia", 110)
@@ -299,8 +299,9 @@ class InventarioView(BaseView):
                 ft.DataColumn(ft.Text("Descripción", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Depto.", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Marca", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Precio $", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Precio Bs", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Precio $ (Efectivo)", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Precio $ (BCV)", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Monto Bs (BCV)", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Exist.", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Acciones", color=accent, weight=ft.FontWeight.BOLD)),
             ],
@@ -392,7 +393,8 @@ class InventarioView(BaseView):
                         ft.DataCell(ft.Text(p["departamento"] or "-", color=text_color)),
                         ft.DataCell(ft.Text(p["marca"] or "-", color=text_color)),
                         ft.DataCell(ft.Text(f"${p['precio_dolares']:.2f}", color=ft.Colors.GREEN_400)),
-                        ft.DataCell(ft.Text(f"Bs {p['precio_bcv']:.2f}", color=ft.Colors.AMBER_300)),
+                        ft.DataCell(ft.Text(f"${p.get('precio_bcv', 0):.2f}", color=ft.Colors.CYAN_300)),
+                        ft.DataCell(ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", color=ft.Colors.AMBER_300)),
                         ft.DataCell(ft.Text(str(p["existencia"]), color=text_color)),
                         ft.DataCell(
                             ft.Row([
@@ -569,7 +571,7 @@ class InventarioView(BaseView):
                 content=ft.Column([
                     ft.Text(f"Producto: {prod.get('nombre_referencia_corto') or prod.get('descripcion_general')}", weight=ft.FontWeight.BOLD),
                     ft.Text(f"Código: {prod['codigo']} | Stock disponible: {prod.get('existencia', 0):.0f} Uds", size=12, color=self.get_subtext_color()),
-                    ft.Text(f"Precio: ${prod.get('precio_dolares', 0):.2f} / Bs {prod.get('precio_bcv', 0):.2f}", size=12, color=self.get_subtext_color()),
+                    ft.Text(f"Precio Efectivo: ${prod.get('precio_dolares', 0):.2f} | Precio BCV: ${prod.get('precio_bcv', 0):.2f} (Bs {prod.get('monto_bcv_bolivares', 0):.2f})", size=12, color=self.get_subtext_color()),
                     ft.Divider(height=10),
                     cant_input,
                     lbl_err
@@ -767,24 +769,31 @@ class InventarioView(BaseView):
         f_marca = tf("Marca", "marca", width=200)
         f_barras = tf("Código de Barras", "codigo_barras", width=200)
         f_nombre_corto = tf("Nombre Corto (máx 30 car.)", "nombre_referencia_corto", width=260)
-        f_precio_usd = tf("Precio USD ($)", "precio_dolares",
+        # Venezuela maneja DOS precios en dólares, independientes entre sí:
+        # el Precio USD Efectivo (pago con dólares físicos) y el Precio USD
+        # BCV (referencia en dólares para pago en Bolívares a la tasa
+        # vigente). Ninguno se deriva del otro — ambos son inputs manuales.
+        f_precio_usd = tf("Precio USD (Efectivo)", "precio_dolares",
                           value=str(d.get("precio_dolares", "")),
-                          width=160, kb=ft.KeyboardType.NUMBER)
+                          width=170, kb=ft.KeyboardType.NUMBER)
+        f_precio_bcv = tf("Precio USD (BCV)", "precio_bcv",
+                          value=str(d.get("precio_bcv", "")),
+                          width=170, kb=ft.KeyboardType.NUMBER)
 
-        # Precio BCV (col. 7 ERS): campo calculado en tiempo de ejecución
-        # (Precio $ x tasa BCV vigente). Nunca es un input manual.
         tasa_vigente = obtener_estado_tasa().get("tasa", 0.0)
 
-        def _precio_bcv_preview(precio_usd_str: str) -> str:
+        def _monto_bs_preview(precio_bcv_str: str) -> str:
             try:
-                usd = float((precio_usd_str or "0").replace(",", "."))
+                usd_bcv = float((precio_bcv_str or "0").replace(",", "."))
             except ValueError:
-                usd = 0.0
-            return f"Bs {round(usd * tasa_vigente, 2):.2f}" if tasa_vigente > 0 else "Bs 0.00 (sin tasa BCV configurada)"
+                usd_bcv = 0.0
+            return f"Bs {round(usd_bcv * tasa_vigente, 2):,.2f}" if tasa_vigente > 0 else "Sin tasa BCV configurada"
 
-        f_precio_bcv = ft.TextField(
-            label="Precio BCV (Bs) — calculado",
-            value=_precio_bcv_preview(str(d.get("precio_dolares", ""))),
+        # Solo el monto en Bolívares se calcula en tiempo de ejecución
+        # (Precio USD BCV x tasa vigente); es de solo lectura.
+        lbl_monto_bs = ft.TextField(
+            label="Monto Bs equivalente (calculado)",
+            value=_monto_bs_preview(str(d.get("precio_bcv", ""))),
             width=220,
             disabled=True,
             color=text_color, border_color=border,
@@ -795,13 +804,13 @@ class InventarioView(BaseView):
                           width=120, kb=ft.KeyboardType.NUMBER)
 
         # Fila de precios (se oculta si existencia == 0)
-        fila_precios = ft.Row([f_precio_usd, f_precio_bcv], spacing=12, visible=float(d.get("existencia", 1) or 1) != 0)
+        fila_precios = ft.Row([f_precio_usd, f_precio_bcv, lbl_monto_bs], spacing=12, visible=float(d.get("existencia", 1) or 1) != 0)
 
-        def _on_precio_usd_change(ev):
-            f_precio_bcv.value = _precio_bcv_preview(f_precio_usd.value)
+        def _on_precio_bcv_change(ev):
+            lbl_monto_bs.value = _monto_bs_preview(f_precio_bcv.value)
             self._safe_update(ev)
 
-        f_precio_usd.on_change = _on_precio_usd_change
+        f_precio_bcv.on_change = _on_precio_bcv_change
 
         def _on_existencia_change(ev):
             val = (f_existencia.value or "0").strip()
@@ -835,7 +844,7 @@ class InventarioView(BaseView):
         titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
 
         def _limpiar_errores():
-            for campo in (f_ref, f_desc, f_depto, f_precio_usd):
+            for campo in (f_ref, f_desc, f_depto, f_precio_usd, f_precio_bcv):
                 campo.error_text = None
 
         def _guardar(ev):
@@ -864,11 +873,16 @@ class InventarioView(BaseView):
                 usd_val = float((f_precio_usd.value or "0").replace(",", "."))
             except ValueError:
                 usd_val = 0.0
+            try:
+                bcv_val = float((f_precio_bcv.value or "0").replace(",", "."))
+            except ValueError:
+                bcv_val = 0.0
 
-            # Stock=0 omite la exigencia de precio; Stock>0 exige Precio USD
-            # (el Precio BCV es un campo calculado, no una fuente alternativa).
-            if existencia_val > 0 and usd_val <= 0:
-                f_precio_usd.error_text = "Requerido si Existencia > 0"
+            # Stock=0 omite la exigencia de precio; Stock>0 exige al menos
+            # uno de los dos precios USD independientes (Efectivo o BCV).
+            if existencia_val > 0 and usd_val <= 0 and bcv_val <= 0:
+                f_precio_usd.error_text = "Requerido (Efectivo o BCV) si Existencia > 0"
+                f_precio_bcv.error_text = "Requerido (Efectivo o BCV) si Existencia > 0"
                 hay_error = True
 
             if hay_error:
@@ -886,8 +900,7 @@ class InventarioView(BaseView):
                 "codigo_barras": f_barras.value,
                 "nombre_referencia_corto": f_nombre_corto.value,
                 "precio_dolares": f_precio_usd.value,
-                # Precio BCV (col. 7 ERS): calculado, nunca leído de un input manual.
-                "precio_bcv": round(usd_val * tasa_vigente, 2) if tasa_vigente > 0 else 0.0,
+                "precio_bcv": f_precio_bcv.value,
                 "existencia": f_existencia.value,
                 "proveedor_id": dd_proveedor.value or None,
             }
@@ -940,8 +953,8 @@ class InventarioView(BaseView):
             ("Departamento", "departamento"),
             ("Marca", "marca"),
             ("Existencia", "existencia"),
-            ("Precio USD ($)", "precio_dolares"),
-            ("Precio BCV (Bs)", "precio_bcv"),
+            ("Precio USD (Efectivo)", "precio_dolares"),
+            ("Precio USD (BCV)", "precio_bcv"),
             ("Proveedor ID", "proveedor_id"),
             ("Código de Barras", "codigo_barras"),
             ("Nombre Corto", "nombre_referencia_corto"),
@@ -1031,6 +1044,7 @@ class InventarioView(BaseView):
                 departamento=datos.get("departamento", ""),
                 marca=datos.get("marca", ""),
                 precio_dolares=_to_float(datos.get("precio_dolares", 0)),
+                precio_bcv=_to_float(datos.get("precio_bcv", 0)),
                 proveedor_id=prov_id,
                 existencia=_to_float(datos.get("existencia", 0)),
                 codigo_barras=datos.get("codigo_barras", ""),

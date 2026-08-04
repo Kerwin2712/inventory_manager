@@ -273,8 +273,17 @@ def procesar_importacion_excel(ruta_archivo: str) -> dict:
                 desc_gen = r_dict.get("descripcion general") or r_dict.get("descripcion") or ""
                 marca = r_dict.get("marca") or ""
 
-                precio_usd_str = r_dict.get("precio usd") or r_dict.get("precio ($)") or r_dict.get("precio") or "0"
-                precio_bcv_str = r_dict.get("precio bcv") or r_dict.get("precio (bs bcv)") or "0"
+                # Precio USD Efectivo (pago en dólares físicos) y Precio USD
+                # BCV (referencia en dólares para pago en Bolívares) son dos
+                # columnas independientes; se aceptan varios alias de encabezado.
+                precio_usd_str = (
+                    r_dict.get("precio usd (efectivo)") or r_dict.get("precio usd")
+                    or r_dict.get("precio ($)") or r_dict.get("precio") or "0"
+                )
+                precio_bcv_str = (
+                    r_dict.get("precio usd (bcv)") or r_dict.get("precio bcv")
+                    or r_dict.get("precio (bs bcv)") or "0"
+                )
                 existencia_str = r_dict.get("existencia") or r_dict.get("stock") or "0"
                 prov_id_str = r_dict.get("id proveedor") or r_dict.get("proveedor id") or ""
                 prov_nombre = r_dict.get("proveedor") or r_dict.get("proveedor nombre") or ""
