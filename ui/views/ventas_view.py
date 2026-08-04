@@ -9,7 +9,7 @@ from services.bcv_service import obtener_estado_tasa
 from services.cartera_service import buscar_cliente_por_cedula, crear_cliente
 from services.inventario_service import listar_productos
 from services.ventas_service import procesar_venta
-from services.pdf_service import generar_nota_entrega_pdf
+from services.pdf_service import generar_nota_entrega_pdf, enviar_a_impresora
 from services.cart_manager import (
     obtener_todos_los_carritos,
     obtener_id_carrito_activo,
@@ -828,6 +828,16 @@ class VentasView(BaseView):
             width=220,
             border_radius=12
         )
+        dd_formato_papel = ft.Dropdown(
+            label="Tamaño de Hoja",
+            value="carta",
+            options=[
+                ft.dropdown.Option("carta", "Carta"),
+                ft.dropdown.Option("media_carta", "Media Carta"),
+            ],
+            width=220,
+            border_radius=12
+        )
 
         def cerrar_dialogo(e_dialog):
             dialog.open = False
@@ -835,6 +845,7 @@ class VentasView(BaseView):
 
         def confirmar_generar_pdf(e_dialog):
             self.divisa_impresion_pdf = dd_divisa.value or "USD"
+            formato_papel = dd_formato_papel.value or "carta"
             dialog.open = False
             self.safe_update(e_dialog)
 
@@ -850,13 +861,22 @@ class VentasView(BaseView):
                     generar_nota_entrega_pdf(
                         venta_id=self.venta_id_reciente,
                         divisa_impresion=self.divisa_impresion_pdf,
-                        ruta_destino=ruta_destino
+                        ruta_destino=ruta_destino,
+                        formato_papel=formato_papel,
                     )
                     directorio = os.path.dirname(ruta_destino)
                     if directorio:
                         set_setting("last_pdf_dir", directorio)
 
-                    self.show_alert_success(e_dialog, f"Nota de Entrega guardada en:\n{ruta_destino}")
+                    # ERS 3.5 paso 4: despachar a la impresora predeterminada.
+                    try:
+                        enviado = enviar_a_impresora(ruta_destino)
+                        if enviado:
+                            self.show_alert_success(e_dialog, f"Nota de Entrega enviada a la impresora predeterminada.\nGuardada en:\n{ruta_destino}")
+                        else:
+                            self.show_alert_info(e_dialog, f"Nota de Entrega guardada en:\n{ruta_destino}\n(Impresión automática no disponible en esta plataforma; ábrala manualmente para imprimir.)")
+                    except Exception as ex_print:
+                        self.show_alert_error(e_dialog, f"Nota guardada, pero falló el envío a la impresora: {ex_print}")
                 except Exception as ex:
                     self.show_alert_error(e_dialog, f"Error al generar Nota de Entrega: {ex}")
 
@@ -865,7 +885,8 @@ class VentasView(BaseView):
             content=ft.Column([
                 ft.Text(f"La venta N° {self.venta_id_reciente:06d} ha sido procesada con éxito."),
                 ft.Text("Seleccione la divisa para reflejar los precios en el documento impreso:"),
-                dd_divisa
+                dd_divisa,
+                dd_formato_papel,
             ], tight=True, spacing=10),
             actions=[
                 ft.TextButton("No - Finalizar", on_click=cerrar_dialogo),
