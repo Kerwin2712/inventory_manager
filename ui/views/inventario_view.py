@@ -647,15 +647,38 @@ class InventarioView(BaseView):
         f_precio_usd = tf("Precio USD ($)", "precio_dolares",
                           value=str(d.get("precio_dolares", "")),
                           width=160, kb=ft.KeyboardType.NUMBER)
-        f_precio_bcv = tf("Precio BCV (Bs)", "precio_bcv",
-                          value=str(d.get("precio_bcv", "")),
-                          width=160, kb=ft.KeyboardType.NUMBER)
+
+        # Precio BCV (col. 7 ERS): campo calculado en tiempo de ejecución
+        # (Precio $ x tasa BCV vigente). Nunca es un input manual.
+        tasa_vigente = obtener_estado_tasa().get("tasa", 0.0)
+
+        def _precio_bcv_preview(precio_usd_str: str) -> str:
+            try:
+                usd = float((precio_usd_str or "0").replace(",", "."))
+            except ValueError:
+                usd = 0.0
+            return f"Bs {round(usd * tasa_vigente, 2):.2f}" if tasa_vigente > 0 else "Bs 0.00 (sin tasa BCV configurada)"
+
+        f_precio_bcv = ft.TextField(
+            label="Precio BCV (Bs) — calculado",
+            value=_precio_bcv_preview(str(d.get("precio_dolares", ""))),
+            width=220,
+            disabled=True,
+            color=text_color, border_color=border,
+            border_radius=12,
+        )
         f_existencia = tf("Existencia", "existencia",
                           value=str(d.get("existencia", "0")),
                           width=120, kb=ft.KeyboardType.NUMBER)
 
         # Fila de precios (se oculta si existencia == 0)
         fila_precios = ft.Row([f_precio_usd, f_precio_bcv], spacing=12, visible=float(d.get("existencia", 1) or 1) != 0)
+
+        def _on_precio_usd_change(ev):
+            f_precio_bcv.value = _precio_bcv_preview(f_precio_usd.value)
+            self._safe_update(ev)
+
+        f_precio_usd.on_change = _on_precio_usd_change
 
         def _on_existencia_change(ev):
             val = (f_existencia.value or "0").strip()
@@ -690,6 +713,10 @@ class InventarioView(BaseView):
 
         def _guardar(ev):
             self._close_dialog(ev)
+            try:
+                usd_val = float((f_precio_usd.value or "0").replace(",", "."))
+            except ValueError:
+                usd_val = 0.0
             datos = {
                 "codigo": codigo,
                 "referencia": f_ref.value,
@@ -699,7 +726,8 @@ class InventarioView(BaseView):
                 "codigo_barras": f_barras.value,
                 "nombre_referencia_corto": f_nombre_corto.value,
                 "precio_dolares": f_precio_usd.value,
-                "precio_bcv": f_precio_bcv.value,
+                # Precio BCV (col. 7 ERS): calculado, nunca leído de un input manual.
+                "precio_bcv": round(usd_val * tasa_vigente, 2) if tasa_vigente > 0 else 0.0,
                 "existencia": f_existencia.value,
                 "proveedor_id": dd_proveedor.value or None,
             }
@@ -837,7 +865,6 @@ class InventarioView(BaseView):
                 departamento=datos.get("departamento", ""),
                 marca=datos.get("marca", ""),
                 precio_dolares=_to_float(datos.get("precio_dolares", 0)),
-                precio_bcv=_to_float(datos.get("precio_bcv", 0)),
                 proveedor_id=prov_id,
                 existencia=_to_float(datos.get("existencia", 0)),
                 codigo_barras=datos.get("codigo_barras", ""),

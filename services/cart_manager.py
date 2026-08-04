@@ -5,6 +5,7 @@ asociar clientes desde Cartera y agregar productos desde Inventario o Ventas.
 """
 
 import datetime
+from services.bcv_service import obtener_estado_tasa
 
 _carritos = {
     "Carrito 1": {
@@ -104,17 +105,22 @@ def desvincular_cliente(id_carrito: str = None) -> dict:
     return c
 
 
-def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bcv: float = 1.0, id_carrito: str = None) -> tuple[dict, bool]:
+def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bcv: float | None = None, id_carrito: str = None) -> tuple[dict, bool]:
     """
     Añade un producto al carrito especificado o activo.
     Retorna (carrito_actualizado, fue_agregado_nuevo).
+
+    Precio BCV (col. 7 ERS) siempre se recalcula con la tasa BCV vigente
+    (Precio $ x tasa) en el momento de agregar al carrito; nunca se confía
+    en un valor almacenado potencialmente desactualizado.
     """
     c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
     items = c["items"]
 
     codigo = producto["codigo"]
     precio_usd = float(producto.get("precio_dolares", 0.0))
-    precio_bcv = float(producto.get("precio_bcv", 0.0)) if producto.get("precio_bcv") else round(precio_usd * tasa_bcv, 2)
+    tasa_actual = tasa_bcv if tasa_bcv else obtener_estado_tasa().get("tasa", 0.0)
+    precio_bcv = round(precio_usd * tasa_actual, 2)
     nombre_corto = producto.get("nombre_referencia_corto") or producto.get("referencia") or producto.get("descripcion_general", "")
 
     existente = next((i for i in items if i["codigo"] == codigo), None)
@@ -139,14 +145,16 @@ def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bc
     return c, fue_nuevo
 
 
-def editar_item_en_carrito(codigo: str, nueva_cantidad: float, nuevo_precio_usd: float, tasa_bcv: float = 1.0, id_carrito: str = None) -> bool:
-    """Modifica la cantidad y/o el precio unitario de un renglón del carrito."""
+def editar_item_en_carrito(codigo: str, nueva_cantidad: float, nuevo_precio_usd: float, tasa_bcv: float | None = None, id_carrito: str = None) -> bool:
+    """Modifica la cantidad y/o el precio unitario de un renglón del carrito.
+    Precio BCV se recalcula con la tasa BCV vigente (col. 7 ERS)."""
     c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+    tasa_actual = tasa_bcv if tasa_bcv else obtener_estado_tasa().get("tasa", 0.0)
     for item in c["items"]:
         if item["codigo"] == codigo:
             item["cantidad"] = nueva_cantidad
             item["precio_usd"] = nuevo_precio_usd
-            item["precio_bcv"] = round(nuevo_precio_usd * tasa_bcv, 2)
+            item["precio_bcv"] = round(nuevo_precio_usd * tasa_actual, 2)
             item["subtotal_usd"] = nueva_cantidad * item["precio_usd"]
             item["subtotal_bcv"] = nueva_cantidad * item["precio_bcv"]
             return True

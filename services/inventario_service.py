@@ -9,6 +9,16 @@ def _row_to_dict(row) -> dict:
     return dict(row) if row else {}
 
 
+def calcular_precio_bcv_actual(precio_dolares: float) -> float:
+    """Precio en BCV (columna 7 ERS): SIEMPRE calculado en tiempo de ejecución
+    como Precio $ × tasa BCV vigente. Nunca se acepta como input manual."""
+    estado = obtener_estado_tasa()
+    tasa = estado.get("tasa", 0.0)
+    if tasa <= 0 or precio_dolares <= 0:
+        return 0.0
+    return round(precio_dolares * tasa, 2)
+
+
 def crear_producto(
     codigo: str,
     referencia: str,
@@ -16,7 +26,6 @@ def crear_producto(
     departamento: str,
     marca: str = "",
     precio_dolares: float = 0.0,
-    precio_bcv: float = 0.0,
     proveedor_id=None,
     existencia: float = 0.0,
     codigo_barras: str = "",
@@ -39,18 +48,16 @@ def crear_producto(
         raise ValueError("ERR_PROD_REQ: El departamento es obligatorio.")
 
     # ── Validación de lógica de existencia y precio ──────────────────────────
-    if existencia > 0 and precio_dolares <= 0 and precio_bcv <= 0:
+    # Precio BCV (col. 7) es un campo calculado, no un input independiente:
+    # la exigencia "al menos un precio" del ERS 3.1 recae sobre Precio USD.
+    if existencia > 0 and precio_dolares <= 0:
         raise ValueError(
-            "ERR_PROD_PRICE: Si el producto tiene existencia, al menos "
-            "precio_dolares o precio_bcv debe ser mayor a cero."
+            "ERR_PROD_PRICE: Si el producto tiene existencia, el Precio USD ($) "
+            "debe ser mayor a cero (el Precio BCV se calcula automáticamente)."
         )
 
-    # ── Cálculo automático de precio BCV si solo viene precio_dolares ────────
-    if precio_dolares > 0 and precio_bcv <= 0:
-        estado = obtener_estado_tasa()
-        tasa = estado.get("tasa", 0.0)
-        if tasa > 0:
-            precio_bcv = round(precio_dolares * tasa, 2)
+    # ── Precio BCV calculado en tiempo de ejecución ──────────────────────────
+    precio_bcv = calcular_precio_bcv_actual(precio_dolares)
 
     # ── Nombre corto auto-generado si no se provee ───────────────────────────
     nombre_referencia_corto = (nombre_referencia_corto or "").strip()
@@ -93,12 +100,16 @@ def crear_producto(
 
 
 def obtener_producto(codigo: str) -> dict | None:
-    """Obtiene un producto por su código primario."""
+    """Obtiene un producto por su código primario. Recalcula Precio BCV en vivo."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM productos WHERE codigo = ?", (codigo.strip(),))
         row = cursor.fetchone()
-        return _row_to_dict(row) if row else None
+        if not row:
+            return None
+        prod = _row_to_dict(row)
+        prod["precio_bcv"] = calcular_precio_bcv_actual(prod.get("precio_dolares", 0.0))
+        return prod
 
 
 def actualizar_producto(
@@ -108,7 +119,6 @@ def actualizar_producto(
     departamento: str,
     marca: str = "",
     precio_dolares: float = 0.0,
-    precio_bcv: float = 0.0,
     proveedor_id=None,
     existencia: float = 0.0,
     codigo_barras: str = "",
@@ -129,18 +139,15 @@ def actualizar_producto(
     if not departamento:
         raise ValueError("ERR_PROD_REQ: El departamento es obligatorio.")
 
-    if existencia > 0 and precio_dolares <= 0 and precio_bcv <= 0:
+    # Precio BCV (col. 7) es calculado; la exigencia recae sobre Precio USD.
+    if existencia > 0 and precio_dolares <= 0:
         raise ValueError(
-            "ERR_PROD_PRICE: Si el producto tiene existencia, al menos "
-            "precio_dolares o precio_bcv debe ser mayor a cero."
+            "ERR_PROD_PRICE: Si el producto tiene existencia, el Precio USD ($) "
+            "debe ser mayor a cero (el Precio BCV se calcula automáticamente)."
         )
 
-    # Cálculo automático BCV si solo viene precio_dolares
-    if precio_dolares > 0 and precio_bcv <= 0:
-        estado = obtener_estado_tasa()
-        tasa = estado.get("tasa", 0.0)
-        if tasa > 0:
-            precio_bcv = round(precio_dolares * tasa, 2)
+    # Precio BCV calculado en tiempo de ejecución
+    precio_bcv = calcular_precio_bcv_actual(precio_dolares)
 
     nombre_referencia_corto = (nombre_referencia_corto or "").strip()
     if not nombre_referencia_corto:
@@ -211,7 +218,13 @@ def listar_productos(
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, params)
-        return [_row_to_dict(r) for r in cursor.fetchall()]
+        productos = [_row_to_dict(r) for r in cursor.fetchall()]
+
+    # Precio BCV (col. 7 ERS) recalculado en vivo con la tasa BCV vigente.
+    tasa = obtener_estado_tasa().get("tasa", 0.0)
+    for p in productos:
+        p["precio_bcv"] = round(p.get("precio_dolares", 0.0) * tasa, 2) if tasa > 0 else 0.0
+    return productos
 
 
 def eliminar_producto(codigo: str) -> None:
