@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "inventory-manager-web",
+      "runtimeExecutable": "env/Scripts/python.exe",
+      "runtimeArgs": ["main.py"],
+      "port": 8550
+    }
+  ]
+}
