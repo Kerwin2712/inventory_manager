@@ -2,27 +2,9 @@ import flet as ft
 from ui.views.base_view import BaseView
 from services.cartera_service import (
     crear_cliente, obtener_cliente, buscar_cliente_por_cedula, actualizar_cliente, eliminar_cliente, listar_clientes,
-    crear_proveedor, obtener_proveedor, buscar_proveedores, actualizar_proveedor, eliminar_proveedor, listar_proveedores
+    crear_proveedor, obtener_proveedor, buscar_proveedores, actualizar_proveedor, eliminar_proveedor, listar_proveedores,
+    parse_documento, format_documento,
 )
-
-def parse_documento(doc_str: str, default_tipo: str = "V") -> tuple[str, str]:
-    """Separa un documento como 'V-12345678' en tupla ('V', '12345678')."""
-    if not doc_str:
-        return default_tipo, ""
-    doc = doc_str.strip().upper()
-    if len(doc) > 1 and doc[0] in ["V", "E", "J", "G", "P"]:
-        tipo = doc[0]
-        num = "".join(filter(str.isdigit, doc[1:]))
-        return tipo, num
-    num = "".join(filter(str.isdigit, doc))
-    return default_tipo, num
-
-def format_documento(tipo: str, numero: str) -> str:
-    """Formatea la letra y el número en el estándar 'TIPO-NUMERO'."""
-    num_digits = "".join(filter(str.isdigit, (numero or "").strip()))
-    if not num_digits:
-        return ""
-    return f"{tipo}-{num_digits}"
 
 
 class CarteraView(BaseView):
@@ -30,8 +12,11 @@ class CarteraView(BaseView):
 
     ITEMS_PER_PAGE = 10
 
-    def __init__(self, on_back_callback=None):
+    def __init__(self, on_back_callback=None, on_iniciar_venta=None):
         self.on_back_callback = on_back_callback
+        # Callback (ERS 3.3): recibe el cliente seleccionado y navega
+        # automáticamente a Ventas con ese cliente ya vinculado al carrito.
+        self.on_iniciar_venta = on_iniciar_venta
         self.adjuntos_temp = []
         self.current_tab = "clientes"
         
@@ -573,16 +558,15 @@ class CarteraView(BaseView):
             self.safe_update(e)
 
     def handle_iniciar_venta_con_cliente(self, cliente: dict, e=None):
-        """Asocia el cliente al carrito de compras activo y navega al módulo de ventas."""
-        try:
-            from services.cart_manager import vincular_cliente_a_carrito, obtener_carrito_activo
-            c = vincular_cliente_a_carrito(cliente)
-            self.show_alert_success(f"¡Venta iniciada para '{cliente['nombre']}' en {c['id']}!", e)
-            p = self.get_current_page(e)
-            if p:
-                p.go("/ventas")
-        except Exception as ex:
-            self.show_alert_error(f"Error al iniciar venta: {ex}", e)
+        """ERS 3.3 — Flujo Directo Cartera→Ventas: instancia una nota de venta
+        nueva, vincula este cliente y navega automáticamente a Ventas."""
+        if self.on_iniciar_venta:
+            self.on_iniciar_venta(cliente)
+        else:
+            self.show_alert_error(
+                "Esta acción requiere el Dashboard (navegación a Ventas no disponible en este contexto).",
+                e,
+            )
 
     def preparar_edicion_cliente(self, cliente: dict, e=None):
         self.cli_result_container.visible = False

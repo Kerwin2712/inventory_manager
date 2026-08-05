@@ -1,12 +1,11 @@
 import os
-import re
 import tkinter as tk
 from tkinter import filedialog
 import flet as ft
 from ui.views.base_view import BaseView
 from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
-from services.cartera_service import buscar_cliente_por_cedula, crear_cliente
+from services.cartera_service import buscar_cliente_por_cedula, crear_cliente, parse_documento, format_documento
 from services.inventario_service import listar_productos
 from services.ventas_service import procesar_venta
 from services.pdf_service import generar_nota_entrega_pdf, enviar_a_impresora
@@ -24,17 +23,6 @@ from services.cart_manager import (
     remover_item_de_carrito,
     vaciar_carrito_activo
 )
-
-# ERS 3.4: formato exigido para la Venta Formal — [V-00.000.000 ó J-00000000-0].
-# Letra de nacionalidad/tipo (V/E/J/G/P) + guion + dígitos (agrupados con
-# puntos o corridos) + dígito verificador opcional con guion (RIF).
-_PATRON_CEDULA_RIF = re.compile(r"^[VEJGPvejgp]-(\d{6,9}|\d{1,3}(\.\d{3}){1,3})(-\d)?$")
-
-
-def _formato_cedula_rif_valido(texto: str) -> bool:
-    """Valida el formato de Cédula/RIF exigido por el ERS 3.4 antes de buscar."""
-    return bool(_PATRON_CEDULA_RIF.match((texto or "").strip()))
-
 
 class VentasView(BaseView):
     def __init__(self, page: ft.Page = None, user_data: dict = None):
@@ -73,14 +61,24 @@ class VentasView(BaseView):
         carrito_activo = obtener_carrito_activo()
 
         # ── 1. Cabecera: Selector de Carrito, Selector Tipo Venta y Tasa BCV ──
+        # Cada opción muestra a qué cliente pertenece el carrito (o "Sin
+        # cliente" si es una venta informal/aún sin vincular), para que
+        # nunca sea ambiguo a quién se le está vendiendo en cada carrito.
         carritos_dict = obtener_todos_los_carritos()
-        options_carritos = [ft.dropdown.Option(cid, cinfo["nombre"]) for cid, cinfo in carritos_dict.items()]
+
+        def _etiqueta_carrito(cinfo: dict) -> str:
+            cliente = cinfo.get("cliente")
+            n_items = len(cinfo.get("items", []))
+            quien = cliente["nombre"] if cliente else "Sin cliente"
+            return f"{cinfo['nombre']} — {quien} ({n_items} ítem{'s' if n_items != 1 else ''})"
+
+        options_carritos = [ft.dropdown.Option(cid, _etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
 
         self.dd_carritos = ft.Dropdown(
-            label="Carrito Activo",
+            label="Carrito Activo (Cliente)",
             value=obtener_id_carrito_activo(),
             options=options_carritos,
-            width=200,
+            width=320,
             border_radius=12,
         )
         self.dd_carritos.on_change = self.handle_cambiar_carrito
@@ -153,14 +151,31 @@ class VentasView(BaseView):
         )
 
         # ── 2. Panel de Cliente (Venta Formal) ────────────────────────────────
+        # Búsqueda simplificada: un Dropdown para el tipo de documento
+        # (V/E/J/G/P) + un campo que solo acepta el número de Cédula/RIF —
+        # el operador nunca necesita escribir letras ni guiones.
         cliente_actual = carrito_activo.get("cliente")
-        self.cli_search_input = ft.TextField(
-            label="Cédula o RIF del Cliente",
-            hint_text="Ej: V-12345678 o J-304567890",
+        self.cli_search_tipo = ft.Dropdown(
+            value="V",
+            width=80,
+            border_radius=12,
+            options=[
+                ft.dropdown.Option("V"),
+                ft.dropdown.Option("E"),
+                ft.dropdown.Option("J"),
+                ft.dropdown.Option("G"),
+                ft.dropdown.Option("P"),
+            ],
+        )
+        self.cli_search_numero = ft.TextField(
+            label="Número de Cédula / RIF",
+            hint_text="Solo números, ej: 12345678",
             prefix_icon=ft.Icons.BADGE,
+            keyboard_type=ft.KeyboardType.NUMBER,
             border_radius=12,
             expand=True,
-            on_submit=self.handle_buscar_cliente
+            on_change=self._filtrar_solo_digitos_cliente,
+            on_submit=self.handle_buscar_cliente,
         )
         self.btn_buscar_cli = ft.ElevatedButton(
             content=ft.Row([ft.Icon(ft.Icons.SEARCH, size=18), ft.Text("Buscar Cliente", weight=ft.FontWeight.BOLD)], tight=True),
@@ -173,11 +188,11 @@ class VentasView(BaseView):
         )
 
         if cliente_actual:
-            lbl_texto_cli = f"✓ Cliente Seleccionado: {cliente_actual['nombre']} ({cliente_actual['cedula_rif']}) - Tel: {cliente_actual.get('telefono', '-')}"
+            lbl_texto_cli = f"✓ Esta venta es para: {cliente_actual['nombre']} ({cliente_actual['cedula_rif']}) — Tel: {cliente_actual.get('telefono', '-')}"
             lbl_color_cli = ft.Colors.GREEN_600
         else:
-            lbl_texto_cli = "Seleccione un cliente registrado para la Venta Formal."
-            lbl_color_cli = self.get_subtext_color()
+            lbl_texto_cli = "⚠ Ningún cliente seleccionado todavía. Busque o registre uno para continuar la Venta Formal."
+            lbl_color_cli = ft.Colors.AMBER_700
 
         self.lbl_cliente_info = ft.Text(lbl_texto_cli, color=lbl_color_cli, weight=ft.FontWeight.BOLD)
 
@@ -194,11 +209,11 @@ class VentasView(BaseView):
                     ft.Text("DATOS DEL CLIENTE (VENTA FORMAL)", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
                     btn_desvincular
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.Row([self.cli_search_input, self.btn_buscar_cli]),
+                ft.Row([self.cli_search_tipo, self.cli_search_numero, self.btn_buscar_cli]),
                 self.lbl_cliente_info
             ], spacing=8),
             padding=12,
-            border_radius=16
+            border_radius=16,
         )
         self.panel_cliente_container.visible = (carrito_activo.get("tipo_venta") == "Formal")
 
@@ -411,21 +426,24 @@ class VentasView(BaseView):
         self.show_alert_info(e, "Cliente desvinculado de la venta.")
         self.rebuild_ui()
 
+    def _filtrar_solo_digitos_cliente(self, e):
+        """El operario nunca debe escribir letras/guiones: se filtra en vivo
+        el número de Cédula/RIF para que solo queden dígitos."""
+        limpio = "".join(filter(str.isdigit, self.cli_search_numero.value or ""))
+        if limpio != self.cli_search_numero.value:
+            self.cli_search_numero.value = limpio
+            self.safe_update(e)
+
     def handle_buscar_cliente(self, e):
-        query = (self.cli_search_input.value or "").strip()
-        if not query:
-            self.show_alert_error(e, "Ingrese una Cédula o RIF para buscar.")
+        numero = "".join(filter(str.isdigit, self.cli_search_numero.value or ""))
+        if not numero:
+            self.show_alert_error(e, "Ingrese el número de Cédula o RIF del cliente.")
             return
 
-        # ERS 3.4: formato obligatorio [V-00.000.000 ó J-00000000-0] antes de buscar.
-        if not _formato_cedula_rif_valido(query):
-            self.show_alert_error(
-                e,
-                "Formato de Cédula/RIF inválido. Use V-00.000.000 o J-00000000-0."
-            )
-            return
+        tipo = self.cli_search_tipo.value or "V"
+        cedula_completa = format_documento(tipo, numero)
 
-        cliente = buscar_cliente_por_cedula(query)
+        cliente = buscar_cliente_por_cedula(cedula_completa)
         if cliente:
             vincular_cliente_a_carrito(cliente)
             self.show_alert_success(e, f"Cliente '{cliente['nombre']}' vinculado a la venta.")
@@ -433,7 +451,7 @@ class VentasView(BaseView):
         else:
             # ERS 3.4: si no coincide con la Cartera de Clientes, se abre el
             # Módulo 1.2 para registrarlo sin abandonar la venta en curso.
-            self.abrir_modal_crear_cliente(query, e)
+            self.abrir_modal_crear_cliente(cedula_completa, e)
 
     def abrir_modal_crear_cliente(self, cedula_sugerida: str, e=None):
         """Abre el Módulo 1.2 (Cartera de Clientes) para registrar al cliente
@@ -442,7 +460,12 @@ class VentasView(BaseView):
         if not p:
             return
 
-        f_cedula = ft.TextField(label="Cédula/RIF *", value=cedula_sugerida, border_radius=12, width=200)
+        tipo_sugerido, numero_sugerido = parse_documento(cedula_sugerida)
+        f_tipo = ft.Dropdown(
+            value=tipo_sugerido, width=80, border_radius=12, disabled=True,
+            options=[ft.dropdown.Option(t) for t in ("V", "E", "J", "G", "P")],
+        )
+        f_numero = ft.TextField(label="Cédula/RIF *", value=numero_sugerido, border_radius=12, width=160, disabled=True)
         f_nombre = ft.TextField(label="Nombre / Razón Social *", autofocus=True, border_radius=12, expand=True)
         f_telefono = ft.TextField(label="Teléfono", border_radius=12, width=200)
         f_direccion = ft.TextField(label="Dirección", border_radius=12, expand=True)
@@ -453,7 +476,7 @@ class VentasView(BaseView):
             try:
                 nuevo = crear_cliente(
                     nombre=f_nombre.value,
-                    cedula_rif=f_cedula.value,
+                    cedula_rif=format_documento(f_tipo.value, f_numero.value),
                     direccion=f_direccion.value,
                     telefono=f_telefono.value,
                     correo=f_correo.value,
@@ -484,7 +507,7 @@ class VentasView(BaseView):
                         "para vincularlo automáticamente a esta venta:",
                         size=12, color=self.get_subtext_color()
                     ),
-                    ft.Row([f_cedula, f_telefono], spacing=10),
+                    ft.Row([f_tipo, f_numero, f_telefono], spacing=10),
                     f_nombre,
                     f_direccion,
                     f_correo,

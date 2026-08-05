@@ -3,6 +3,28 @@ import sqlite3
 from core.database import get_connection
 from core.models import Cliente, Proveedor
 
+
+def parse_documento(doc_str: str, default_tipo: str = "V") -> tuple[str, str]:
+    """Separa un documento como 'V-12345678' en tupla ('V', '12345678')."""
+    if not doc_str:
+        return default_tipo, ""
+    doc = doc_str.strip().upper()
+    if len(doc) > 1 and doc[0] in ["V", "E", "J", "G", "P"]:
+        tipo = doc[0]
+        num = "".join(filter(str.isdigit, doc[1:]))
+        return tipo, num
+    num = "".join(filter(str.isdigit, doc))
+    return default_tipo, num
+
+
+def format_documento(tipo: str, numero: str) -> str:
+    """Formatea la letra y el número en el estándar 'TIPO-NUMERO'."""
+    num_digits = "".join(filter(str.isdigit, (numero or "").strip()))
+    if not num_digits:
+        return ""
+    return f"{tipo}-{num_digits}"
+
+
 # ==========================================
 # SERVICIOS PARA LA CARTERA DE CLIENTES
 # ==========================================
