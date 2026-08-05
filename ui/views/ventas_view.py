@@ -222,7 +222,7 @@ class VentasView(BaseView):
             hint_text="Ingrese nombre, código de barras o referencia...",
             prefix_icon=ft.Icons.QR_CODE_SCANNER,
             border_radius=12,
-            expand=True,
+            width=320,
             on_submit=self.handle_agregar_producto
         )
         self.cant_input = ft.TextField(
