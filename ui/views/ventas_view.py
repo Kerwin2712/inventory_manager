@@ -162,9 +162,13 @@ class VentasView(BaseView):
             expand=True,
             on_submit=self.handle_buscar_cliente
         )
-        self.btn_buscar_cli = ft.Button(
-            content=ft.Row([ft.Icon(ft.Icons.SEARCH), ft.Text("Buscar Cliente", weight=ft.FontWeight.BOLD)]),
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+        self.btn_buscar_cli = ft.ElevatedButton(
+            content=ft.Row([ft.Icon(ft.Icons.SEARCH, size=18), ft.Text("Buscar Cliente", weight=ft.FontWeight.BOLD)], tight=True),
+            style=ft.ButtonStyle(
+                color=ft.Colors.WHITE,
+                bgcolor=self.get_accent_color(),
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_buscar_cliente
         )
 
@@ -229,14 +233,24 @@ class VentasView(BaseView):
             text_align=ft.TextAlign.CENTER,
             border_radius=12,
         )
-        self.btn_agregar_prod = ft.Button(
-            content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART), ft.Text("Agregar", weight=ft.FontWeight.BOLD)]),
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+        self.btn_agregar_prod = ft.ElevatedButton(
+            content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART, size=18), ft.Text("Agregar", weight=ft.FontWeight.BOLD)], tight=True),
+            style=ft.ButtonStyle(
+                color=ft.Colors.WHITE,
+                bgcolor=self.get_accent_color(),
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
             on_click=self.handle_agregar_producto
         )
         self.btn_buscar_inventario = ft.OutlinedButton(
-            content=ft.Row([ft.Icon(ft.Icons.INVENTORY_2_OUTLINED), ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD)]),
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+            content=ft.Row([ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=18), ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD)], tight=True),
+            style=ft.ButtonStyle(
+                color=self.get_accent_color(),
+                shape=ft.RoundedRectangleBorder(radius=12),
+                side={
+                    ft.ControlState.DEFAULT: ft.BorderSide(1, self.get_accent_color()),
+                }
+            ),
             tooltip="Abrir el inventario con filtros para seleccionar un producto (ERS 3.3 — Flujo Inverso)",
             on_click=self.abrir_modal_buscar_inventario
         )
@@ -279,18 +293,14 @@ class VentasView(BaseView):
         )
 
         # ── 4. Carrito de Compras (Tabla de Ítems Renglones) ──────────────────
+        # Se establece una altura fija (height=420) para evitar que colapse verticalmente en el layout
         self.tabla_carrito_container = ft.Container(
             content=self.build_tabla_carrito(carrito_activo["items"]),
+            height=420,
             expand=True
         )
 
         # ── 5. Resumen de Venta Bimoneda Detallado ─────────────────────────────
-        # Venezuela maneja dos precios USD independientes por línea: el de
-        # pago en Efectivo (subtotal_usd) y el de referencia BCV, cuyo monto
-        # en Bolívares ya viene calculado en cada renglón (subtotal_bcv). El
-        # equivalente en dólares "si se paga en Bolívares" se obtiene
-        # dividiendo ese monto Bs por la tasa vigente — NUNCA es el mismo
-        # número que el total en Efectivo (antes se mostraba duplicado).
         tot_usd = sum(item["subtotal_usd"] for item in carrito_activo["items"])
         tot_bcv = sum(item["subtotal_bcv"] for item in carrito_activo["items"])
         tot_usd_bcv_equivalente = round(tot_bcv / self.tasa_bcv, 2) if self.tasa_bcv > 0 else 0.0
@@ -316,19 +326,18 @@ class VentasView(BaseView):
                 ft.Row([ft.Text("TOTAL A PAGAR (Bs):", size=15, weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_total_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([self.lbl_antiguedad_resumen], alignment=ft.MainAxisAlignment.END),
                 ft.Container(height=8),
-                ft.Button(
-                    content=ft.Container(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.POINT_OF_SALE, size=22, color=ft.Colors.WHITE),
-                            ft.Text("PROCESAR VENTA", size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-                        ], alignment=ft.MainAxisAlignment.CENTER),
-                        padding=8
-                    ),
-                    on_click=self.handle_procesar_venta,
+                ft.FilledButton(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.POINT_OF_SALE, size=20),
+                        ft.Text("PROCESAR VENTA", size=14, weight=ft.FontWeight.BOLD)
+                    ], alignment=ft.MainAxisAlignment.CENTER, tight=True),
                     style=ft.ButtonStyle(
                         bgcolor=ft.Colors.BLUE_700,
+                        color=ft.Colors.WHITE,
                         shape=ft.RoundedRectangleBorder(radius=12)
-                    )
+                    ),
+                    height=48,
+                    on_click=self.handle_procesar_venta
                 )
             ], spacing=6),
             padding=15,
@@ -715,12 +724,13 @@ class VentasView(BaseView):
         if not items:
             return self.create_card(
                 content=ft.Column([
-                    ft.Icon(ft.Icons.SHOPPING_CART_OUTLINED, size=52, color=self.get_accent_color()),
-                    ft.Text("CARRITO DE COMPRAS VACÍO", size=14, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+                    ft.Icon(ft.Icons.SHOPPING_CART_OUTLINED, size=64, color=self.get_accent_color()),
+                    ft.Text("CARRITO DE COMPRAS VACÍO", size=15, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
                     ft.Text("Seleccione un producto arriba o use las recomendaciones rápidas para añadir ítems.", size=12, color=self.get_subtext_color(), text_align=ft.TextAlign.CENTER)
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-                padding=35,
-                border_radius=16
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
+                padding=40,
+                border_radius=16,
+                expand=True
             )
 
         filas = []
@@ -753,6 +763,8 @@ class VentasView(BaseView):
                 ])
             )
 
+        header_color = "#273549" if self.is_dark else "#F1F5F9"
+
         return self.create_card(
             content=ft.Column([
                 ft.Text(f"CARRITO DE COMPRAS ({len(items)} renglones)", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
@@ -760,23 +772,27 @@ class VentasView(BaseView):
                     controls=[
                         ft.DataTable(
                             columns=[
-                                ft.DataColumn(ft.Text("Código", color=self.get_text_color())),
-                                ft.DataColumn(ft.Text("Producto", color=self.get_text_color())),
-                                ft.DataColumn(ft.Text("Cant.", color=self.get_text_color())),
-                                ft.DataColumn(ft.Text("P. Unit ($)", color=self.get_text_color())),
-                                ft.DataColumn(ft.Text("P. Unit (Bs)", color=self.get_text_color())),
-                                ft.DataColumn(ft.Text("Subtotal ($)", color=self.get_text_color())),
-                                ft.DataColumn(ft.Text("Acciones", color=self.get_text_color())),
+                                ft.DataColumn(ft.Text("Código", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text("Producto", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text("Cant.", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text("P. Unit ($)", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text("P. Unit (Bs)", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text("Subtotal ($)", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text("Acciones", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
                             ],
                             rows=filas,
-                            heading_row_color=self.get_card_bg()
+                            heading_row_color=header_color,
+                            divider_thickness=1,
+                            horizontal_lines=ft.BorderSide(1, self.get_border_color())
                         )
                     ],
                     scroll=ft.ScrollMode.AUTO,
+                    expand=True
                 )
-            ], spacing=10),
+            ], spacing=10, expand=True),
             padding=15,
-            border_radius=16
+            border_radius=16,
+            expand=True
         )
 
     # ── Procesamiento de Venta & Diálogo PDF (ERS 3.5) ─────────────────────
