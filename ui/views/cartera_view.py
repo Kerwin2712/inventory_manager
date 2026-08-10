@@ -276,10 +276,13 @@ class CarteraView(BaseView):
                 self.create_card(
                     content=ft.Column(
                         controls=[
-                            ft.ListView(controls=[self.dt_clientes], expand=True),
+                            # Fila con scroll horizontal: evita columnas recortadas
+                            # (p.ej. Nombre/Correo) cuando la sidebar expandida reduce
+                            # el ancho disponible, y ft.Row nunca corta filas a la mitad
+                            # como sí ocurría con ft.ListView de altura no acotada.
+                            ft.Row(controls=[self.dt_clientes], scroll=ft.ScrollMode.AUTO),
                             pagination_bar,
                         ],
-                        expand=True,
                     ),
                     padding=10,
                     border_radius=18,
@@ -471,10 +474,9 @@ class CarteraView(BaseView):
                 self.create_card(
                     content=ft.Column(
                         controls=[
-                            ft.ListView(controls=[self.dt_proveedores], expand=True),
+                            ft.Row(controls=[self.dt_proveedores], scroll=ft.ScrollMode.AUTO),
                             pagination_bar,
                         ],
-                        expand=True,
                     ),
                     padding=10,
                     border_radius=18,

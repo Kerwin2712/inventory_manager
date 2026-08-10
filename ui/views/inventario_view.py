@@ -326,7 +326,10 @@ class InventarioView(BaseView):
                     ft.Container(
                         content=ft.Column(
                             controls=[
-                                ft.ListView(controls=[self._dt], expand=True),
+                                # Fila con scroll horizontal: evita que las columnas de la
+                                # derecha (Exist., Acciones) queden recortadas/ilegibles
+                                # cuando la sidebar expandida reduce el ancho disponible.
+                                ft.Row(controls=[self._dt], scroll=ft.ScrollMode.AUTO),
                                 ft.Row(
                                     controls=[
                                         self._lbl_pag,
@@ -335,9 +338,7 @@ class InventarioView(BaseView):
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
                             ],
-                            expand=True,
                         ),
-                        height=380,
                         padding=10,
                         border_radius=10,
                         bgcolor=card_bg,
