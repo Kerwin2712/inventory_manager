@@ -24,7 +24,7 @@ class DashboardView(BaseView):
         self.current_section = "Inicio"
         self.rango_top_ventas = "Hoy"
         self.limite_top_ventas = 10
-        self.sidebar_collapsed = False
+        self.sidebar_collapsed = True
         super().__init__(route="/dashboard", title="Dashboard General")
 
     @property
