@@ -1,7 +1,8 @@
 import sqlite3
 from core.database import get_connection
+from services.cart_manager import METODOS_PAGO, METODOS_PAGO_BS
 
-def procesar_venta(tipo_venta: str, cliente_id: str = None, lineas: list = None) -> dict:
+def procesar_venta(tipo_venta: str, cliente_id: str = None, lineas: list = None, metodo_pago: str = "Efectivo") -> dict:
     """Procesa una transacción de venta registrando cabecera, detalles y descontando stock."""
     if not lineas or len(lineas) == 0:
         raise ValueError("La venta debe contener al menos un producto.")
@@ -9,6 +10,11 @@ def procesar_venta(tipo_venta: str, cliente_id: str = None, lineas: list = None)
     tipo_venta_clean = tipo_venta.strip().capitalize() if tipo_venta else ""
     if tipo_venta_clean not in ["Formal", "Informal"]:
         raise ValueError("El tipo de venta debe ser 'Formal' o 'Informal'.")
+
+    metodo_pago_clean = (metodo_pago or "Efectivo").strip()
+    if metodo_pago_clean not in METODOS_PAGO:
+        raise ValueError(f"El método de pago debe ser uno de: {', '.join(METODOS_PAGO)}.")
+    moneda_cobro = "BCV" if metodo_pago_clean in METODOS_PAGO_BS else "USD"
 
     conn = get_connection()
     conn.isolation_level = None  # Control transaccional explícito
@@ -76,10 +82,10 @@ def procesar_venta(tipo_venta: str, cliente_id: str = None, lineas: list = None)
         # Insertar cabecera de la venta
         cursor.execute(
             """
-            INSERT INTO ventas (tipo_venta, cliente_id, total_usd, total_bcv)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO ventas (tipo_venta, cliente_id, total_usd, total_bcv, metodo_pago)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (tipo_venta_clean, cliente_id, total_usd, total_bcv)
+            (tipo_venta_clean, cliente_id, total_usd, total_bcv, metodo_pago_clean)
         )
         venta_id = cursor.lastrowid
 
@@ -116,6 +122,9 @@ def procesar_venta(tipo_venta: str, cliente_id: str = None, lineas: list = None)
             "cliente_id": cliente_id,
             "total_usd": total_usd,
             "total_bcv": total_bcv,
+            "metodo_pago": metodo_pago_clean,
+            "moneda_cobro": moneda_cobro,
+            "monto_a_pagar": total_bcv if moneda_cobro == "BCV" else total_usd,
             "lineas_count": len(items_procesados)
         }
 

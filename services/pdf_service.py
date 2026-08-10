@@ -88,7 +88,7 @@ def generar_nota_entrega_pdf(
 
     # Obtener cabecera de la venta y datos del cliente si aplica
     cursor.execute("""
-        SELECT v.id, v.tipo_venta, v.cliente_id, v.total_usd, v.total_bcv, v.fecha,
+        SELECT v.id, v.tipo_venta, v.cliente_id, v.total_usd, v.total_bcv, v.fecha, v.metodo_pago,
                c.nombre AS cliente_nombre, c.direccion AS cliente_direccion
         FROM ventas v
         LEFT JOIN clientes c ON v.cliente_id = c.cedula_rif
@@ -138,6 +138,11 @@ def generar_nota_entrega_pdf(
     pdf.cell(25, 6, "Moneda:", ln=False)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 6, "Dólares ($)" if divisa == "USD" else "Bolívares (Bs. BCV)", ln=True)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(38, 6, "Método de Pago:", ln=False)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, str(venta["metodo_pago"] or "Efectivo"), ln=True)
 
     # Información del cliente
     if venta['tipo_venta'] == 'Formal' and venta['cliente_id']:

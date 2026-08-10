@@ -21,7 +21,10 @@ from services.cart_manager import (
     agregar_o_actualizar_producto,
     editar_item_en_carrito,
     remover_item_de_carrito,
-    vaciar_carrito_activo
+    vaciar_carrito_activo,
+    establecer_metodo_pago,
+    METODOS_PAGO,
+    METODOS_PAGO_BS,
 )
 
 class VentasView(BaseView):
@@ -329,6 +332,29 @@ class VentasView(BaseView):
         self.lbl_total_bcv = ft.Text(f"Bs. {tot_bcv:,.2f}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_800)
         self.lbl_antiguedad_resumen = ft.Text(f"Tasa: {self.tasa_bcv:,.2f} Bs/$ ({self.tasa_antiguedad})", size=10, color=self.get_subtext_color())
 
+        # ── Selector de Método de Pago (determina qué monto se cobra) ────────
+        # Efectivo/Binance: se cobra el Total $ (Precio USD Efectivo).
+        # Pago Móvil/Transferencia: se cobra el Total Bs (Precio USD BCV x tasa).
+        metodo_pago_actual = carrito_activo.get("metodo_pago", "Efectivo")
+        self.dd_metodo_pago = ft.Dropdown(
+            label="Método de Pago del Cliente",
+            value=metodo_pago_actual,
+            width=220,
+            border_radius=12,
+            options=[
+                ft.dropdown.Option("Efectivo", "Efectivo ($)"),
+                ft.dropdown.Option("Binance", "Binance ($)"),
+                ft.dropdown.Option("Pago Móvil", "Pago Móvil (Bs)"),
+                ft.dropdown.Option("Transferencia", "Transferencia (Bs)"),
+            ],
+            on_change=self.handle_cambio_metodo_pago,
+        )
+
+        cobra_en_bs = metodo_pago_actual in METODOS_PAGO_BS
+        monto_a_pagar_str = f"Bs. {tot_bcv:,.2f}" if cobra_en_bs else f"$ {tot_usd:,.2f}"
+        self.lbl_monto_a_pagar = ft.Text(monto_a_pagar_str, size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700)
+        lbl_monto_titulo = ft.Text(f"MONTO A COBRAR ({metodo_pago_actual}):", size=14, weight=ft.FontWeight.BOLD, color=self.get_text_color())
+
         panel_totales = self.create_card(
             content=ft.Column([
                 ft.Text("RESUMEN DE VENTA", size=14, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
@@ -340,6 +366,15 @@ class VentasView(BaseView):
                 ft.Row([ft.Text("Total $ (Referencia BCV):", size=13, color=self.get_subtext_color()), self.lbl_total_usd_pago_bs], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([ft.Text("TOTAL A PAGAR (Bs):", size=15, weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_total_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([self.lbl_antiguedad_resumen], alignment=ft.MainAxisAlignment.END),
+                ft.Divider(height=6),
+                self.dd_metodo_pago,
+                ft.Container(
+                    content=ft.Row([lbl_monto_titulo, self.lbl_monto_a_pagar], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                    bgcolor=self.get_card_bg(),
+                    border_radius=10,
+                    border=ft.Border.all(1, self.get_accent_color()),
+                ),
                 ft.Container(height=8),
                 ft.FilledButton(
                     content=ft.Row([
@@ -411,6 +446,10 @@ class VentasView(BaseView):
         cid = obtener_id_carrito_activo()
         eliminar_carrito(cid)
         self.show_alert_success(e, f"Carrito '{cid}' eliminado.")
+        self.rebuild_ui()
+
+    def handle_cambio_metodo_pago(self, e):
+        establecer_metodo_pago(e.control.value)
         self.rebuild_ui()
 
     def handle_cambio_tipo_venta(self, e):
@@ -851,7 +890,8 @@ class VentasView(BaseView):
             resultado = procesar_venta(
                 tipo_venta=c_activo.get("tipo_venta", "Formal"),
                 cliente_id=cliente_id,
-                lineas=lineas
+                lineas=lineas,
+                metodo_pago=c_activo.get("metodo_pago", "Efectivo")
             )
 
             self.venta_id_reciente = resultado["venta_id"]

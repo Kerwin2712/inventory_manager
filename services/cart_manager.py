@@ -7,12 +7,20 @@ asociar clientes desde Cartera y agregar productos desde Inventario o Ventas.
 import datetime
 from services.bcv_service import obtener_estado_tasa
 
+# Métodos de pago soportados (contexto Venezuela): Efectivo/Binance cobran al
+# Precio USD Efectivo; Pago Móvil/Transferencia cobran el equivalente en
+# Bolívares calculado con el Precio USD BCV x tasa vigente.
+METODOS_PAGO_USD = ("Efectivo", "Binance")
+METODOS_PAGO_BS = ("Pago Móvil", "Transferencia")
+METODOS_PAGO = METODOS_PAGO_USD + METODOS_PAGO_BS
+
 _carritos = {
     "Carrito 1": {
         "id": "Carrito 1",
         "nombre": "Carrito 1 (Principal)",
         "cliente": None,
         "tipo_venta": "Formal",
+        "metodo_pago": "Efectivo",
         "items": [],
         "creado_en": datetime.datetime.now().strftime("%H:%M:%S")
     }
@@ -44,6 +52,7 @@ def obtener_carrito_activo() -> dict:
             "nombre": f"Carrito {cid}",
             "cliente": None,
             "tipo_venta": "Formal",
+            "metodo_pago": "Efectivo",
             "items": [],
             "creado_en": datetime.datetime.now().strftime("%H:%M:%S")
         }
@@ -70,6 +79,7 @@ def crear_nuevo_carrito(nombre_personalizado: str = None) -> dict:
         "nombre": nombre,
         "cliente": None,
         "tipo_venta": "Formal",
+        "metodo_pago": "Efectivo",
         "items": [],
         "creado_en": datetime.datetime.now().strftime("%H:%M:%S")
     }
@@ -102,6 +112,18 @@ def desvincular_cliente(id_carrito: str = None) -> dict:
     """Elimina la asociación de cliente del carrito especificado o activo."""
     c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
     c["cliente"] = None
+    return c
+
+
+def establecer_metodo_pago(metodo: str, id_carrito: str = None) -> dict:
+    """Fija el método de pago elegido por el cliente en un carrito específico
+    o en el activo. Determina qué total se cobra: Efectivo/Binance cobran en
+    dólares (Precio USD Efectivo); Pago Móvil/Transferencia cobran el
+    equivalente en Bolívares (Precio USD BCV x tasa vigente)."""
+    if metodo not in METODOS_PAGO:
+        raise ValueError(f"Método de pago inválido: {metodo}")
+    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+    c["metodo_pago"] = metodo
     return c
 
 

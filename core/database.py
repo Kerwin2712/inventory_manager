@@ -97,11 +97,16 @@ def init_db():
                 cliente_id TEXT,
                 total_usd REAL NOT NULL DEFAULT 0,
                 total_bcv REAL NOT NULL DEFAULT 0,
+                metodo_pago TEXT NOT NULL DEFAULT 'Efectivo',
                 fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (cliente_id) REFERENCES clientes(cedula_rif)
                     ON UPDATE CASCADE ON DELETE SET NULL
             )
         """)
+        try:
+            cursor.execute("ALTER TABLE ventas ADD COLUMN metodo_pago TEXT NOT NULL DEFAULT 'Efectivo'")
+        except Exception:
+            pass
 
         # Crear tabla de ventas_detalle (Líneas - ERS 3.4 / 3.5)
         cursor.execute("""
