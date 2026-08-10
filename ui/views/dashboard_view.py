@@ -52,11 +52,23 @@ class DashboardView(BaseView):
         self.rebuild_ui()
 
     def iniciar_venta_desde_cartera(self, cliente: dict):
-        """Flujo Directo Cartera→Ventas (ERS 3.3): instancia una nueva nota
-        de venta, vincula el cliente elegido y navega a Ventas."""
-        from services.cart_manager import crear_nuevo_carrito, vincular_cliente_a_carrito
-        crear_nuevo_carrito()
-        vincular_cliente_a_carrito(cliente)
+        """Flujo Directo Cartera→Ventas (ERS 3.3): si el cliente ya tiene un
+        carrito guardado en curso, lo recupera (evita duplicados mientras el
+        cliente resuelve su pago); si no, crea uno nuevo y lo vincula."""
+        from services.cart_manager import (
+            obtener_todos_los_carritos, cambiar_carrito_activo,
+            crear_nuevo_carrito, vincular_cliente_a_carrito,
+        )
+        carrito_existente = next(
+            (cid for cid, c in obtener_todos_los_carritos().items()
+             if c.get("cliente") and c["cliente"]["cedula_rif"] == cliente["cedula_rif"]),
+            None
+        )
+        if carrito_existente:
+            cambiar_carrito_activo(carrito_existente)
+        else:
+            crear_nuevo_carrito()
+            vincular_cliente_a_carrito(cliente)
         self.current_section = "Ventas"
         self.rebuild_ui()
 
