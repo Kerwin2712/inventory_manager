@@ -512,10 +512,39 @@ class InventarioView(BaseView):
             )
 
     def _abrir_modal_agregar_carrito(self, prod: dict, e=None):
-        """Abre un diálogo emergente para ingresar la cantidad y agregar un producto al carrito de ventas."""
+        """Abre un diálogo emergente para elegir a qué carrito enviar el
+        producto: un carrito ya guardado (recuperándolo por su cliente) o uno
+        nuevo, en cuyo caso permite buscar/crear al cliente en el mismo paso
+        (flujo tipo supermercado: escanear producto -> elegir carrito)."""
+        from services.cart_manager import (
+            obtener_todos_los_carritos, crear_nuevo_carrito, vincular_cliente_a_carrito,
+            agregar_o_actualizar_producto,
+        )
+        from services.cartera_service import buscar_cliente_por_cedula, crear_cliente, parse_documento, format_documento
+
         p = self.get_current_page(e)
         if not p:
             return
+
+        NUEVO_CARRITO = "__nuevo__"
+
+        def _etiqueta_carrito(cinfo: dict) -> str:
+            cliente = cinfo.get("cliente")
+            n_items = len(cinfo.get("items", []))
+            quien = cliente["nombre"] if cliente else "Sin cliente"
+            return f"{cinfo['nombre']} — {quien} ({n_items} ítem{'s' if n_items != 1 else ''})"
+
+        carritos_dict = obtener_todos_los_carritos()
+        opciones_carrito = [
+            ft.dropdown.Option(NUEVO_CARRITO, "➕ Crear nuevo carrito")
+        ] + [ft.dropdown.Option(cid, _etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
+
+        dd_carrito_destino = ft.Dropdown(
+            label="Enviar a Carrito",
+            value=NUEVO_CARRITO,
+            options=opciones_carrito,
+            border_radius=12,
+        )
 
         cant_input = ft.TextField(
             label="Cantidad a agregar",
@@ -525,7 +554,75 @@ class InventarioView(BaseView):
             autofocus=True,
             border_radius=12
         )
+
+        # ── Panel de cliente, solo visible al crear un carrito nuevo ────────
+        cli_tipo = ft.Dropdown(
+            value="V", width=80, border_radius=12,
+            options=[ft.dropdown.Option(t) for t in ("V", "E", "J", "G", "P")],
+        )
+        def _filtrar_digitos_cliente(ev):
+            limpio = "".join(filter(str.isdigit, cli_numero.value or ""))
+            if limpio != cli_numero.value:
+                cli_numero.value = limpio
+                p.update()
+
+        cli_numero = ft.TextField(
+            label="Cédula/RIF del cliente (opcional)", hint_text="Solo números",
+            keyboard_type=ft.KeyboardType.NUMBER, border_radius=12, expand=True,
+            on_change=_filtrar_digitos_cliente,
+        )
+        lbl_cliente_vinculado = ft.Text("", size=12, weight=ft.FontWeight.BOLD)
+        cliente_encontrado_state = {"cliente": None}
+
+        def _buscar_o_crear_cliente(ev):
+            numero = "".join(filter(str.isdigit, cli_numero.value or ""))
+            if not numero:
+                cliente_encontrado_state["cliente"] = None
+                lbl_cliente_vinculado.value = ""
+                p.update()
+                return
+            cedula = format_documento(cli_tipo.value or "V", numero)
+            cliente = buscar_cliente_por_cedula(cedula)
+            if cliente:
+                cliente_encontrado_state["cliente"] = cliente
+                lbl_cliente_vinculado.value = f"✓ Cliente encontrado: {cliente['nombre']}"
+                lbl_cliente_vinculado.color = ft.Colors.GREEN_600
+                p.update()
+            else:
+                lbl_cliente_vinculado.value = f"Cliente no registrado. Complete los datos para crearlo:"
+                lbl_cliente_vinculado.color = ft.Colors.AMBER_700
+                panel_nuevo_cliente.visible = True
+                nc_tipo.value, nc_numero.value = cli_tipo.value, numero
+                p.update()
+
+        btn_buscar_cli = ft.IconButton(
+            icon=ft.Icons.SEARCH, tooltip="Buscar cliente por Cédula/RIF",
+            icon_color=self.get_accent_color(), on_click=_buscar_o_crear_cliente,
+        )
+
+        nc_tipo = ft.Dropdown(value="V", width=70, border_radius=12, disabled=True, options=[ft.dropdown.Option(t) for t in ("V", "E", "J", "G", "P")])
+        nc_numero = ft.TextField(label="Cédula/RIF", width=140, border_radius=12, disabled=True)
+        nc_nombre = ft.TextField(label="Nombre / Razón Social *", border_radius=12, expand=True)
+        nc_telefono = ft.TextField(label="Teléfono", border_radius=12, width=160)
+        panel_nuevo_cliente = ft.Column(
+            [ft.Row([nc_tipo, nc_numero, nc_telefono], spacing=8), nc_nombre],
+            spacing=8, visible=False,
+        )
+
+        panel_cliente = ft.Column([
+            ft.Text("CLIENTE PARA EL NUEVO CARRITO", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+            ft.Row([cli_tipo, cli_numero, btn_buscar_cli]),
+            lbl_cliente_vinculado,
+            panel_nuevo_cliente,
+        ], spacing=6)
+
         lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _cambiar_destino(ev):
+            panel_cliente.visible = dd_carrito_destino.value == NUEVO_CARRITO
+            p.update()
+
+        dd_carrito_destino.on_change = _cambiar_destino
 
         def confirmar_agregar(ev_confirm):
             try:
@@ -538,14 +635,30 @@ class InventarioView(BaseView):
                     p.update()
                     return
 
-                from services.cart_manager import agregar_o_actualizar_producto, obtener_carrito_activo
-                c_act, _ = agregar_o_actualizar_producto(prod, cantidad=cant)
+                destino = dd_carrito_destino.value
+                if destino == NUEVO_CARRITO:
+                    cliente = cliente_encontrado_state["cliente"]
+                    if not cliente and panel_nuevo_cliente.visible and (nc_nombre.value or "").strip():
+                        cliente = crear_cliente(
+                            nombre=nc_nombre.value,
+                            cedula_rif=format_documento(nc_tipo.value, nc_numero.value),
+                            direccion="", telefono=nc_telefono.value, correo="",
+                        )
+                    c_carrito = crear_nuevo_carrito()
+                    if cliente:
+                        vincular_cliente_a_carrito(cliente, c_carrito["id"])
+                    else:
+                        c_carrito["tipo_venta"] = "Informal"
+                else:
+                    c_carrito = carritos_dict[destino]
+
+                c_act, _ = agregar_o_actualizar_producto(prod, cantidad=cant, id_carrito=c_carrito["id"])
                 dlg.open = False
                 p.update()
 
-                # Notificación flotante con botón para ir a Ventas
+                quien = c_act["cliente"]["nombre"] if c_act.get("cliente") else "Venta Mostrador"
                 s = ft.SnackBar(
-                    content=ft.Text(f"✓ {cant:.0f} ud(s) de '{prod.get('nombre_referencia_corto') or prod['codigo']}' agregadas a {c_act['id']}", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    content=ft.Text(f"✓ {cant:.0f} ud(s) de '{prod.get('nombre_referencia_corto') or prod['codigo']}' agregadas a {c_act['id']} ({quien})", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
                     bgcolor=ft.Colors.GREEN_700,
                     action="IR A VENTAS",
                     on_action=lambda ev_go: p.go("/ventas"),
@@ -555,7 +668,7 @@ class InventarioView(BaseView):
                 s.open = True
                 p.update()
             except ValueError as ex:
-                lbl_err.value = str(ex) if str(ex) else "Ingrese un número válido."
+                lbl_err.value = str(ex) if str(ex) else "Ingrese valores válidos."
                 p.update()
 
         def cerrar(ev_close):
@@ -573,10 +686,14 @@ class InventarioView(BaseView):
                     ft.Text(f"Código: {prod['codigo']} | Stock disponible: {prod.get('existencia', 0):.0f} Uds", size=12, color=self.get_subtext_color()),
                     ft.Text(f"Precio Efectivo: ${prod.get('precio_dolares', 0):.2f} | Precio BCV: ${prod.get('precio_bcv', 0):.2f} (Bs {prod.get('monto_bcv_bolivares', 0):.2f})", size=12, color=self.get_subtext_color()),
                     ft.Divider(height=10),
+                    dd_carrito_destino,
                     cant_input,
+                    ft.Divider(height=6),
+                    panel_cliente,
                     lbl_err
-                ], spacing=8, tight=True),
-                width=380,
+                ], spacing=8, tight=True, scroll=ft.ScrollMode.AUTO),
+                width=420,
+                height=440,
                 padding=10
             ),
             actions=[
