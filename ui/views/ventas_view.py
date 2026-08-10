@@ -347,8 +347,8 @@ class VentasView(BaseView):
                 ft.dropdown.Option("Pago Móvil", "Pago Móvil (Bs)"),
                 ft.dropdown.Option("Transferencia", "Transferencia (Bs)"),
             ],
-            on_change=self.handle_cambio_metodo_pago,
         )
+        self.dd_metodo_pago.on_change = self.handle_cambio_metodo_pago
 
         cobra_en_bs = metodo_pago_actual in METODOS_PAGO_BS
         monto_a_pagar_str = f"Bs. {tot_bcv:,.2f}" if cobra_en_bs else f"$ {tot_usd:,.2f}"
