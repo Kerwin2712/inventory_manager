@@ -25,7 +25,7 @@ class DashboardView(BaseView):
         self.rango_top_ventas = "Hoy"
         self.limite_top_ventas = 10
         self.sidebar_collapsed = True
-        super().__init__(route="/dashboard", title="Dashboard General")
+        super().__init__(route="/dashboard", title="General")
 
     @property
     def es_admin(self) -> bool:
@@ -352,7 +352,7 @@ class DashboardView(BaseView):
             on_click=lambda e: self.on_logout_callback() if self.on_logout_callback else None,
         )
 
-        header_title = f"Dashboard - {self.current_section}" if self.current_section != "Inicio" else "Dashboard Principal"
+        header_title = f"{self.current_section}" if self.current_section != "Inicio" else "Principal"
 
         return ft.Row(
             controls=[
