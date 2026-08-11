@@ -28,14 +28,26 @@ from services.cart_manager import (
 )
 
 class VentasView(BaseView):
-    def __init__(self, page: ft.Page = None, user_data: dict = None):
+    # ── Visibilidad de columnas de la tabla del carrito ─────────────────────
+    # Estado a nivel de clase (no de instancia): el Dashboard reconstruye una
+    # instancia nueva de VentasView en cada re-render (ver DashboardView.get_body),
+    # así que si esto viviera solo en self se perdería con cada actualización.
+    # "acciones" es estructural (íconos de editar/remover) y no se puede ocultar.
+    _COLUMNAS_CARRITO_OCULTABLES = ["codigo", "producto", "cantidad", "precio_usd", "precio_bs", "subtotal"]
+    _columnas_carrito_visibles_estaticas = {k: True for k in _COLUMNAS_CARRITO_OCULTABLES}
+
+    def __init__(self, page: ft.Page = None, user_data: dict = None, on_update_callback=None):
         self.user_data = user_data or {}
         self.venta_id_reciente = None
         self.divisa_impresion_pdf = "USD"
+        # Callback del Dashboard para forzar un re-render real: como el Dashboard
+        # embebe únicamente el resultado de get_body() (no esta instancia) en su
+        # propio árbol de controles, llamar a self.rebuild_ui() heredado de
+        # BaseView no actualiza nada visible en pantalla (mutaría una instancia
+        # "huérfana" que nunca queda adjunta a la página). Ver bitácora 10/08/2026.
+        self.on_update_callback = on_update_callback
 
-        # ── Visibilidad de columnas de la tabla del carrito ─────────────────
-        # "codigo" y "acciones" son estructurales y no se pueden ocultar.
-        self._columnas_carrito_ocultables = ["producto", "cantidad", "precio_usd", "precio_bs", "subtotal"]
+        self._columnas_carrito_ocultables = VentasView._COLUMNAS_CARRITO_OCULTABLES
         self._columnas_carrito_labels = {
             "codigo": "Código",
             "producto": "Producto",
@@ -45,12 +57,25 @@ class VentasView(BaseView):
             "subtotal": "Subtotal ($)",
             "acciones": "Acciones",
         }
-        self._columnas_carrito_visibles = {k: True for k in self._columnas_carrito_ocultables}
+        self._columnas_carrito_visibles = VentasView._columnas_carrito_visibles_estaticas
 
         super().__init__(route="/ventas", title="Módulo de Ventas y Notas de Entrega")
 
         # Cargar estado de la Tasa BCV
         self.actualizar_estado_tasa_local()
+
+    def rebuild_ui(self, e=None):
+        """Sobreescribe BaseView.rebuild_ui(): esta vista es reconstruida por
+        DashboardView en cada render y no permanece adjunta a la página, por lo
+        que reconstruir solo self.controls no se refleja en pantalla. En su
+        lugar se delega al callback del Dashboard, que sí es la vista viva."""
+        if self.on_update_callback:
+            try:
+                self.on_update_callback()
+            except (RuntimeError, AttributeError):
+                pass
+        else:
+            super().rebuild_ui()
 
     def actualizar_estado_tasa_local(self):
         """Actualiza el estado de la tasa BCV desde la persistencia SQLite."""
@@ -799,12 +824,15 @@ class VentasView(BaseView):
     def _columnas_carrito_orden_visible(self) -> list[str]:
         """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó."""
         return (
-            ["codigo"]
-            + [k for k in self._columnas_carrito_ocultables if self._columnas_carrito_visibles.get(k, True)]
+            [k for k in self._columnas_carrito_ocultables if self._columnas_carrito_visibles.get(k, True)]
             + ["acciones"]
         )
 
     def _toggle_columna_carrito(self, key: str, e=None):
+        visibles_actuales = [k for k in self._columnas_carrito_ocultables if self._columnas_carrito_visibles.get(k, True)]
+        if self._columnas_carrito_visibles[key] and len(visibles_actuales) <= 1:
+            self.show_alert_error(e, "Debe quedar al menos una columna visible.")
+            return
         self._columnas_carrito_visibles[key] = not self._columnas_carrito_visibles[key]
         self.rebuild_ui()
 

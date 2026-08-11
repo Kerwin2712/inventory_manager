@@ -75,7 +75,7 @@ class DashboardView(BaseView):
     def get_body(self) -> ft.Control:
         # Selección del contenido principal según la sección activa
         if self.current_section == "Ventas":
-            ventas_view = VentasView(page=self.page, user_data=self.user_info)
+            ventas_view = VentasView(page=self.page, user_data=self.user_info, on_update_callback=self.rebuild_ui)
             try:
                 if self.page:
                     ventas_view.page = self.page

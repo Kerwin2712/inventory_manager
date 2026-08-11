@@ -32,9 +32,9 @@ class InventarioView(BaseView):
         self._dialog: ft.AlertDialog | None = None
 
         # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
-        # "codigo" y "acciones" son estructurales y no se pueden ocultar.
+        # "acciones" es estructural (íconos de edición/venta) y no se puede ocultar.
         self._columnas_ocultables = [
-            "referencia", "descripcion", "departamento", "marca",
+            "codigo", "referencia", "descripcion", "departamento", "marca",
             "precio_efectivo", "precio_bcv", "monto_bs", "existencia",
         ]
         self._columnas_labels = {
@@ -314,8 +314,7 @@ class InventarioView(BaseView):
     def _columnas_orden_visible(self) -> list[str]:
         """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó."""
         return (
-            ["codigo"]
-            + [k for k in self._columnas_ocultables if self._columnas_visibles.get(k, True)]
+            [k for k in self._columnas_ocultables if self._columnas_visibles.get(k, True)]
             + ["acciones"]
         )
 
@@ -344,6 +343,10 @@ class InventarioView(BaseView):
         return self._btn_columnas
 
     def _toggle_columna(self, key: str, e=None):
+        visibles_actuales = [k for k in self._columnas_ocultables if self._columnas_visibles.get(k, True)]
+        if self._columnas_visibles[key] and len(visibles_actuales) <= 1:
+            self._snack("Debe quedar al menos una columna visible.", ft.Colors.AMBER_700, e)
+            return
         self._columnas_visibles[key] = not self._columnas_visibles[key]
         self._col_menu_items[key].checked = self._columnas_visibles[key]
         accent = self.get_accent_color()
