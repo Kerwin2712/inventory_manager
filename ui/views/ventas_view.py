@@ -33,6 +33,20 @@ class VentasView(BaseView):
         self.venta_id_reciente = None
         self.divisa_impresion_pdf = "USD"
 
+        # ── Visibilidad de columnas de la tabla del carrito ─────────────────
+        # "codigo" y "acciones" son estructurales y no se pueden ocultar.
+        self._columnas_carrito_ocultables = ["producto", "cantidad", "precio_usd", "precio_bs", "subtotal"]
+        self._columnas_carrito_labels = {
+            "codigo": "Código",
+            "producto": "Producto",
+            "cantidad": "Cant.",
+            "precio_usd": "P. Unit ($)",
+            "precio_bs": "P. Unit (Bs)",
+            "subtotal": "Subtotal ($)",
+            "acciones": "Acciones",
+        }
+        self._columnas_carrito_visibles = {k: True for k in self._columnas_carrito_ocultables}
+
         super().__init__(route="/ventas", title="Módulo de Ventas y Notas de Entrega")
 
         # Cargar estado de la Tasa BCV
@@ -782,6 +796,34 @@ class VentasView(BaseView):
         dlg.open = True
         p.update()
 
+    def _columnas_carrito_orden_visible(self) -> list[str]:
+        """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó."""
+        return (
+            ["codigo"]
+            + [k for k in self._columnas_carrito_ocultables if self._columnas_carrito_visibles.get(k, True)]
+            + ["acciones"]
+        )
+
+    def _toggle_columna_carrito(self, key: str, e=None):
+        self._columnas_carrito_visibles[key] = not self._columnas_carrito_visibles[key]
+        self.rebuild_ui()
+
+    def _build_selector_columnas_carrito(self) -> ft.PopupMenuButton:
+        items = [
+            ft.PopupMenuItem(
+                content=self._columnas_carrito_labels[key],
+                checked=self._columnas_carrito_visibles[key],
+                on_click=lambda e, k=key: self._toggle_columna_carrito(k, e),
+            )
+            for key in self._columnas_carrito_ocultables
+        ]
+        return ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN_ROUNDED,
+            icon_color=self.get_accent_color(),
+            tooltip="Mostrar/ocultar columnas",
+            items=items,
+        )
+
     def build_tabla_carrito(self, items: list) -> ft.Control:
         if not items:
             return self.create_card(
@@ -795,52 +837,57 @@ class VentasView(BaseView):
                 expand=True
             )
 
+        columnas_clave = self._columnas_carrito_orden_visible()
+
+        def celda_acciones(item, cod):
+            return ft.Row([
+                ft.IconButton(
+                    icon=ft.Icons.EDIT_OUTLINED,
+                    icon_color=self.get_accent_color(),
+                    tooltip="Editar cantidad o precio",
+                    on_click=lambda e, it=item: self.handle_abrir_modal_editar_item(it, e)
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.DELETE_OUTLINED,
+                    icon_color=ft.Colors.RED_400,
+                    tooltip="Remover ítem",
+                    on_click=lambda e, c=cod: self.handle_remover_item(e, c)
+                )
+            ], spacing=0)
+
+        constructores_celda = {
+            "codigo": lambda item: ft.Text(item["codigo"], weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+            "producto": lambda item: ft.Text(item["nombre_corto"], color=self.get_text_color()),
+            "cantidad": lambda item: ft.Text(f"{item['cantidad']:.2f}", color=self.get_text_color()),
+            "precio_usd": lambda item: ft.Text(f"$ {item['precio_usd']:,.2f}", color=ft.Colors.GREEN_600, weight=ft.FontWeight.BOLD),
+            "precio_bs": lambda item: ft.Text(f"Bs. {item['precio_bcv']:,.2f}", color=ft.Colors.AMBER_700, weight=ft.FontWeight.BOLD),
+            "subtotal": lambda item: ft.Text(f"$ {item['subtotal_usd']:,.2f}", weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+            "acciones": lambda item: celda_acciones(item, item["codigo"]),
+        }
+
         filas = []
         for item in items:
-            cod = item["codigo"]
             filas.append(
-                ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(item["codigo"], weight=ft.FontWeight.BOLD, color=self.get_text_color())),
-                    ft.DataCell(ft.Text(item["nombre_corto"], color=self.get_text_color())),
-                    ft.DataCell(ft.Text(f"{item['cantidad']:.2f}", color=self.get_text_color())),
-                    ft.DataCell(ft.Text(f"$ {item['precio_usd']:,.2f}", color=ft.Colors.GREEN_600, weight=ft.FontWeight.BOLD)),
-                    ft.DataCell(ft.Text(f"Bs. {item['precio_bcv']:,.2f}", color=ft.Colors.AMBER_700, weight=ft.FontWeight.BOLD)),
-                    ft.DataCell(ft.Text(f"$ {item['subtotal_usd']:,.2f}", weight=ft.FontWeight.BOLD, color=self.get_accent_color())),
-                    ft.DataCell(
-                        ft.Row([
-                            ft.IconButton(
-                                icon=ft.Icons.EDIT_OUTLINED,
-                                icon_color=self.get_accent_color(),
-                                tooltip="Editar cantidad o precio",
-                                on_click=lambda e, it=item: self.handle_abrir_modal_editar_item(it, e)
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINED,
-                                icon_color=ft.Colors.RED_400,
-                                tooltip="Remover ítem",
-                                on_click=lambda e, c=cod: self.handle_remover_item(e, c)
-                            )
-                        ], spacing=0)
-                    )
-                ])
+                ft.DataRow(cells=[ft.DataCell(constructores_celda[k](item)) for k in columnas_clave])
             )
 
         header_color = "#273549" if self.is_dark else "#F1F5F9"
 
         return self.create_card(
             content=ft.Column([
-                ft.Text(f"CARRITO DE COMPRAS ({len(items)} renglones)", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+                ft.Row(
+                    controls=[
+                        ft.Text(f"CARRITO DE COMPRAS ({len(items)} renglones)", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+                        ft.Container(expand=True),
+                        self._build_selector_columnas_carrito(),
+                    ],
+                ),
                 ft.Row(
                     controls=[
                         ft.DataTable(
                             columns=[
-                                ft.DataColumn(ft.Text("Código", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
-                                ft.DataColumn(ft.Text("Producto", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
-                                ft.DataColumn(ft.Text("Cant.", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
-                                ft.DataColumn(ft.Text("P. Unit ($)", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
-                                ft.DataColumn(ft.Text("P. Unit (Bs)", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
-                                ft.DataColumn(ft.Text("Subtotal ($)", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
-                                ft.DataColumn(ft.Text("Acciones", color=self.get_text_color(), weight=ft.FontWeight.BOLD)),
+                                ft.DataColumn(ft.Text(self._columnas_carrito_labels[k], color=self.get_text_color(), weight=ft.FontWeight.BOLD))
+                                for k in columnas_clave
                             ],
                             rows=filas,
                             heading_row_color=header_color,

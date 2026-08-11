@@ -31,6 +31,26 @@ class InventarioView(BaseView):
         # ── Dialogo activo (referencia para cerrarlo) ────────────────────────
         self._dialog: ft.AlertDialog | None = None
 
+        # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
+        # "codigo" y "acciones" son estructurales y no se pueden ocultar.
+        self._columnas_ocultables = [
+            "referencia", "descripcion", "departamento", "marca",
+            "precio_efectivo", "precio_bcv", "monto_bs", "existencia",
+        ]
+        self._columnas_labels = {
+            "codigo": "Código",
+            "referencia": "Referencia",
+            "descripcion": "Descripción",
+            "departamento": "Depto.",
+            "marca": "Marca",
+            "precio_efectivo": "Precio $ (Efectivo)",
+            "precio_bcv": "Precio $ (BCV)",
+            "monto_bs": "Monto Bs (BCV)",
+            "existencia": "Exist.",
+            "acciones": "Acciones",
+        }
+        self._columnas_visibles = {k: True for k in self._columnas_ocultables}
+
         super().__init__(route="/inventario", title="Módulo de Inventario")
 
     # =========================================================================
@@ -291,20 +311,50 @@ class InventarioView(BaseView):
     # ─────────────────────────────────────────────────────────────────────────
     # TABLA PRINCIPAL
     # ─────────────────────────────────────────────────────────────────────────
+    def _columnas_orden_visible(self) -> list[str]:
+        """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó."""
+        return (
+            ["codigo"]
+            + [k for k in self._columnas_ocultables if self._columnas_visibles.get(k, True)]
+            + ["acciones"]
+        )
+
+    def _build_columna_header(self, key: str, accent, text_color) -> ft.DataColumn:
+        color = accent if key == "acciones" else text_color
+        return ft.DataColumn(ft.Text(self._columnas_labels[key], color=color, weight=ft.FontWeight.BOLD))
+
+    def _build_selector_columnas(self, accent, text_color) -> ft.PopupMenuButton:
+        self._col_menu_items: dict[str, ft.PopupMenuItem] = {}
+        items = []
+        for key in self._columnas_ocultables:
+            item = ft.PopupMenuItem(
+                content=self._columnas_labels[key],
+                checked=self._columnas_visibles[key],
+                on_click=lambda e, k=key: self._toggle_columna(k, e),
+            )
+            self._col_menu_items[key] = item
+            items.append(item)
+
+        self._btn_columnas = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN_ROUNDED,
+            icon_color=accent,
+            tooltip="Mostrar/ocultar columnas",
+            items=items,
+        )
+        return self._btn_columnas
+
+    def _toggle_columna(self, key: str, e=None):
+        self._columnas_visibles[key] = not self._columnas_visibles[key]
+        self._col_menu_items[key].checked = self._columnas_visibles[key]
+        accent = self.get_accent_color()
+        text_color = self.get_text_color()
+        self._dt.columns = [self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()]
+        self._cargar_filas(text_color, accent)
+        self._safe_update(e)
+
     def _build_tabla_panel(self, accent, card_bg, text_color, subtext, border) -> ft.Control:
         self._dt = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Código", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Referencia", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Descripción", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Depto.", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Marca", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Precio $ (Efectivo)", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Precio $ (BCV)", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Monto Bs (BCV)", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Exist.", color=text_color, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Acciones", color=accent, weight=ft.FontWeight.BOLD)),
-            ],
+            columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
         )
         self._lbl_pag = ft.Text("", color=subtext, size=12)
@@ -320,6 +370,8 @@ class InventarioView(BaseView):
                         controls=[
                             ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=accent),
                             ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ft.Container(expand=True),
+                            self._build_selector_columnas(accent, text_color),
                         ],
                         spacing=8,
                     ),
@@ -383,49 +435,53 @@ class InventarioView(BaseView):
         total_pags = max(1, (total + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
 
+        def celda_acciones(p):
+            return ft.Row([
+                ft.IconButton(
+                    ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
+                    tooltip="Procesar Venta (abre Ventas con este ítem, cant.=1)",
+                    on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
+                ),
+                ft.IconButton(
+                    ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400,
+                    tooltip="Añadir al Carrito de Ventas",
+                    on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
+                ),
+                *([ft.IconButton(
+                    ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300,
+                    tooltip="Historial Clínico del Producto (ERS 3.6 — admin/gerencia)",
+                    on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev),
+                )] if self.es_admin else []),
+                ft.IconButton(
+                    ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar",
+                    on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev),
+                ),
+                ft.IconButton(
+                    ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400,
+                    tooltip="Eliminar",
+                    on_click=lambda ev, cod=p["codigo"]: self._confirmar_eliminar(cod, ev),
+                ),
+            ], spacing=0)
+
+        constructores_celda = {
+            "codigo": lambda p: ft.Text(p["codigo"], color=accent, weight=ft.FontWeight.W_600),
+            "referencia": lambda p: ft.Text(p["referencia"] or "-", color=text_color),
+            "descripcion": lambda p: ft.Text((p["descripcion_general"] or "-")[:40], color=text_color),
+            "departamento": lambda p: ft.Text(p["departamento"] or "-", color=text_color),
+            "marca": lambda p: ft.Text(p["marca"] or "-", color=text_color),
+            "precio_efectivo": lambda p: ft.Text(f"${p['precio_dolares']:.2f}", color=ft.Colors.GREEN_400),
+            "precio_bcv": lambda p: ft.Text(f"${p.get('precio_bcv', 0):.2f}", color=ft.Colors.CYAN_300),
+            "monto_bs": lambda p: ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", color=ft.Colors.AMBER_300),
+            "existencia": lambda p: ft.Text(str(p["existencia"]), color=text_color),
+            "acciones": celda_acciones,
+        }
+
+        columnas = self._columnas_orden_visible()
         rows = []
         for p in todos:
             rows.append(
                 ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(p["codigo"], color=accent, weight=ft.FontWeight.W_600)),
-                        ft.DataCell(ft.Text(p["referencia"] or "-", color=text_color)),
-                        ft.DataCell(ft.Text((p["descripcion_general"] or "-")[:40], color=text_color)),
-                        ft.DataCell(ft.Text(p["departamento"] or "-", color=text_color)),
-                        ft.DataCell(ft.Text(p["marca"] or "-", color=text_color)),
-                        ft.DataCell(ft.Text(f"${p['precio_dolares']:.2f}", color=ft.Colors.GREEN_400)),
-                        ft.DataCell(ft.Text(f"${p.get('precio_bcv', 0):.2f}", color=ft.Colors.CYAN_300)),
-                        ft.DataCell(ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", color=ft.Colors.AMBER_300)),
-                        ft.DataCell(ft.Text(str(p["existencia"]), color=text_color)),
-                        ft.DataCell(
-                            ft.Row([
-                                ft.IconButton(
-                                    ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
-                                    tooltip="Procesar Venta (abre Ventas con este ítem, cant.=1)",
-                                    on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
-                                ),
-                                ft.IconButton(
-                                    ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400,
-                                    tooltip="Añadir al Carrito de Ventas",
-                                    on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
-                                ),
-                                *([ft.IconButton(
-                                    ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300,
-                                    tooltip="Historial Clínico del Producto (ERS 3.6 — admin/gerencia)",
-                                    on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev),
-                                )] if self.es_admin else []),
-                                ft.IconButton(
-                                    ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar",
-                                    on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev),
-                                ),
-                                ft.IconButton(
-                                    ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400,
-                                    tooltip="Eliminar",
-                                    on_click=lambda ev, cod=p["codigo"]: self._confirmar_eliminar(cod, ev),
-                                ),
-                            ], spacing=0)
-                        ),
-                    ],
+                    cells=[ft.DataCell(constructores_celda[k](p)) for k in columnas],
                 )
             )
         self._dt.rows = rows
