@@ -706,7 +706,7 @@ class VentasView(BaseView):
                         content=ft.Row(
                             controls=[
                                 ft.Column([
-                                    ft.Text(f"{pr['codigo']} — {pr.get('nombre_referencia_corto') or pr['referencia']}", weight=ft.FontWeight.BOLD, color=self.get_text_color(), size=13),
+                                    ft.Text(f"{pr['codigo']} — {pr.get('descripcion_general') or pr['referencia']}", weight=ft.FontWeight.BOLD, color=self.get_text_color(), size=13),
                                     ft.Text(f"${pr['precio_dolares']:.2f} | Bs {pr['precio_bcv']:.2f} | Stock: {pr['existencia']:.0f} | {pr.get('departamento','-')}", size=11, color=self.get_subtext_color()),
                                 ], spacing=2, tight=True, expand=True),
                                 ft.IconButton(
