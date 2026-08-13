@@ -215,3 +215,14 @@
 - **Verificaciones realizadas:** Compilación y chequeo de sintaxis exitoso de los tres módulos.
 - **Estado del proyecto:** En desarrollo. Sincronización y lógica de eliminación de carritos saneada.
 
+## Corrección del Buscador de Ventas y Visualización de Descripción Larga - 13/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **[inventario_service.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/services/inventario_service.py):**
+    - Modificada la lógica del filtro de `busqueda` en `listar_productos` para separar el término por espacios y buscar cada palabra como una condición `AND` independiente sobre las columnas de texto. Esto permite búsquedas multicriterio más potentes (ej. buscar marca y tipo a la vez).
+  - **[ventas_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - Modificado el modal de búsqueda rápida `abrir_modal_buscar_inventario` para mostrar la descripción general larga del producto (`descripcion_general`) en lugar de la descripción corta de 30 caracteres.
+- **Verificaciones realizadas:** Compilación y chequeo de sintaxis exitoso de los módulos modificados.
+- **Estado del proyecto:** En desarrollo. Buscador optimizado y nombres de producto ajustados.
+
+
