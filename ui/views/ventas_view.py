@@ -483,8 +483,13 @@ class VentasView(BaseView):
 
     def handle_eliminar_carrito_activo(self, e):
         cid = obtener_id_carrito_activo()
-        eliminar_carrito(cid)
-        self.show_alert_success(e, f"Carrito '{cid}' eliminado.")
+        carritos = obtener_todos_los_carritos()
+        if len(carritos) == 1:
+            eliminar_carrito(cid)
+            self.show_alert_info(e, f"Se vació el carrito '{cid}' por ser el único activo.")
+        else:
+            eliminar_carrito(cid)
+            self.show_alert_success(e, f"Carrito '{cid}' eliminado.")
         self.rebuild_ui()
 
     def handle_cambio_metodo_pago(self, e):
