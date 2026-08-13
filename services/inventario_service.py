@@ -238,12 +238,15 @@ def listar_productos(
         params.append(departamento.strip())
 
     if busqueda:
-        termino = f"%{busqueda.strip()}%"
-        query += (
-            " AND (codigo LIKE ? OR referencia LIKE ? OR descripcion_general LIKE ?"
-            " OR marca LIKE ? OR codigo_barras LIKE ? OR nombre_referencia_corto LIKE ?)"
-        )
-        params.extend([termino] * 6)
+        # Búsqueda por palabras independientes (AND de ORs)
+        palabras = busqueda.strip().split()
+        for pal in palabras:
+            termino = f"%{pal}%"
+            query += (
+                " AND (codigo LIKE ? OR referencia LIKE ? OR descripcion_general LIKE ?"
+                " OR marca LIKE ? OR codigo_barras LIKE ? OR nombre_referencia_corto LIKE ?)"
+            )
+            params.extend([termino] * 6)
 
     if proveedor_id is not None:
         query += " AND proveedor_id = ?"
