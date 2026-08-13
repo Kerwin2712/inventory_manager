@@ -711,17 +711,26 @@ class InventarioView(BaseView):
                         c_carrito["tipo_venta"] = "Informal"
                 else:
                     c_carrito = carritos_dict[destino]
-
+                from services.cart_manager import cambiar_carrito_activo
                 c_act, _ = agregar_o_actualizar_producto(prod, cantidad=cant, id_carrito=c_carrito["id"])
+                cambiar_carrito_activo(c_carrito["id"])
                 dlg.open = False
                 p.update()
 
                 quien = c_act["cliente"]["nombre"] if c_act.get("cliente") else "Venta Mostrador"
+                
+                def ir_a_ventas(ev_go):
+                    top_view = p.views[-1] if p.views else None
+                    if hasattr(top_view, "handle_nav_change"):
+                        top_view.handle_nav_change("Ventas")
+                    else:
+                        p.go("/ventas")
+
                 s = ft.SnackBar(
                     content=ft.Text(f"✓ {cant:.0f} ud(s) de '{prod.get('nombre_referencia_corto') or prod['codigo']}' agregadas a {c_act['id']} ({quien})", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
                     bgcolor=ft.Colors.GREEN_700,
                     action="IR A VENTAS",
-                    on_action=lambda ev_go: p.go("/ventas"),
+                    on_action=ir_a_ventas,
                     duration=4000
                 )
                 p.overlay.append(s)
