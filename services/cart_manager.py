@@ -91,10 +91,17 @@ def eliminar_carrito(id_carrito: str) -> bool:
     """Elimina un carrito por su ID (siempre deja al menos uno activo)."""
     global _id_carrito_activo
     if id_carrito in _carritos:
+        if len(_carritos) == 1:
+            # Si es el único, solo vaciarlo
+            c = _carritos[id_carrito]
+            c["cliente"] = None
+            c["tipo_venta"] = "Formal"
+            c["metodo_pago"] = "Efectivo"
+            c["items"] = []
+            return True
+        
         del _carritos[id_carrito]
-        if not _carritos:
-            crear_nuevo_carrito()
-        elif _id_carrito_activo == id_carrito:
+        if _id_carrito_activo == id_carrito:
             _id_carrito_activo = list(_carritos.keys())[0]
         return True
     return False
