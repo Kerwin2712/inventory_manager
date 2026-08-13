@@ -201,3 +201,17 @@
   - **[inventario_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se agregó "codigo" a las columnas ocultables (ya no es fija, solo "Acciones" lo es) y la misma salvaguarda de "al menos una columna visible".
 - **Verificaciones realizadas:** `py_compile` de los tres módulos. Script funcional que simula exactamente el patrón del Dashboard (crear una `VentasView` nueva por cada "render", pasándole el callback de la anterior): confirma que agregar un producto pasa de 0 a 1 fila visibles en el `main_content` simulado tras el callback, y que ocultar una columna del carrito persiste correctamente en una instancia de `VentasView` creada *después* del toggle (antes se habría perdido). Verificación equivalente para "codigo" ocultable/mostrable en Inventario. Se creó y eliminó un producto de prueba (`QATEST1`) en la base de datos real para las pruebas, sin dejar rastro. **No se pudo verificar visualmente en navegador en esta sesión:** el panel de vista previa del entorno no compuso fotogramas (mismo problema de infraestructura documentado en sesiones anteriores; la consola sí confirmó "Flutter app loaded" contra el servidor ya corriendo en el puerto 8550). Se recomienda encarecidamente al usuario reiniciar `python main.py` y confirmar en pantalla real: ocultar/mostrar "Código" en ambas tablas, alternar columnas en Ventas, y que el carrito se actualice de inmediato al agregar/editar/remover un producto.
 - **Estado del proyecto:** En desarrollo. Corrección aplicada a un bug estructural más amplio de lo reportado (afecta potencialmente todas las acciones de Ventas, no solo el carrito). Pendiente de validación visual del usuario antes de considerar cerrado.
+
+## Corrección en el Sistema de Carritos y Navegación de Ventas - 13/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **[cart_manager.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/services/cart_manager.py):**
+    - Modificado `eliminar_carrito` para que, cuando quede un único carrito en el sistema, este no se elimine del diccionario sino que simplemente se vacíe (limpieza de items, desvincular cliente, método de pago por defecto), evitando la creación infinita de carritos incrementales fantasmas.
+  - **[ventas_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - Modificado `handle_eliminar_carrito_activo` para que, si el carrito es el único activo, notifique mediante `show_alert_info` que el carrito fue vaciado en lugar de eliminado.
+  - **[inventario_view.py](file:///c:/Users/EQUIPO%20DELL/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Modificado `confirmar_agregar` para conmutar el carrito destino como activo usando `cambiar_carrito_activo` al agregar un producto desde el catálogo.
+    - Se cambió la acción del SnackBar `"IR A VENTAS"` para que use la navegación nativa de la aplicación mediante `DashboardView.handle_nav_change` en lugar del método `p.go("/ventas")` que no estaba soportado.
+- **Verificaciones realizadas:** Compilación y chequeo de sintaxis exitoso de los tres módulos.
+- **Estado del proyecto:** En desarrollo. Sincronización y lógica de eliminación de carritos saneada.
+
