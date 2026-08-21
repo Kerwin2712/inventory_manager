@@ -564,7 +564,7 @@ class InventarioView(BaseView):
             )
             return
         if self.on_procesar_venta:
-            self.on_procesar_venta(prod)
+            self.on_procesar_venta(prod, e)
         else:
             self._snack(
                 "Esta acción requiere el Dashboard (navegación a Ventas no disponible en este contexto).",
@@ -585,6 +585,7 @@ class InventarioView(BaseView):
         p = self.get_current_page(e)
         if not p:
             return
+        sid = self.get_session_id(e)
 
         NUEVO_CARRITO = "__nuevo__"
 
@@ -594,7 +595,7 @@ class InventarioView(BaseView):
             quien = cliente["nombre"] if cliente else "Sin cliente"
             return f"{cinfo['nombre']} — {quien} ({n_items} ítem{'s' if n_items != 1 else ''})"
 
-        carritos_dict = obtener_todos_los_carritos()
+        carritos_dict = obtener_todos_los_carritos(sid)
         opciones_carrito = [
             ft.dropdown.Option(NUEVO_CARRITO, "➕ Crear nuevo carrito")
         ] + [ft.dropdown.Option(cid, _etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
@@ -704,16 +705,16 @@ class InventarioView(BaseView):
                             cedula_rif=format_documento(nc_tipo.value, nc_numero.value),
                             direccion="", telefono=nc_telefono.value, correo="",
                         )
-                    c_carrito = crear_nuevo_carrito()
+                    c_carrito = crear_nuevo_carrito(sid)
                     if cliente:
-                        vincular_cliente_a_carrito(cliente, c_carrito["id"])
+                        vincular_cliente_a_carrito(sid, cliente, c_carrito["id"])
                     else:
                         c_carrito["tipo_venta"] = "Informal"
                 else:
                     c_carrito = carritos_dict[destino]
                 from services.cart_manager import cambiar_carrito_activo
-                c_act, _ = agregar_o_actualizar_producto(prod, cantidad=cant, id_carrito=c_carrito["id"])
-                cambiar_carrito_activo(c_carrito["id"])
+                c_act, _ = agregar_o_actualizar_producto(sid, prod, cantidad=cant, id_carrito=c_carrito["id"])
+                cambiar_carrito_activo(sid, c_carrito["id"])
                 dlg.open = False
                 p.update()
 

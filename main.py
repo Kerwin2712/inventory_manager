@@ -4,10 +4,19 @@ from ui.views.base_view import BaseView
 from ui.views.login_view import LoginView
 from ui.views.admin_users_view import AdminUsersView
 from ui.views.dashboard_view import DashboardView
+from services.cart_manager import limpiar_sesion
 
 def main(page: ft.Page):
     # Inicializar la base de datos SQLite, tablas y datos por defecto
     init_db()
+
+    # Libera los carritos de esta sesión (page.session.id) cuando el
+    # navegador se desconecta, para no acumular estado indefinidamente en
+    # el servidor a medida que se conectan y desconectan varios usuarios.
+    try:
+        page.on_disconnect = lambda e: limpiar_sesion(page.session.id)
+    except (RuntimeError, AttributeError):
+        pass
 
     # Cargar preferencias de tema guardadas desde SQLite
     saved_mode = get_setting("theme_mode", "dark")

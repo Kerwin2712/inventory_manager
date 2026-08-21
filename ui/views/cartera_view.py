@@ -563,7 +563,7 @@ class CarteraView(BaseView):
         """ERS 3.3 — Flujo Directo Cartera→Ventas: instancia una nota de venta
         nueva, vincula este cliente y navega automáticamente a Ventas."""
         if self.on_iniciar_venta:
-            self.on_iniciar_venta(cliente)
+            self.on_iniciar_venta(cliente, e)
         else:
             self.show_alert_error(
                 "Esta acción requiere el Dashboard (navegación a Ventas no disponible en este contexto).",

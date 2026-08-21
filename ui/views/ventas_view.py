@@ -40,6 +40,12 @@ class VentasView(BaseView):
         self.user_data = user_data or {}
         self.venta_id_reciente = None
         self.divisa_impresion_pdf = "USD"
+        # Page real inyectada por el Dashboard. self.page (heredado de
+        # BaseControl) es una propiedad de solo lectura que camina el árbol
+        # de padres — como esta instancia nunca queda adjunta al árbol real
+        # de la página (ver rebuild_ui más abajo), self.page SIEMPRE lanza
+        # RuntimeError aquí; hay que guardar la referencia real aparte.
+        self._page_ref = page
         # Callback del Dashboard para forzar un re-render real: como el Dashboard
         # embebe únicamente el resultado de get_body() (no esta instancia) en su
         # propio árbol de controles, llamar a self.rebuild_ui() heredado de
@@ -77,6 +83,24 @@ class VentasView(BaseView):
         else:
             super().rebuild_ui()
 
+    def _calcular_sid(self, e=None) -> str:
+        """Resuelve el ID de sesión de Flet (page.session.id) para aislar los
+        carritos por usuario/pestaña. Prioriza el evento de clic (siempre
+        fiable porque el control que lo disparó sí está adjunto a la página
+        real) y cae de vuelta a la Page inyectada por el Dashboard al
+        construir esta vista (self._page_ref) para los casos sin evento,
+        como la carga inicial en get_body()."""
+        if e is not None:
+            sid = self.get_session_id(e)
+            if sid != "_sin_sesion":
+                return sid
+        if self._page_ref is not None:
+            try:
+                return self._page_ref.session.id
+            except (RuntimeError, AttributeError):
+                pass
+        return self.get_session_id(e)
+
     def actualizar_estado_tasa_local(self):
         """Actualiza el estado de la tasa BCV desde la persistencia SQLite."""
         estado = obtener_estado_tasa()
@@ -99,14 +123,15 @@ class VentasView(BaseView):
         return ruta
 
     def get_body(self) -> ft.Control:
+        self._sid = self._calcular_sid()
         self.actualizar_estado_tasa_local()
-        carrito_activo = obtener_carrito_activo()
+        carrito_activo = obtener_carrito_activo(self._sid)
 
         # ── 1. Cabecera: Selector de Carrito, Selector Tipo Venta y Tasa BCV ──
         # Cada opción muestra a qué cliente pertenece el carrito (o "Sin
         # cliente" si es una venta informal/aún sin vincular), para que
         # nunca sea ambiguo a quién se le está vendiendo en cada carrito.
-        carritos_dict = obtener_todos_los_carritos()
+        carritos_dict = obtener_todos_los_carritos(self._sid)
 
         def _etiqueta_carrito(cinfo: dict) -> str:
             cliente = cinfo.get("cliente")
@@ -118,7 +143,7 @@ class VentasView(BaseView):
 
         self.dd_carritos = ft.Dropdown(
             label="Carrito Activo (Cliente)",
-            value=obtener_id_carrito_activo(),
+            value=obtener_id_carrito_activo(self._sid),
             options=options_carritos,
             width=320,
             border_radius=12,
@@ -464,7 +489,7 @@ class VentasView(BaseView):
         self.actualizar_estado_tasa_local()
         # Recalcular el monto en Bolívares de cada renglón a partir de su
         # Precio USD BCV de referencia (no del Precio USD Efectivo).
-        c = obtener_carrito_activo()
+        c = obtener_carrito_activo(self._sid)
         for item in c["items"]:
             ref_bcv = item.get("precio_usd_bcv_ref", item["precio_usd"])
             item["precio_bcv"] = round(ref_bcv * self.tasa_bcv, 2)
@@ -473,39 +498,39 @@ class VentasView(BaseView):
 
     def handle_cambiar_carrito(self, e):
         cid = e.control.value
-        cambiar_carrito_activo(cid)
+        cambiar_carrito_activo(self._sid, cid)
         self.rebuild_ui()
 
     def handle_crear_nuevo_carrito(self, e):
-        c_nuevo = crear_nuevo_carrito()
+        c_nuevo = crear_nuevo_carrito(self._sid)
         self.show_alert_success(e, f"¡Creado nuevo '{c_nuevo['nombre']}'!")
         self.rebuild_ui()
 
     def handle_eliminar_carrito_activo(self, e):
-        cid = obtener_id_carrito_activo()
-        carritos = obtener_todos_los_carritos()
+        cid = obtener_id_carrito_activo(self._sid)
+        carritos = obtener_todos_los_carritos(self._sid)
         if len(carritos) == 1:
-            eliminar_carrito(cid)
+            eliminar_carrito(self._sid, cid)
             self.show_alert_info(e, f"Se vació el carrito '{cid}' por ser el único activo.")
         else:
-            eliminar_carrito(cid)
+            eliminar_carrito(self._sid, cid)
             self.show_alert_success(e, f"Carrito '{cid}' eliminado.")
         self.rebuild_ui()
 
     def handle_cambio_metodo_pago(self, e):
-        establecer_metodo_pago(e.control.value)
+        establecer_metodo_pago(self._sid, e.control.value)
         self.rebuild_ui()
 
     def handle_cambio_tipo_venta(self, e):
         val = list(e.control.selected)[0] if e.control.selected else "Formal"
-        c = obtener_carrito_activo()
+        c = obtener_carrito_activo(self._sid)
         c["tipo_venta"] = val
         if val == "Informal":
-            desvincular_cliente()
+            desvincular_cliente(self._sid)
         self.rebuild_ui()
 
     def handle_desvincular_cliente(self, e):
-        desvincular_cliente()
+        desvincular_cliente(self._sid)
         self.show_alert_info(e, "Cliente desvinculado de la venta.")
         self.rebuild_ui()
 
@@ -528,7 +553,7 @@ class VentasView(BaseView):
 
         cliente = buscar_cliente_por_cedula(cedula_completa)
         if cliente:
-            vincular_cliente_a_carrito(cliente)
+            vincular_cliente_a_carrito(self._sid, cliente)
             self.show_alert_success(e, f"Cliente '{cliente['nombre']}' vinculado a la venta.")
             self.rebuild_ui()
         else:
@@ -566,7 +591,7 @@ class VentasView(BaseView):
                 )
                 dlg.open = False
                 self.safe_update(ev)
-                vincular_cliente_a_carrito(nuevo)
+                vincular_cliente_a_carrito(self._sid, nuevo)
                 self.show_alert_success(ev, f"Cliente '{nuevo['nombre']}' registrado y vinculado a la venta.")
                 self.rebuild_ui()
             except ValueError as ex:
@@ -615,7 +640,7 @@ class VentasView(BaseView):
 
     def agregar_producto_directo(self, producto: dict, cantidad: float, e=None):
         """Agrega un producto directamente al carrito activo."""
-        c, es_nuevo = agregar_o_actualizar_producto(producto, cantidad=cantidad, tasa_bcv=self.tasa_bcv)
+        c, es_nuevo = agregar_o_actualizar_producto(self._sid, producto, cantidad=cantidad, tasa_bcv=self.tasa_bcv)
         nombre_c = producto.get("nombre_referencia_corto") or producto.get("referencia") or producto["codigo"]
         self.show_alert_success(e, f"Agregado {cantidad:.0f} ud(s) de '{nombre_c}' al {c['id']}.")
         self.rebuild_ui()
@@ -651,7 +676,7 @@ class VentasView(BaseView):
             return
 
         stock_disponible = float(prod_encontrado["existencia"])
-        c_activo = obtener_carrito_activo()
+        c_activo = obtener_carrito_activo(self._sid)
         cant_en_carrito = sum(item["cantidad"] for item in c_activo["items"] if item["codigo"] == prod_encontrado["codigo"])
 
         if (cant_en_carrito + cant_deseada) > stock_disponible:
@@ -747,7 +772,7 @@ class VentasView(BaseView):
         p.update()
 
     def handle_remover_item(self, e, codigo):
-        remover_item_de_carrito(codigo)
+        remover_item_de_carrito(self._sid, codigo)
         self.show_alert_info(e, f"Producto '{codigo}' removido del carrito.")
         self.rebuild_ui()
 
@@ -781,7 +806,7 @@ class VentasView(BaseView):
                 if n_cant <= 0 or n_precio <= 0:
                     raise ValueError("Los valores deben ser mayores a cero.")
 
-                editar_item_en_carrito(item["codigo"], n_cant, n_precio, tasa_bcv=self.tasa_bcv)
+                editar_item_en_carrito(self._sid, item["codigo"], n_cant, n_precio, tasa_bcv=self.tasa_bcv)
                 dlg.open = False
                 p.update()
                 self.show_alert_success(e_save, f"Renglón '{item['codigo']}' actualizado.")
@@ -940,7 +965,7 @@ class VentasView(BaseView):
     # ── Procesamiento de Venta & Diálogo PDF (ERS 3.5) ─────────────────────
 
     def handle_procesar_venta(self, e):
-        c_activo = obtener_carrito_activo()
+        c_activo = obtener_carrito_activo(self._sid)
         items = c_activo["items"]
 
         if not items:
@@ -975,7 +1000,7 @@ class VentasView(BaseView):
             )
 
             self.venta_id_reciente = resultado["venta_id"]
-            vaciar_carrito_activo()
+            vaciar_carrito_activo(self._sid)
             self.show_alert_success(e, f"¡Venta N° {self.venta_id_reciente:06d} registrada exitosamente!")
             self.rebuild_ui()
             self.mostrar_dialogo_pdf(e)

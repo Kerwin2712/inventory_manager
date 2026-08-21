@@ -42,16 +42,17 @@ class DashboardView(BaseView):
         self.current_section = section_name
         self.rebuild_ui()
 
-    def procesar_venta_desde_inventario(self, producto: dict):
+    def procesar_venta_desde_inventario(self, producto: dict, e=None):
         """Flujo Directo Inventario→Ventas (ERS 3.3): instancia una nueva nota
         de venta, carga el producto con cantidad=1 y navega a Ventas."""
         from services.cart_manager import crear_nuevo_carrito, agregar_o_actualizar_producto
-        crear_nuevo_carrito()
-        agregar_o_actualizar_producto(producto, cantidad=1.0)
+        sid = self.get_session_id(e)
+        crear_nuevo_carrito(sid)
+        agregar_o_actualizar_producto(sid, producto, cantidad=1.0)
         self.current_section = "Ventas"
         self.rebuild_ui()
 
-    def iniciar_venta_desde_cartera(self, cliente: dict):
+    def iniciar_venta_desde_cartera(self, cliente: dict, e=None):
         """Flujo Directo Cartera→Ventas (ERS 3.3): si el cliente ya tiene un
         carrito guardado en curso, lo recupera (evita duplicados mientras el
         cliente resuelve su pago); si no, crea uno nuevo y lo vincula."""
@@ -59,16 +60,17 @@ class DashboardView(BaseView):
             obtener_todos_los_carritos, cambiar_carrito_activo,
             crear_nuevo_carrito, vincular_cliente_a_carrito,
         )
+        sid = self.get_session_id(e)
         carrito_existente = next(
-            (cid for cid, c in obtener_todos_los_carritos().items()
+            (cid for cid, c in obtener_todos_los_carritos(sid).items()
              if c.get("cliente") and c["cliente"]["cedula_rif"] == cliente["cedula_rif"]),
             None
         )
         if carrito_existente:
-            cambiar_carrito_activo(carrito_existente)
+            cambiar_carrito_activo(sid, carrito_existente)
         else:
-            crear_nuevo_carrito()
-            vincular_cliente_a_carrito(cliente)
+            crear_nuevo_carrito(sid)
+            vincular_cliente_a_carrito(sid, cliente)
         self.current_section = "Ventas"
         self.rebuild_ui()
 

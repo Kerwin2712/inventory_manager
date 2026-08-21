@@ -1,7 +1,16 @@
 """
-Administrador global de carritos de compra y estado de venta para la aplicación.
+Administrador de carritos de compra y estado de venta para la aplicación.
 Permite gestionar múltiples carritos en simultáneo (guardar/recuperar),
 asociar clientes desde Cartera y agregar productos desde Inventario o Ventas.
+
+Aislamiento por sesión (importante): el servidor Flet atiende a varios
+usuarios/pestañas conectados al MISMO proceso. Todo el estado de carritos se
+guarda en `_sesiones`, un diccionario indexado por `session_id`
+(`page.session.id`, único por cada conexión de navegador) — así el carrito
+activo, la lista de carritos y sus renglones nunca se comparten entre dos
+vendedores distintos, ni se pisan entre sí al operar "al mismo tiempo".
+Cada función pública recibe `session_id` como primer parámetro obligatorio
+para forzar a quien la llama a pasar siempre la sesión correcta.
 """
 
 import datetime
@@ -14,129 +23,142 @@ METODOS_PAGO_USD = ("Efectivo", "Binance")
 METODOS_PAGO_BS = ("Pago Móvil", "Transferencia")
 METODOS_PAGO = METODOS_PAGO_USD + METODOS_PAGO_BS
 
-_carritos = {
-    "Carrito 1": {
-        "id": "Carrito 1",
-        "nombre": "Carrito 1 (Principal)",
-        "cliente": None,
-        "tipo_venta": "Formal",
-        "metodo_pago": "Efectivo",
-        "items": [],
-        "creado_en": datetime.datetime.now().strftime("%H:%M:%S")
-    }
-}
-
-_id_carrito_activo = "Carrito 1"
-_contador_carritos = 1
+# session_id -> {"carritos": {...}, "activo": str, "contador": int}
+_sesiones: dict[str, dict] = {}
 
 
-def obtener_todos_los_carritos() -> dict:
-    """Devuelve el diccionario completo de carritos."""
-    return _carritos
-
-
-def obtener_id_carrito_activo() -> str:
-    """Devuelve la clave del carrito activo actual."""
-    global _id_carrito_activo
-    if _id_carrito_activo not in _carritos and _carritos:
-        _id_carrito_activo = list(_carritos.keys())[0]
-    return _id_carrito_activo
-
-
-def obtener_carrito_activo() -> dict:
-    """Devuelve la estructura de datos del carrito activo."""
-    cid = obtener_id_carrito_activo()
-    if cid not in _carritos:
-        _carritos[cid] = {
-            "id": cid,
-            "nombre": f"Carrito {cid}",
-            "cliente": None,
-            "tipo_venta": "Formal",
-            "metodo_pago": "Efectivo",
-            "items": [],
-            "creado_en": datetime.datetime.now().strftime("%H:%M:%S")
-        }
-    return _carritos[cid]
-
-
-def cambiar_carrito_activo(id_carrito: str) -> dict:
-    """Conmuta el carrito activo hacia un ID existente."""
-    global _id_carrito_activo
-    if id_carrito in _carritos:
-        _id_carrito_activo = id_carrito
-    return obtener_carrito_activo()
-
-
-def crear_nuevo_carrito(nombre_personalizado: str = None) -> dict:
-    """Crea un nuevo carrito independiente y lo establece como activo."""
-    global _id_carrito_activo, _contador_carritos
-    _contador_carritos += 1
-    nuevo_id = f"Carrito {_contador_carritos}"
-    nombre = nombre_personalizado or f"Carrito {_contador_carritos}"
-
-    _carritos[nuevo_id] = {
-        "id": nuevo_id,
+def _carrito_vacio(id_carrito: str, nombre: str) -> dict:
+    return {
+        "id": id_carrito,
         "nombre": nombre,
         "cliente": None,
         "tipo_venta": "Formal",
         "metodo_pago": "Efectivo",
         "items": [],
-        "creado_en": datetime.datetime.now().strftime("%H:%M:%S")
+        "creado_en": datetime.datetime.now().strftime("%H:%M:%S"),
     }
-    _id_carrito_activo = nuevo_id
-    return _carritos[nuevo_id]
 
 
-def eliminar_carrito(id_carrito: str) -> bool:
-    """Elimina un carrito por su ID (siempre deja al menos uno activo)."""
-    global _id_carrito_activo
-    if id_carrito in _carritos:
-        if len(_carritos) == 1:
-            # Si es el único, solo vaciarlo
-            c = _carritos[id_carrito]
-            c["cliente"] = None
-            c["tipo_venta"] = "Formal"
-            c["metodo_pago"] = "Efectivo"
-            c["items"] = []
-            return True
-        
-        del _carritos[id_carrito]
-        if _id_carrito_activo == id_carrito:
-            _id_carrito_activo = list(_carritos.keys())[0]
+def _estado_sesion(session_id: str) -> dict:
+    """Devuelve (creando si hace falta) el namespace de carritos aislado
+    para una sesión de Flet. Cada sesión arranca con un único "Carrito 1"."""
+    estado = _sesiones.get(session_id)
+    if estado is None:
+        estado = {
+            "carritos": {"Carrito 1": _carrito_vacio("Carrito 1", "Carrito 1 (Principal)")},
+            "activo": "Carrito 1",
+            "contador": 1,
+        }
+        _sesiones[session_id] = estado
+    return estado
+
+
+def limpiar_sesion(session_id: str) -> None:
+    """Libera el estado de carritos de una sesión (llamado al desconectarse
+    el navegador) para no acumular memoria indefinidamente en el servidor."""
+    _sesiones.pop(session_id, None)
+
+
+def obtener_todos_los_carritos(session_id: str) -> dict:
+    """Devuelve el diccionario de carritos de la sesión indicada."""
+    return _estado_sesion(session_id)["carritos"]
+
+
+def obtener_id_carrito_activo(session_id: str) -> str:
+    """Devuelve la clave del carrito activo actual de la sesión."""
+    estado = _estado_sesion(session_id)
+    if estado["activo"] not in estado["carritos"] and estado["carritos"]:
+        estado["activo"] = list(estado["carritos"].keys())[0]
+    return estado["activo"]
+
+
+def obtener_carrito_activo(session_id: str) -> dict:
+    """Devuelve la estructura de datos del carrito activo de la sesión."""
+    estado = _estado_sesion(session_id)
+    cid = obtener_id_carrito_activo(session_id)
+    if cid not in estado["carritos"]:
+        estado["carritos"][cid] = _carrito_vacio(cid, f"Carrito {cid}")
+    return estado["carritos"][cid]
+
+
+def cambiar_carrito_activo(session_id: str, id_carrito: str) -> dict:
+    """Conmuta el carrito activo de la sesión hacia un ID existente."""
+    estado = _estado_sesion(session_id)
+    if id_carrito in estado["carritos"]:
+        estado["activo"] = id_carrito
+    return obtener_carrito_activo(session_id)
+
+
+def crear_nuevo_carrito(session_id: str, nombre_personalizado: str = None) -> dict:
+    """Crea un nuevo carrito independiente en la sesión y lo activa."""
+    estado = _estado_sesion(session_id)
+    estado["contador"] += 1
+    nuevo_id = f"Carrito {estado['contador']}"
+    nombre = nombre_personalizado or nuevo_id
+
+    estado["carritos"][nuevo_id] = _carrito_vacio(nuevo_id, nombre)
+    estado["activo"] = nuevo_id
+    return estado["carritos"][nuevo_id]
+
+
+def eliminar_carrito(session_id: str, id_carrito: str) -> bool:
+    """Elimina un carrito de la sesión por su ID (siempre deja al menos uno)."""
+    estado = _estado_sesion(session_id)
+    carritos = estado["carritos"]
+    if id_carrito not in carritos:
+        return False
+
+    if len(carritos) == 1:
+        # Si es el único, solo vaciarlo en vez de dejar la sesión sin carritos.
+        c = carritos[id_carrito]
+        c["cliente"] = None
+        c["tipo_venta"] = "Formal"
+        c["metodo_pago"] = "Efectivo"
+        c["items"] = []
         return True
-    return False
+
+    del carritos[id_carrito]
+    if estado["activo"] == id_carrito:
+        estado["activo"] = list(carritos.keys())[0]
+    return True
 
 
-def vincular_cliente_a_carrito(cliente: dict, id_carrito: str = None) -> dict:
-    """Asocia un cliente a un carrito específico o al carrito activo."""
-    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+def vincular_cliente_a_carrito(session_id: str, cliente: dict, id_carrito: str = None) -> dict:
+    """Asocia un cliente a un carrito específico o al activo de la sesión."""
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     c["cliente"] = cliente
     c["tipo_venta"] = "Formal"
     return c
 
 
-def desvincular_cliente(id_carrito: str = None) -> dict:
+def desvincular_cliente(session_id: str, id_carrito: str = None) -> dict:
     """Elimina la asociación de cliente del carrito especificado o activo."""
-    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     c["cliente"] = None
     return c
 
 
-def establecer_metodo_pago(metodo: str, id_carrito: str = None) -> dict:
+def establecer_metodo_pago(session_id: str, metodo: str, id_carrito: str = None) -> dict:
     """Fija el método de pago elegido por el cliente en un carrito específico
-    o en el activo. Determina qué total se cobra: Efectivo/Binance cobran en
-    dólares (Precio USD Efectivo); Pago Móvil/Transferencia cobran el
+    o en el activo de la sesión. Determina qué total se cobra: Efectivo/Binance
+    cobran en dólares (Precio USD Efectivo); Pago Móvil/Transferencia cobran el
     equivalente en Bolívares (Precio USD BCV x tasa vigente)."""
     if metodo not in METODOS_PAGO:
         raise ValueError(f"Método de pago inválido: {metodo}")
-    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     c["metodo_pago"] = metodo
     return c
 
 
-def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bcv: float | None = None, id_carrito: str = None) -> tuple[dict, bool]:
+def agregar_o_actualizar_producto(
+    session_id: str, producto: dict, cantidad: float = 1.0,
+    tasa_bcv: float | None = None, id_carrito: str = None,
+) -> tuple[dict, bool]:
     """
-    Añade un producto al carrito especificado o activo.
+    Añade un producto al carrito especificado o activo de la sesión.
     Retorna (carrito_actualizado, fue_agregado_nuevo).
 
     Venezuela maneja dos precios en dólares por producto: el Precio USD
@@ -148,7 +170,8 @@ def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bc
     producto no tiene un Precio USD BCV propio configurado, se usa el
     Precio USD Efectivo como referencia de conversión.
     """
-    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     items = c["items"]
 
     codigo = producto["codigo"]
@@ -184,14 +207,18 @@ def agregar_o_actualizar_producto(producto: dict, cantidad: float = 1.0, tasa_bc
     return c, fue_nuevo
 
 
-def editar_item_en_carrito(codigo: str, nueva_cantidad: float, nuevo_precio_usd: float, tasa_bcv: float | None = None, id_carrito: str = None) -> bool:
+def editar_item_en_carrito(
+    session_id: str, codigo: str, nueva_cantidad: float, nuevo_precio_usd: float,
+    tasa_bcv: float | None = None, id_carrito: str = None,
+) -> bool:
     """Modifica la cantidad y/o el precio unitario de un renglón del carrito.
     El monto en Bolívares se recalcula con la tasa BCV vigente a partir del
     precio USD editado (simplificación: el diálogo de edición manual usa un
     único precio USD para ambas divisas en vez de mantener Efectivo/BCV
     por separado; el precio BCV propio del producto solo se usa al agregarlo
     por primera vez desde Inventario/Ventas)."""
-    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     tasa_actual = tasa_bcv if tasa_bcv else obtener_estado_tasa().get("tasa", 0.0)
     for item in c["items"]:
         if item["codigo"] == codigo:
@@ -205,16 +232,17 @@ def editar_item_en_carrito(codigo: str, nueva_cantidad: float, nuevo_precio_usd:
     return False
 
 
-def remover_item_de_carrito(codigo: str, id_carrito: str = None) -> bool:
-    """Remueve un renglón del carrito."""
-    c = _carritos[id_carrito] if id_carrito and id_carrito in _carritos else obtener_carrito_activo()
+def remover_item_de_carrito(session_id: str, codigo: str, id_carrito: str = None) -> bool:
+    """Remueve un renglón del carrito especificado o activo de la sesión."""
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     inicial = len(c["items"])
     c["items"] = [i for i in c["items"] if i["codigo"] != codigo]
     return len(c["items"]) < inicial
 
 
-def vaciar_carrito_activo() -> None:
-    """Limpia todos los renglones y cliente del carrito activo."""
-    c = obtener_carrito_activo()
+def vaciar_carrito_activo(session_id: str) -> None:
+    """Limpia todos los renglones y cliente del carrito activo de la sesión."""
+    c = obtener_carrito_activo(session_id)
     c["items"] = []
     c["cliente"] = None

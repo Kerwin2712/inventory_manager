@@ -213,6 +213,19 @@ class BaseView(ft.View):
             pass
         return None
 
+    def get_session_id(self, e=None) -> str:
+        """ID único de la sesión de Flet (una por pestaña/navegador conectado
+        al servidor), usado para aislar estado por-usuario como los carritos
+        de Ventas — evita que dos vendedores conectados simultáneamente
+        compartan o se pisen el carrito activo."""
+        p = self.get_current_page(e)
+        if p:
+            try:
+                return p.session.id
+            except (RuntimeError, AttributeError):
+                pass
+        return "_sin_sesion"
+
     def safe_update(self, e=None):
         """Actualiza la interfaz evitando excepciones de renderizado."""
         p = self.get_current_page(e)
