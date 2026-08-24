@@ -329,6 +329,17 @@
 - **Verificaciones realizadas:** Compilación de ambos módulos y verificación de absorción de excepciones.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Rediseño UX: Ampliación de Distribución y Botones Espaciosos en Modo Agrupado - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Feedback del usuario:** En Modo Agrupado, la primera columna (Producto) y la columna de Acciones se veían muy amontonadas y apretadas.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Se amplió el ancho de la columna **Producto** de 280px a 380px, estructurando la Descripción General en texto destacado (máximo 2 líneas con puntos suspensivos) y presentando el Código y la Referencia en pequeños badges/chips independientes con fondo suave (`accent` / `subtext`), mejorando significativamente su legibilidad.
+    - Se amplió la columna de **Acciones** de 110px a 210px en una fila única holgada (`celda_acciones_lineal`), eliminando el apilamiento apretado en dos filas y brindando espacio cómodo a cada botón de acción.
+- **Verificaciones realizadas:** Compilación limpia con `py_compile` en el entorno virtual.
+- **Estado del proyecto:** Corrección de diseño aplicada y committeada de forma atómica.
+
+
 
 
 
