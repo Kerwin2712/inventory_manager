@@ -1,9 +1,11 @@
 import flet as ft
 from ui.views.base_view import BaseView
+from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
     listar_productos, eliminar_producto,
+    obtener_opciones_filtro, obtener_opciones_proveedor_filtro,
 )
 from services.cartera_service import listar_proveedores
 from services.reportes_service import obtener_historial_producto
@@ -209,29 +211,66 @@ class InventarioView(BaseView):
     # PANEL FILTROS EN CASCADA (ERS 3.2)
     # ─────────────────────────────────────────────────────────────────────────
     def _build_filtros_panel(self, accent, card_bg, text_color, border) -> ft.Control:
-        def campo(label, width=185):
-            tf = ft.TextField(
-                label=label, width=width,
-                color=text_color, border_color=border, focused_border_color=accent,
-                border_radius=12,
-                on_change=self._handle_filtro_change,
-            )
-            return tf
+        # Buscador general: un único campo cubre Código, Referencia,
+        # Descripción, Marca, Código de Barras y Nombre Corto (búsqueda por
+        # palabras independientes con AND), en lugar de seis cajas de texto
+        # separadas — minimiza el espacio ocupado sin perder cobertura.
+        self._f_busqueda = ft.TextField(
+            label="Buscar código, referencia, descripción, marca...",
+            hint_text="Escriba cualquier término y los resultados se filtran al instante",
+            expand=True,
+            color=text_color, border_color=border, focused_border_color=accent,
+            border_radius=12, prefix_icon=ft.Icons.SEARCH,
+            on_change=self._handle_filtro_change,
+        )
 
-        # Panel de consultas con un campo dedicado por cada una de las 12
-        # columnas del inventario (ERS 3.2), combinables simultáneamente.
-        self._f_codigo = campo("Código")
-        self._f_referencia = campo("Referencia")
-        self._f_departamento = campo("Departamento")
-        self._f_descripcion = campo("Descripción", 250)
-        self._f_marca = campo("Marca")
-        self._f_precio_usd = campo("Precio $ (Efectivo)", 130)
-        self._f_precio_bcv = campo("Precio $ (BCV)", 120)
-        self._f_proveedor = campo("Proveedor")
-        self._f_fecha_mod = campo("Últ. Modificación", 160)
-        self._f_existencia = campo("Existencia", 110)
-        self._f_codigo_barras = campo("Código de Barras")
-        self._f_nombre_corto = campo("Nombre Corto")
+        # Filtros de selección múltiple con buscador (departamento, marca,
+        # proveedor): al abrir sin escribir nada se muestran primero los
+        # valores más usados en el inventario.
+        self._msf_departamento = MultiSelectFilter(
+            self, "Departamento", ft.Icons.CATEGORY_ROUNDED,
+            lambda: obtener_opciones_filtro("departamento"),
+            self._handle_filtro_avanzado_change,
+        )
+        self._msf_marca = MultiSelectFilter(
+            self, "Marca", ft.Icons.BRANDING_WATERMARK_ROUNDED,
+            lambda: obtener_opciones_filtro("marca"),
+            self._handle_filtro_avanzado_change,
+        )
+        self._msf_proveedor = MultiSelectFilter(
+            self, "Proveedor", ft.Icons.LOCAL_SHIPPING_ROUNDED,
+            obtener_opciones_proveedor_filtro,
+            self._handle_filtro_avanzado_change,
+        )
+
+        # Filtros de rango: precios, existencia y periodos de ingreso /
+        # actualización del producto.
+        self._rf_precio_efectivo = RangeFilter(
+            self, "Precio $ Efvo.", ft.Icons.ATTACH_MONEY_ROUNDED,
+            self._handle_filtro_avanzado_change,
+        )
+        self._rf_precio_bcv = RangeFilter(
+            self, "Precio $ BCV", ft.Icons.CURRENCY_EXCHANGE_ROUNDED,
+            self._handle_filtro_avanzado_change,
+        )
+        self._rf_existencia = RangeFilter(
+            self, "Existencia", ft.Icons.INVENTORY_2_ROUNDED,
+            self._handle_filtro_avanzado_change,
+        )
+        self._rf_fecha_ingreso = RangeFilter(
+            self, "Fecha Ingreso", ft.Icons.CALENDAR_MONTH_ROUNDED,
+            self._handle_filtro_avanzado_change, is_date=True,
+        )
+        self._rf_fecha_actualizacion = RangeFilter(
+            self, "Últ. Actualización", ft.Icons.UPDATE_ROUNDED,
+            self._handle_filtro_avanzado_change, is_date=True,
+        )
+
+        self._filtros_avanzados = [
+            self._msf_departamento, self._msf_marca, self._msf_proveedor,
+            self._rf_precio_efectivo, self._rf_precio_bcv, self._rf_existencia,
+            self._rf_fecha_ingreso, self._rf_fecha_actualizacion,
+        ]
 
         btn_ingresar = ft.Button(
             content=ft.Text("  Ingresar Producto", weight=ft.FontWeight.BOLD),
@@ -264,22 +303,10 @@ class InventarioView(BaseView):
                         ],
                         spacing=8,
                     ),
+                    self._f_busqueda,
                     ft.Row(
-                        controls=[
-                            self._f_codigo,
-                            self._f_referencia,
-                            self._f_departamento,
-                            self._f_descripcion,
-                            self._f_marca,
-                            self._f_precio_usd,
-                            self._f_precio_bcv,
-                            self._f_proveedor,
-                            self._f_fecha_mod,
-                            self._f_existencia,
-                            self._f_codigo_barras,
-                            self._f_nombre_corto,
-                        ],
-                        spacing=12,
+                        controls=[f.control() for f in self._filtros_avanzados],
+                        spacing=8,
                         wrap=True,
                     ),
                     ft.Row(controls=[btn_limpiar, btn_ingresar], spacing=12),
@@ -294,17 +321,14 @@ class InventarioView(BaseView):
         self._page_num = 1
         self._refrescar_tabla(e)
 
-    def _campos_filtro(self) -> list[ft.TextField]:
-        return [
-            self._f_codigo, self._f_referencia, self._f_departamento,
-            self._f_descripcion, self._f_marca, self._f_precio_usd,
-            self._f_precio_bcv, self._f_proveedor, self._f_fecha_mod,
-            self._f_existencia, self._f_codigo_barras, self._f_nombre_corto,
-        ]
+    def _handle_filtro_avanzado_change(self, *_args):
+        self._page_num = 1
+        self._refrescar_tabla()
 
     def _handle_limpiar_filtros(self, e):
-        for campo in self._campos_filtro():
-            campo.value = ""
+        self._f_busqueda.value = ""
+        for f in self._filtros_avanzados:
+            f.reset()
         self._page_num = 1
         self._refrescar_tabla(e)
 
@@ -410,30 +434,34 @@ class InventarioView(BaseView):
         if accent is None:
             accent = self.get_accent_color()
 
-        # Filtros en cascada (ERS 3.2): un input independiente por columna,
-        # combinados con AND — nunca concatenados en un solo término de búsqueda.
+        # Búsqueda general de texto + filtros avanzados combinables (multi-
+        # selección con buscador para categóricos, rango para numéricos y
+        # fechas de ingreso/actualización) — todos se combinan con AND.
+        busqueda = getattr(self, "_f_busqueda", None) and self._f_busqueda.value or ""
         filtros = {
-            "codigo": getattr(self, "_f_codigo", None) and self._f_codigo.value,
-            "referencia": getattr(self, "_f_referencia", None) and self._f_referencia.value,
-            "departamento": getattr(self, "_f_departamento", None) and self._f_departamento.value,
-            "descripcion_general": getattr(self, "_f_descripcion", None) and self._f_descripcion.value,
-            "marca": getattr(self, "_f_marca", None) and self._f_marca.value,
-            "precio_dolares": getattr(self, "_f_precio_usd", None) and self._f_precio_usd.value,
-            "precio_bcv": getattr(self, "_f_precio_bcv", None) and self._f_precio_bcv.value,
-            "proveedor": getattr(self, "_f_proveedor", None) and self._f_proveedor.value,
-            "fecha_ultima_modificacion": getattr(self, "_f_fecha_mod", None) and self._f_fecha_mod.value,
-            "existencia": getattr(self, "_f_existencia", None) and self._f_existencia.value,
-            "codigo_barras": getattr(self, "_f_codigo_barras", None) and self._f_codigo_barras.value,
-            "nombre_referencia_corto": getattr(self, "_f_nombre_corto", None) and self._f_nombre_corto.value,
+            "departamento": sorted(self._msf_departamento.selected) if hasattr(self, "_msf_departamento") else [],
+            "marca": sorted(self._msf_marca.selected) if hasattr(self, "_msf_marca") else [],
+            "proveedor_ids": sorted(self._msf_proveedor.selected) if hasattr(self, "_msf_proveedor") else [],
+            "precio_dolares_min": getattr(self, "_rf_precio_efectivo", None) and self._rf_precio_efectivo.vmin,
+            "precio_dolares_max": getattr(self, "_rf_precio_efectivo", None) and self._rf_precio_efectivo.vmax,
+            "precio_bcv_min": getattr(self, "_rf_precio_bcv", None) and self._rf_precio_bcv.vmin,
+            "precio_bcv_max": getattr(self, "_rf_precio_bcv", None) and self._rf_precio_bcv.vmax,
+            "existencia_min": getattr(self, "_rf_existencia", None) and self._rf_existencia.vmin,
+            "existencia_max": getattr(self, "_rf_existencia", None) and self._rf_existencia.vmax,
+            "fecha_ingreso_desde": getattr(self, "_rf_fecha_ingreso", None) and self._rf_fecha_ingreso.vmin,
+            "fecha_ingreso_hasta": getattr(self, "_rf_fecha_ingreso", None) and self._rf_fecha_ingreso.vmax,
+            "fecha_actualizacion_desde": getattr(self, "_rf_fecha_actualizacion", None) and self._rf_fecha_actualizacion.vmin,
+            "fecha_actualizacion_hasta": getattr(self, "_rf_fecha_actualizacion", None) and self._rf_fecha_actualizacion.vmax,
         }
 
         todos = listar_productos(
+            busqueda=busqueda,
             filtros=filtros,
             page=self._page_num,
             per_page=self.ITEMS_PER_PAGE,
         )
 
-        total_all = listar_productos(filtros=filtros, page=1, per_page=9999)
+        total_all = listar_productos(busqueda=busqueda, filtros=filtros, page=1, per_page=9999)
         total = len(total_all)
         total_pags = max(1, (total + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
