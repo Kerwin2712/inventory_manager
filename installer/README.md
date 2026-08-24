@@ -52,8 +52,7 @@ env/Scripts/python.exe installer/assets/generate_icon.py
 env/Scripts/python.exe installer/prepare_flet_client.py
 
 # 2. Build de PyInstaller (genera installer/dist/SistemaInventario/).
-env/Scripts/pyinstaller.exe installer/inventory_manager.spec --noconfirm ^
-    --distpath installer/dist --workpath installer/build
+env/Scripts/pyinstaller.exe installer/inventory_manager.spec --noconfirm --distpath installer/dist --workpath installer/build
 
 # 3. Probar el .exe generado ANTES de empaquetarlo (importante: valida que
 #    el cliente de Flet embebido arranca sin pedir descargar nada):
