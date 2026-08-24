@@ -78,6 +78,16 @@ Al ejecutar la aplicación por primera vez en un equipo nuevo, el sistema crear�
 
 ---
 
+## 📦 Build de Escritorio e Instalador de Windows
+
+`main.py` corre en modo escritorio (ventana nativa) al ejecutarse directamente
+con `python main.py`. Para generar un `.exe` distribuible y un instalador de
+Windows con asistente gráfico (PyInstaller + Inno Setup 6), incluyendo el
+ícono de la aplicación, ver la guía completa en
+[installer/README.md](installer/README.md).
+
+---
+
 ## 📄 Derechos de Autor y Licencia
 
 > **IMPORTANT:** 

@@ -87,7 +87,8 @@ def main(page: ft.Page):
     show_login()
 
 if __name__ == "__main__":
-    # Modo web (navegador) para poder ejecutar y probar la app en entornos
-    # sin soporte de escritorio (sin Flutter/ventana nativa disponible).
-    # Para producción de escritorio, usar: ft.run(main)
-    ft.run(main, view=ft.AppView.WEB_BROWSER, port=8550)
+    # Modo escritorio (ventana nativa Flutter) — build de producción y del
+    # instalador (PyInstaller + Inno Setup, ver installer/README.md). Para
+    # probar en un entorno sin soporte de ventana nativa, usar en su lugar:
+    # ft.run(main, view=ft.AppView.WEB_BROWSER, port=8550)
+    ft.run(main)

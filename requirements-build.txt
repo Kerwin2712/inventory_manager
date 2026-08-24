@@ -1,0 +1,5 @@
+# Dependencias adicionales solo para generar el build de escritorio y el
+# instalador de Windows (ver installer/README.md). No son necesarias para
+# correr la app en desarrollo — para eso alcanza requirements.txt.
+-r requirements.txt
+pyinstaller

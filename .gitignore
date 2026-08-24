@@ -31,6 +31,17 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...excepto el spec versionado del instalador (es un script de build, no un
+# artefacto generado): ver installer/README.md.
+!installer/inventory_manager.spec
+
+# Instalador de Windows (PyInstaller + Inno Setup) — ver installer/README.md.
+# Los scripts (*.py, *.iss, *.md) y el icono SÍ se versionan; solo se
+# ignoran los artefactos generados en cada build.
+installer/vendor/
+installer/build/
+installer/dist/
+installer/Output/
 
 # Installer logs
 pip-log.txt
