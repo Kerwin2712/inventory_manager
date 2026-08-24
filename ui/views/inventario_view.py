@@ -546,6 +546,9 @@ class InventarioView(BaseView):
             ]
             return ft.Column([ft.Row(fila1, spacing=0, tight=True), ft.Row(fila2, spacing=0, tight=True)], spacing=0, tight=True)
 
+        # Limpiar filas primero para evitar descalce de conteo entre celdas y columnas durante el diff de Flet al alternar modos
+        self._dt.rows = []
+
         if self._modo_vista == "separado":
             self._dt.columns = [self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()]
             constructores_celda = {
@@ -633,7 +636,7 @@ class InventarioView(BaseView):
                 celda_stock = ft.Container(
                     content=ft.Text(str(p["existencia"]), color=text_color, weight=ft.FontWeight.BOLD, size=13),
                     width=70,
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                 )
 
                 celda_acc = ft.Container(

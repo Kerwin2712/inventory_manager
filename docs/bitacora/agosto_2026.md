@@ -339,6 +339,19 @@
 - **Verificaciones realizadas:** Compilación limpia con `py_compile` en el entorno virtual.
 - **Estado del proyecto:** Corrección de diseño aplicada y committeada de forma atómica.
 
+### Fix: Corrección de `AttributeError` en Alignment y Limpieza de Filas al Conmutar Modos - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problemas reportados:**
+  1. `AttributeError: module 'flet.controls.alignment' has no attribute 'center'`.
+  2. `ValueError: each visible DataRow must contain exactly as many visible DataCells as there are visible DataColumns (5)`.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Se reemplazó la constante errónea en minúsculas `ft.alignment.center` por la constante estándar en mayúsculas `ft.Alignment.CENTER`.
+    - Se añadió la limpieza previa `self._dt.rows = []` al inicio de `_cargar_filas` antes de redefinir `self._dt.columns`, evitando que el motor de parches de Flet compare temporalmente las filas anteriores con la nueva estructura de columnas al alternar entre 10 y 5 columnas.
+- **Verificaciones realizadas:** Ejecución de script de prueba simulando la conmutación secuencial entre los modos `separado` -> `agrupado` -> `tarjetas` confirmando 0 excepciones.
+- **Estado del proyecto:** Correcciones aplicadas y committeadas atómicamente.
+
+
 
 
 
