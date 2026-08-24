@@ -320,6 +320,16 @@
 - **Verificaciones realizadas:** Compilación y análisis de layout exitoso sin excepciones de restricciones en Flutter.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Fix: Salvaguarda contra TimeoutException en Navegación con Scroll y Anchos Definidos en Modo Agrupado - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** En Modo Agrupado, presionar las flechas de desplazamiento lateral lanzaba `RuntimeError: TimeoutException: Timeout waiting for invoke method listener for Row.scroll_to` si el contenido de la tabla encajaba holgadamente en el ancho de pantalla.
+- **Causa raíz y solución:**
+  - **[ui/components/scroll_nav.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/components/scroll_nav.py):** En Flutter, si un contenedor con scroll no presenta desbordamiento (los datos caben completos), el controlador de scroll nativo no se activa y la llamada `scroll_to` de Flet se suspende hasta vencer el tiempo de espera (10s). Se envolvió la llamada a `target.scroll_to(...)` dentro de un bloque `try-except Exception:` en `_mover_async`, absorbiendo cualquier fallo o timeout de scroll de forma silenciosa sin interrumpir la interfaz.
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se asignaron anchos estructurados a los contenedores de celda en Modo Agrupado (`Producto` 280px, `Clasificación` 140px, `Precios` 160px, `Existencia` 60px, `Acciones` 110px) para mantener un diseño equilibrado y asegurar que el scroll horizontal se active con suavidad ante cualquier redimensionamiento de pantalla.
+- **Verificaciones realizadas:** Compilación de ambos módulos y verificación de absorción de excepciones.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 

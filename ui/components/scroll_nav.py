@@ -21,7 +21,10 @@ _PASO_GRANDE = 999999  # clamma al límite real del scroll (Flutter lo acota).
 
 def _mover_async(target: ft.Control, delta: float, duration: int = 200):
     async def handler(e):
-        await target.scroll_to(delta=delta, duration=duration)
+        try:
+            await target.scroll_to(delta=delta, duration=duration)
+        except Exception:
+            pass
     return handler
 
 

@@ -583,28 +583,45 @@ class InventarioView(BaseView):
             ]
             rows = []
             for p in todos:
-                celda_prod = ft.Column([
-                    ft.Text(p["descripcion_general"] or "-", size=13, weight=ft.FontWeight.BOLD, color=text_color, max_lines=2),
-                    ft.Row([
-                        ft.Text(f"Cód: {p['codigo']}", size=11, color=accent, weight=ft.FontWeight.W_600),
-                        ft.Text(f"Ref: {p['referencia'] or '-'}", size=11, color=subtext),
-                    ], spacing=8),
-                ], spacing=2, tight=True)
+                celda_prod = ft.Container(
+                    content=ft.Column([
+                        ft.Text(p["descripcion_general"] or "-", size=13, weight=ft.FontWeight.BOLD, color=text_color, max_lines=2),
+                        ft.Row([
+                            ft.Text(f"Cód: {p['codigo']}", size=11, color=accent, weight=ft.FontWeight.W_600),
+                            ft.Text(f"Ref: {p['referencia'] or '-'}", size=11, color=subtext),
+                        ], spacing=8),
+                    ], spacing=2, tight=True),
+                    width=280,
+                )
 
-                celda_clasif = ft.Column([
-                    ft.Text(p["departamento"] or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
-                    ft.Text(p["marca"] or "-", size=11, color=subtext),
-                ], spacing=2, tight=True)
+                celda_clasif = ft.Container(
+                    content=ft.Column([
+                        ft.Text(p["departamento"] or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
+                        ft.Text(p["marca"] or "-", size=11, color=subtext),
+                    ], spacing=2, tight=True),
+                    width=140,
+                )
 
-                celda_precios = ft.Column([
-                    ft.Row([
-                        ft.Text(f"${p['precio_dolares']:.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
-                        ft.Text(f"${p.get('precio_bcv', 0):.2f}", size=11, color=ft.Colors.CYAN_300),
-                    ], spacing=6),
-                    ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", size=11, color=ft.Colors.AMBER_300),
-                ], spacing=2, tight=True)
+                celda_precios = ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(f"${p['precio_dolares']:.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+                            ft.Text(f"${p.get('precio_bcv', 0):.2f}", size=11, color=ft.Colors.CYAN_300),
+                        ], spacing=6),
+                        ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", size=11, color=ft.Colors.AMBER_300),
+                    ], spacing=2, tight=True),
+                    width=160,
+                )
 
-                celda_stock = ft.Text(str(p["existencia"]), color=text_color, weight=ft.FontWeight.BOLD)
+                celda_stock = ft.Container(
+                    content=ft.Text(str(p["existencia"]), color=text_color, weight=ft.FontWeight.BOLD),
+                    width=60,
+                )
+
+                celda_acc = ft.Container(
+                    content=celda_acciones_grid(p),
+                    width=110,
+                )
 
                 rows.append(
                     ft.DataRow(cells=[
@@ -612,7 +629,7 @@ class InventarioView(BaseView):
                         ft.DataCell(celda_clasif),
                         ft.DataCell(celda_precios),
                         ft.DataCell(celda_stock),
-                        ft.DataCell(celda_acciones_grid(p)),
+                        ft.DataCell(celda_acc),
                     ])
                 )
             self._dt.rows = rows
