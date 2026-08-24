@@ -786,6 +786,8 @@ class VentasView(BaseView):
         if not p:
             return
 
+        modo_vista_state = {"modo": "agrupado"}
+
         txt_busqueda = ft.TextField(
             label="Filtrar por código, referencia, descripción, marca o departamento",
             autofocus=True,
@@ -798,11 +800,36 @@ class VentasView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER, text_align=ft.TextAlign.CENTER,
             border_radius=12,
         )
-        # Altura grande (no una franja angosta) para que la descripción larga
-        # de cada producto se lea completa y se puedan comparar varios
-        # resultados a la vez sin abrir/cerrar el modal repetidamente.
-        lista_resultados = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, height=560)
+
+        btn_modo_modal = ft.SegmentedButton(
+            selected=[modo_vista_state["modo"]],
+            segments=[
+                ft.Segment(
+                    value="separado",
+                    label=ft.Text("Separado", size=10, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_COLUMN_ROUNDED, size=14),
+                ),
+                ft.Segment(
+                    value="agrupado",
+                    label=ft.Text("Agrupado", size=10, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_LIST_ROUNDED, size=14),
+                ),
+                ft.Segment(
+                    value="tarjetas",
+                    label=ft.Text("Tarjetas", size=10, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.GRID_VIEW_ROUNDED, size=14),
+                ),
+            ],
+            on_change=lambda ev: _cambiar_modo(ev),
+        )
+
+        lista_resultados = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, height=520)
         lbl_conteo = ft.Text("", size=11, color=self.get_subtext_color())
+
+        def _cambiar_modo(ev):
+            if ev.control.selected:
+                modo_vista_state["modo"] = list(ev.control.selected)[0]
+                _refrescar(ev)
 
         def _agregar_desde_modal(prod: dict, ev):
             try:
@@ -819,47 +846,107 @@ class VentasView(BaseView):
             termino = (txt_busqueda.value or "").strip()
             productos = listar_productos(busqueda=termino, per_page=50) if termino else listar_productos(per_page=50)
             lbl_conteo.value = f"{len(productos)} resultado(s)"
+            modo = modo_vista_state["modo"]
+
             if not productos:
                 lista_resultados.controls = [
                     ft.Text("No se encontraron productos.", color=self.get_subtext_color())
                 ]
-            else:
-                lista_resultados.controls = [
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Column([
-                                    # Descripción general completa (no el nombre corto):
-                                    # es la que permite identificar el producto sin
-                                    # ambigüedad al elegir entre varios resultados.
-                                    ft.Text(
-                                        pr.get("descripcion_general") or pr.get("referencia") or pr["codigo"],
-                                        weight=ft.FontWeight.BOLD, color=self.get_text_color(), size=15,
-                                        no_wrap=False,
-                                    ),
-                                    ft.Text(f"Código: {pr['codigo']}  ·  Ref: {pr.get('referencia') or '-'}  ·  {pr.get('departamento','-')} / {pr.get('marca') or '-'}", size=12, color=self.get_subtext_color()),
-                                    ft.Row([
-                                        ft.Text(f"$ {pr['precio_dolares']:.2f} (Efvo.)", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
-                                        ft.Text(f"$ {pr.get('precio_bcv', 0):.2f} (BCV)", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_600),
-                                        ft.Text(f"Bs {pr.get('monto_bcv_bolivares', 0):,.2f}", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
-                                        ft.Text(f"Stock: {pr['existencia']:.0f}", size=13, color=self.get_subtext_color()),
-                                    ], spacing=14, wrap=True),
-                                ], spacing=3, tight=True, expand=True),
-                                ft.IconButton(
-                                    icon=ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_600,
-                                    icon_size=28,
-                                    tooltip="Agregar a la venta en curso",
-                                    on_click=lambda ev2, prod=pr: _agregar_desde_modal(prod, ev2),
-                                ),
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=12, border_radius=10, bgcolor=self.get_card_bg(),
+            elif modo == "tarjetas":
+                tarjetas = []
+                for pr in productos:
+                    t = ft.Container(
+                        content=ft.Column([
+                            ft.Row([
+                                ft.Text(f"Código: {pr['codigo']}", size=11, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+                                ft.Container(
+                                    content=ft.Text(f"Stock: {pr['existencia']:.0f}", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                                    bgcolor=ft.Colors.GREEN_700 if pr['existencia'] > 0 else ft.Colors.RED_700,
+                                    padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                    border_radius=8,
+                                )
+                            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                            ft.Text(pr.get("descripcion_general") or pr.get("referencia") or pr["codigo"],
+                                    size=13, weight=ft.FontWeight.BOLD, color=self.get_text_color(), max_lines=2),
+                            ft.Text(f"Ref: {pr.get('referencia') or '-'} | {pr.get('departamento','-')} / {pr.get('marca','-')}", size=11, color=self.get_subtext_color()),
+                            ft.Row([
+                                ft.Text(f"${pr['precio_dolares']:.2f} (Efvo)", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
+                                ft.Text(f"${pr.get('precio_bcv',0):.2f} (BCV)", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_600),
+                                ft.Text(f"Bs {pr.get('monto_bcv_bolivares',0):,.2f}", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
+                            ], spacing=8, wrap=True),
+                            ft.FilledButton(
+                                content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART, size=16), ft.Text("Agregar")], tight=True),
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE),
+                                on_click=lambda ev2, prod=pr: _agregar_desde_modal(prod, ev2),
+                            ),
+                        ], spacing=4),
+                        padding=10, border_radius=10, width=280,
+                        bgcolor=self.get_card_bg(),
                         border=ft.Border.all(1, self.get_border_color()),
                     )
-                    for pr in productos
-                ]
+                    tarjetas.append(t)
+                lista_resultados.controls = [ft.Row(controls=tarjetas, wrap=True, spacing=8)]
+
+            elif modo == "separado":
+                items = []
+                for pr in productos:
+                    items.append(
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Text(pr["codigo"], size=12, color=self.get_accent_color(), weight=ft.FontWeight.W_600, width=90),
+                                ft.Text(pr.get("referencia") or "-", size=12, color=self.get_subtext_color(), width=90),
+                                ft.Text(pr.get("descripcion_general") or "-", size=12, color=self.get_text_color(), width=220, max_lines=1),
+                                ft.Text(pr.get("departamento") or "-", size=12, color=self.get_subtext_color(), width=100),
+                                ft.Text(pr.get("marca") or "-", size=12, color=self.get_subtext_color(), width=90),
+                                ft.Text(f"${pr['precio_dolares']:.2f}", size=12, color=ft.Colors.GREEN_600, weight=ft.FontWeight.BOLD, width=80),
+                                ft.Text(f"Stock: {pr['existencia']:.0f}", size=12, color=self.get_subtext_color(), width=80),
+                                ft.IconButton(
+                                    icon=ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_600, icon_size=24,
+                                    tooltip="Agregar a la venta", on_click=lambda ev2, prod=pr: _agregar_desde_modal(prod, ev2),
+                                ),
+                            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            padding=8, border_radius=8, bgcolor=self.get_card_bg(), border=ft.Border.all(1, self.get_border_color()),
+                        )
+                    )
+                lista_resultados.controls = items
+
+            else:  # agrupado (default)
+                items = []
+                for pr in productos:
+                    items.append(
+                        ft.Container(
+                            content=ft.Row(
+                                controls=[
+                                    ft.Column([
+                                        ft.Text(
+                                            pr.get("descripcion_general") or pr.get("referencia") or pr["codigo"],
+                                            weight=ft.FontWeight.BOLD, color=self.get_text_color(), size=15,
+                                            no_wrap=False,
+                                        ),
+                                        ft.Text(f"Código: {pr['codigo']}  ·  Ref: {pr.get('referencia') or '-'}  ·  {pr.get('departamento','-')} / {pr.get('marca') or '-'}", size=12, color=self.get_subtext_color()),
+                                        ft.Row([
+                                            ft.Text(f"$ {pr['precio_dolares']:.2f} (Efvo.)", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
+                                            ft.Text(f"$ {pr.get('precio_bcv', 0):.2f} (BCV)", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_600),
+                                            ft.Text(f"Bs {pr.get('monto_bcv_bolivares', 0):,.2f}", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
+                                            ft.Text(f"Stock: {pr['existencia']:.0f}", size=13, color=self.get_subtext_color()),
+                                        ], spacing=14, wrap=True),
+                                    ], spacing=3, tight=True, expand=True),
+                                    ft.IconButton(
+                                        icon=ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_600,
+                                        icon_size=28,
+                                        tooltip="Agregar a la venta en curso",
+                                        on_click=lambda ev2, prod=pr: _agregar_desde_modal(prod, ev2),
+                                    ),
+                                ],
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            padding=12, border_radius=10, bgcolor=self.get_card_bg(),
+                            border=ft.Border.all(1, self.get_border_color()),
+                        )
+                    )
+                lista_resultados.controls = items
+
             self.safe_update(ev)
 
         txt_busqueda.on_change = _refrescar
@@ -870,7 +957,12 @@ class VentasView(BaseView):
 
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Row([ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=self.get_accent_color()), ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD)], spacing=10),
+            title=ft.Row([
+                ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=self.get_accent_color()),
+                ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD),
+                ft.Container(expand=True),
+                btn_modo_modal,
+            ], spacing=10),
             content=ft.Container(
                 content=ft.Column([
                     ft.Row([txt_busqueda, cant_modal_input], spacing=10),
@@ -881,8 +973,6 @@ class VentasView(BaseView):
                     ft.Divider(height=4),
                     lista_resultados,
                 ], spacing=8, tight=True),
-                # Modal mucho más amplio: antes 560px de ancho / 340px de lista
-                # obligaba a truncar visualmente descripciones largas.
                 width=980,
                 height=680,
             ),
@@ -893,6 +983,7 @@ class VentasView(BaseView):
         if dlg not in p.overlay:
             p.overlay.append(dlg)
         dlg.open = True
+        p.update()
         p.update()
 
     def handle_ajustar_cantidad(self, e, item: dict, delta: float):

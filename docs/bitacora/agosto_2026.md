@@ -302,4 +302,14 @@
 - **Verificaciones realizadas:** Verificación de sintaxis e importación correcta de `GestionDatosView` en el entorno virtual (`env/Scripts/python.exe -m py_compile ui/views/gestion_datos_view.py`).
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente. Mapeo de columnas con navegación y scroll vertical funcional.
 
+## Incorporación de Modos de Vista (Separado, Agrupado y Tarjetas Móviles) en Inventario y Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Pedido del usuario:** Permitir alternar los datos de inventario y ventas entre la vista de columnas separadas, una vista agrupada (Código + Ref + Descripción principal; Depto + Marca; Precios; Existencia; Acciones en grid de 2 filas) y una vista de tarjetas optimizada para teléfonos móviles.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se integró un selector `ft.SegmentedButton` (`Separado`, `Agrupado`, `Tarjetas`) en el encabezado del panel del catálogo. En Modo Agrupado se estructuran 5 columnas consolidadas con la descripción destacada como dato principal y las acciones ordenadas en un grid 2x2 para minimizar el ancho horizontal. En Modo Tarjetas se genera una cuadrícula adaptativa de tarjetas individuales responsivas para dispositivos móviles.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** En `abrir_modal_buscar_inventario` se incluyó el mismo selector de vista `ft.SegmentedButton`, permitiendo explorar los productos de venta en modo separado, agrupado o tarjetas.
+- **Verificaciones realizadas:** Compilación y sintaxis verfiicada con `py_compile` en ambos módulos. Prueba funcional de inicialización y conmutación de estado sin excepciones.
+- **Estado del proyecto:** Funcionalidad implementada y committeada de forma atómica.
+
+
 
