@@ -201,13 +201,47 @@ def actualizar_producto(
     return resultado
 
 
-# Columnas de texto directo del inventario (ERS 3.2) filtrables por LIKE independiente.
-_FILTROS_TEXTO = (
-    "codigo", "referencia", "departamento", "descripcion_general", "marca",
-    "fecha_ultima_modificacion", "codigo_barras", "nombre_referencia_corto",
-)
-# Columnas numéricas, filtrables como texto parcial sobre su representación.
-_FILTROS_NUMERICOS = ("precio_dolares", "precio_bcv", "existencia")
+# Columnas categóricas del inventario ofrecidas como filtros de selección
+# múltiple con buscador (ver `ui/components/multi_select_filter.py`).
+_COLUMNAS_MULTISELECT = ("departamento", "marca")
+
+
+def obtener_opciones_filtro(columna: str) -> list[dict]:
+    """Valores distintos no vacíos de una columna categórica del inventario
+    (`departamento` o `marca`), con la cantidad de productos que la usan.
+    Ordenados por popularidad descendente: el filtro multi-selección con
+    buscador muestra primero los valores más usados cuando no hay texto
+    escrito en el buscador."""
+    if columna not in _COLUMNAS_MULTISELECT:
+        raise ValueError(f"Columna de filtro no soportada: {columna}")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT {columna} AS valor, COUNT(*) AS total FROM productos "
+            f"WHERE {columna} IS NOT NULL AND TRIM({columna}) <> '' "
+            f"GROUP BY {columna} ORDER BY total DESC, valor COLLATE NOCASE ASC"
+        )
+        return [{"value": r["valor"], "label": r["valor"], "total": r["total"]} for r in cursor.fetchall()]
+
+
+def obtener_opciones_proveedor_filtro() -> list[dict]:
+    """Proveedores vinculados a algún producto del inventario, con la cantidad
+    de productos que usan cada uno, ordenados por popularidad descendente."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT pv.id AS id,
+                   COALESCE(NULLIF(TRIM(pv.empresa), ''), NULLIF(TRIM(pv.contacto), ''), 'Proveedor #' || pv.id) AS etiqueta,
+                   COUNT(*) AS total
+            FROM productos p
+            JOIN proveedores pv ON pv.id = p.proveedor_id
+            WHERE p.proveedor_id IS NOT NULL
+            GROUP BY pv.id
+            ORDER BY total DESC, etiqueta COLLATE NOCASE ASC
+            """
+        )
+        return [{"value": str(r["id"]), "label": r["etiqueta"], "total": r["total"]} for r in cursor.fetchall()]
 
 
 def listar_productos(
@@ -221,14 +255,21 @@ def listar_productos(
     """Lista productos con filtros opcionales.
 
     - `busqueda`: texto libre combinado con OR sobre varias columnas (búsqueda
-      rápida tipo escáner, usada por el módulo de Ventas).
-    - `filtros`: diccionario con una clave por cada una de las 12 columnas del
-      inventario (ERS 3.2 — Filtros en Cascada). Cada filtro no vacío se
-      combina con los demás mediante AND independientes (coincidencia parcial
-      LIKE '%texto%'), nunca concatenados en un solo término de búsqueda.
-      Claves soportadas: codigo, referencia, departamento, descripcion_general,
-      marca, precio_dolares, precio_bcv, proveedor, fecha_ultima_modificacion,
-      existencia, codigo_barras, nombre_referencia_corto.
+      rápida tipo escáner/general, usada por Ventas y por el buscador general
+      de Inventario). Cada palabra se exige con AND sobre el conjunto de
+      columnas de texto (codigo, referencia, descripcion_general, marca,
+      codigo_barras, nombre_referencia_corto).
+    - `filtros`: diccionario de filtros avanzados combinables, todos con AND
+      entre sí:
+        - `departamento`, `marca`: lista de valores exactos (selección
+          múltiple) — IN.
+        - `proveedor_ids`: lista de IDs de proveedor — IN.
+        - `precio_dolares_min/max`, `precio_bcv_min/max`, `existencia_min/max`:
+          rango numérico (inclusive en ambos extremos).
+        - `fecha_ingreso_desde/hasta`: rango sobre `created_at` (formato
+          'YYYY-MM-DD').
+        - `fecha_actualizacion_desde/hasta`: rango sobre
+          `fecha_ultima_modificacion` (formato 'YYYY-MM-DD').
     """
     query = "SELECT * FROM productos WHERE 1=1"
     params: list = []
@@ -252,28 +293,56 @@ def listar_productos(
         query += " AND proveedor_id = ?"
         params.append(proveedor_id)
 
-    # ── Filtros en cascada por columna (ERS 3.2): AND independientes ────────
     filtros = filtros or {}
 
-    for columna in _FILTROS_TEXTO:
-        valor = (filtros.get(columna) or "").strip()
-        if valor:
-            query += f" AND {columna} LIKE ?"
-            params.append(f"%{valor}%")
+    # ── Selección múltiple (IN) para columnas categóricas ────────────────────
+    for columna in _COLUMNAS_MULTISELECT:
+        valores = [v for v in (filtros.get(columna) or []) if v]
+        if valores:
+            placeholders = ",".join("?" * len(valores))
+            query += f" AND {columna} IN ({placeholders})"
+            params.extend(valores)
 
-    for columna in _FILTROS_NUMERICOS:
-        valor = (filtros.get(columna) or "").strip()
-        if valor:
-            query += f" AND CAST({columna} AS TEXT) LIKE ?"
-            params.append(f"%{valor}%")
+    proveedor_ids = [v for v in (filtros.get("proveedor_ids") or []) if v not in (None, "")]
+    if proveedor_ids:
+        placeholders = ",".join("?" * len(proveedor_ids))
+        query += f" AND proveedor_id IN ({placeholders})"
+        params.extend(int(v) for v in proveedor_ids)
 
-    proveedor_texto = (filtros.get("proveedor") or "").strip()
-    if proveedor_texto:
-        query += (
-            " AND proveedor_id IN "
-            "(SELECT id FROM proveedores WHERE empresa LIKE ? OR contacto LIKE ?)"
-        )
-        params.extend([f"%{proveedor_texto}%", f"%{proveedor_texto}%"])
+    # ── Rangos numéricos (mín./máx. inclusive) ───────────────────────────────
+    def _aplicar_rango_numerico(columna: str, prefijo: str) -> None:
+        nonlocal query
+        for sufijo, operador in (("_min", ">="), ("_max", "<=")):
+            crudo = filtros.get(f"{prefijo}{sufijo}")
+            crudo = str(crudo).strip() if crudo not in (None, "") else ""
+            if not crudo:
+                continue
+            try:
+                valor = float(crudo.replace(",", "."))
+            except ValueError:
+                continue
+            query += f" AND {columna} {operador} ?"
+            params.append(valor)
+
+    _aplicar_rango_numerico("precio_dolares", "precio_dolares")
+    _aplicar_rango_numerico("precio_bcv", "precio_bcv")
+    _aplicar_rango_numerico("existencia", "existencia")
+
+    # ── Rangos de fecha (ingreso = created_at, actualización = fecha_ultima_modificacion) ──
+    def _aplicar_rango_fecha(columna: str, prefijo: str) -> None:
+        nonlocal query
+        desde = str(filtros.get(f"{prefijo}_desde") or "").strip()
+        hasta = str(filtros.get(f"{prefijo}_hasta") or "").strip()
+        if desde:
+            query += f" AND {columna} >= ?"
+            params.append(desde)
+        if hasta:
+            query += f" AND {columna} <= ?"
+            # Fecha suelta (sin hora) debe incluir todo ese día completo.
+            params.append(f"{hasta} 23:59:59" if len(hasta) == 10 else hasta)
+
+    _aplicar_rango_fecha("created_at", "fecha_ingreso")
+    _aplicar_rango_fecha("fecha_ultima_modificacion", "fecha_actualizacion")
 
     query += " ORDER BY departamento, codigo"
     offset = (max(1, page) - 1) * per_page
