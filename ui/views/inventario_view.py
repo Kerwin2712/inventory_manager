@@ -394,7 +394,7 @@ class InventarioView(BaseView):
         )
         self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
         self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=460)
-        self._vista_container = ft.Container(height=460, expand=True)
+        self._vista_container = ft.Container(height=460)
         self._lbl_pag = ft.Text("", color=subtext, size=12)
 
         self._btn_modo_vista = ft.SegmentedButton(
@@ -429,13 +429,16 @@ class InventarioView(BaseView):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=accent),
-                            ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
-                            ft.Container(expand=True),
-                            self._btn_modo_vista,
-                            self._build_selector_columnas(accent, text_color),
+                            ft.Row([
+                                ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=accent),
+                                ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ], spacing=8),
+                            ft.Row([
+                                self._btn_modo_vista,
+                                self._build_selector_columnas(accent, text_color),
+                            ], spacing=8),
                         ],
-                        spacing=8,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         wrap=True,
                     ),
                     ft.Container(

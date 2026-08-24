@@ -958,11 +958,12 @@ class VentasView(BaseView):
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Row([
-                ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=self.get_accent_color()),
-                ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD),
-                ft.Container(expand=True),
+                ft.Row([
+                    ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=self.get_accent_color()),
+                    ft.Text("Buscar en Inventario", weight=ft.FontWeight.BOLD),
+                ], spacing=8),
                 btn_modo_modal,
-            ], spacing=10),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             content=ft.Container(
                 content=ft.Column([
                     ft.Row([txt_busqueda, cant_modal_input], spacing=10),

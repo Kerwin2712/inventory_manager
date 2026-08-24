@@ -311,5 +311,15 @@
 - **Verificaciones realizadas:** Compilación y sintaxis verfiicada con `py_compile` en ambos módulos. Prueba funcional de inicialización y conmutación de estado sin excepciones.
 - **Estado del proyecto:** Funcionalidad implementada y committeada de forma atómica.
 
+### Fix: Corrección de Colapso Visual (Rectángulo Gris) en Inventario y Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema detectado:** Al alternar los modos de vista, la lista del catálogo mostraba un rectángulo gris sólido debido a una combinación inválida de un contenedor `ft.Container(expand=True)` dentro de una `ft.Row(wrap=True)` en los encabezados y un `expand=True` descontextualizado en `_vista_container`.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se removió `expand=True` de `_vista_container` y se reestructuró la fila del título utilizando `alignment=ft.MainAxisAlignment.SPACE_BETWEEN` sin contenedores `expand=True` dentro de `wrap=True`.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** Se ajustó el título del modal `abrir_modal_buscar_inventario` a la misma estructura limpia sin flex desbordante.
+- **Verificaciones realizadas:** Compilación y análisis de layout exitoso sin excepciones de restricciones en Flutter.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
