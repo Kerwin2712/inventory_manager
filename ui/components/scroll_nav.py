@@ -48,3 +48,68 @@ def build_scroll_nav(target: ft.Control, axis: str, accent, step: float = 260, t
         ],
         spacing=0, tight=True,
     )
+
+
+def build_floating_nav(
+    h_target: ft.Control, v_target: ft.Control, accent,
+    right: float = 10, bottom: float = 10,
+) -> ft.Container:
+    """Cruceta de 4 flechas flotantes, ancladas a una esquina fija dentro de
+    un `ft.Stack` (posición `right`/`bottom`) — a diferencia de
+    `build_scroll_nav`, esta no vive junto al contenido que se desplaza, así
+    que sigue al alcance de un clic sin importar hasta dónde se haya
+    scrolleado la tabla. Pensada para tablas anchas y largas (Inventario):
+    izquierda/derecha saltan al inicio/final de la fila (Código ↔ Acciones),
+    arriba/abajo saltan al primer/último ítem de la página actual.
+    """
+    _SALTO = 999999  # el scroll real lo acota a su límite disponible.
+
+    def _mover(target, delta):
+        def handler(e):
+            target.scroll_to(delta=delta, duration=250)
+        return handler
+
+    def _flecha(icon, tooltip, handler):
+        return ft.IconButton(
+            icon=icon, icon_size=20, icon_color=ft.Colors.WHITE,
+            tooltip=tooltip, on_click=handler,
+            style=ft.ButtonStyle(
+                bgcolor={ft.ControlState.DEFAULT: accent, ft.ControlState.HOVERED: accent},
+                shape=ft.CircleBorder(),
+                padding=8,
+                elevation={ft.ControlState.DEFAULT: 3},
+            ),
+        )
+
+    def _espaciador():
+        return ft.Container(width=36, height=36)
+
+    cruceta = ft.Column(
+        controls=[
+            ft.Row(
+                [_espaciador(), _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_UP_ROUNDED, "Ir al primer ítem", _mover(v_target, -_SALTO)), _espaciador()],
+                spacing=4, alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            ft.Row(
+                [
+                    _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_LEFT_ROUNDED, "Ir al Código (inicio de la fila)", _mover(h_target, -_SALTO)),
+                    _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_RIGHT_ROUNDED, "Ir a Acciones (final de la fila)", _mover(h_target, _SALTO)),
+                ],
+                spacing=4, alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            ft.Row(
+                [_espaciador(), _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_DOWN_ROUNDED, "Ir al último ítem", _mover(v_target, _SALTO)), _espaciador()],
+                spacing=4, alignment=ft.MainAxisAlignment.CENTER,
+            ),
+        ],
+        spacing=4, tight=True,
+    )
+
+    return ft.Container(
+        content=cruceta,
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
+        border_radius=50,
+        padding=6,
+        right=right,
+        bottom=bottom,
+    )

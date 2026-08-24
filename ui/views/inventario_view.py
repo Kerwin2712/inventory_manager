@@ -1,7 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
-from ui.components.scroll_nav import build_scroll_nav
+from ui.components.scroll_nav import build_floating_nav
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
@@ -385,7 +385,14 @@ class InventarioView(BaseView):
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
         )
-        self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.AUTO)
+        # Viewport acotado con scroll propio en ambos ejes (independiente del
+        # scroll de la página): así "arriba/abajo" y "izquierda/derecha"
+        # tienen un recorrido real y acotado dentro del cual la cruceta
+        # flotante de navegación tiene sentido — antes el scroll vertical lo
+        # manejaba la página completa, obligando a desplazarse más allá de la
+        # tabla (filtros, panel BCV) para ver el primer/último ítem.
+        self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
+        self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=460)
         self._lbl_pag = ft.Text("", color=subtext, size=12)
         self._cargar_filas(text_color, accent)
 
@@ -407,17 +414,23 @@ class InventarioView(BaseView):
                     ft.Container(
                         content=ft.Column(
                             controls=[
-                                # Fila con scroll horizontal: evita que las columnas de la
-                                # derecha (Exist., Acciones) queden recortadas/ilegibles
-                                # cuando la sidebar expandida reduce el ancho disponible.
-                                self._tabla_scroll_row,
+                                # Stack: la tabla (con scroll propio horizontal Y vertical)
+                                # de fondo, con una cruceta de flechas flotante anclada
+                                # siempre en la misma esquina — no hay que buscar la
+                                # barra de scroll ni desplazarse para encontrarla, salta
+                                # directo a Código/Acciones (izq./der.) o al primer/último
+                                # ítem (arriba/abajo) desde donde sea que esté la vista.
+                                ft.Stack(
+                                    controls=[
+                                        self._tabla_scroll_col,
+                                        build_floating_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent),
+                                    ],
+                                    height=460,
+                                ),
                                 ft.Row(
                                     controls=[
-                                        build_scroll_nav(self._tabla_scroll_row, "horizontal", accent, tooltip_prefix="Tabla: "),
-                                        ft.Row([
-                                            self._lbl_pag,
-                                            ft.Row([btn_prev, btn_next], spacing=4),
-                                        ], spacing=10),
+                                        self._lbl_pag,
+                                        ft.Row([btn_prev, btn_next], spacing=4),
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
