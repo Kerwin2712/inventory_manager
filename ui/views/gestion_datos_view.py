@@ -5,8 +5,18 @@ from datetime import datetime
 import pandas as pd
 import flet as ft
 from ui.views.base_view import BaseView
+from ui.components.scroll_nav import build_scroll_nav
 from core.database import get_connection, get_setting, set_setting
-from services.importacion_service import procesar_importacion_excel
+from services.importacion_service import (
+    procesar_importacion_excel,
+    CAMPOS_PRODUCTO_MAPEO,
+    listar_hojas_excel,
+    detectar_hoja_productos,
+    obtener_columnas_y_muestra,
+    sugerir_mapeo_columnas,
+    analizar_proveedores_con_mapeo,
+    ejecutar_importacion_completa_mapeada,
+)
 
 class GestionDatosView(BaseView):
     """Vista de Gestión de Datos y Respaldos del Sistema (ERS 1.1)."""
@@ -126,45 +136,27 @@ class GestionDatosView(BaseView):
         )
 
     def handle_importar_click(self, e):
-        """Ejecuta la Carga Masiva analizando primero proveedores nuevos (ERS 1.1)."""
+        """Ejecuta la Carga Masiva: selecciona el archivo y abre el asistente
+        de mapeo de columnas (el usuario decide a qué campo de la BD
+        corresponde cada columna del Excel, sin importar cómo se llame)."""
         try:
             print("\n>>> [GestionDatosView] Clic en IMPORTAR DESDE EXCEL")
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"\n[{datetime.now()}] Iniciando handle_importar_click\n")
-            
+
             print(">>> [GestionDatosView] Abriendo diálogo de selección de archivo...")
             ruta_archivo = self.abrir_dialogo_abrir()
             with open("import_debug.log", "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] Ruta seleccionada: {ruta_archivo}\n")
             print(f">>> [GestionDatosView] Ruta de archivo seleccionada: '{ruta_archivo}'")
-                
+
             if not ruta_archivo:
                 print(">>> [GestionDatosView] Cancelado: No se seleccionó ningún archivo.")
                 with open("import_debug.log", "a", encoding="utf-8") as f:
                     f.write(f"[{datetime.now()}] No se seleccionó archivo\n")
                 return
 
-            print(">>> [GestionDatosView] Importando y analizando proveedores del Excel...")
-            from services.importacion_service import analizar_proveedores_excel
-            analisis = analizar_proveedores_excel(ruta_archivo)
-            
-            with open("import_debug.log", "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.now()}] Resultado del análisis: {analisis}\n")
-            print(f">>> [GestionDatosView] Resultado del análisis de proveedores: {analisis}")
-
-            if not analisis.get("exito"):
-                print(f">>> [GestionDatosView] ERROR en análisis: {analisis.get('mensaje')}")
-                self.show_alert_error(e, analisis.get("mensaje"))
-                return
-
-            faltantes = analisis.get("proveedores_faltantes", [])
-            print(f">>> [GestionDatosView] Proveedores faltantes en BD: {faltantes}")
-            if faltantes:
-                print(f">>> [GestionDatosView] Iniciando asistente interactivo para {len(faltantes)} proveedores faltantes...")
-                self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes)
-            else:
-                print(">>> [GestionDatosView] No hay proveedores faltantes. Procediendo con la importación final...")
-                self.ejecutar_importacion_final(e, ruta_archivo)
+            self.mostrar_asistente_mapeo(e, ruta_archivo)
         except Exception as ex:
             import traceback
             err_msg = traceback.format_exc()
@@ -176,8 +168,209 @@ class GestionDatosView(BaseView):
             except Exception:
                 pass
 
-    def mostrar_asistente_proveedores_faltantes(self, e, ruta_archivo, faltantes, idx=0):
-        """Muestra un diálogo dinámico secuencial para completar información de proveedores nuevos."""
+    def mostrar_asistente_mapeo(self, e, ruta_archivo: str, hoja_forzada: str | None = None):
+        """Asistente de mapeo de columnas para la importación de inventario:
+        muestra las columnas reales del archivo con una muestra de filas y
+        deja que el usuario decida explícitamente a qué campo de la base de
+        datos corresponde cada una — funciona sin importar los nombres de
+        las columnas del Excel."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        try:
+            hojas = listar_hojas_excel(ruta_archivo)
+        except Exception as ex:
+            self.show_alert_error(e, f"Error al abrir el archivo Excel: {ex}")
+            return
+
+        hoja_actual = hoja_forzada or detectar_hoja_productos(ruta_archivo)
+        if not hoja_actual and hojas:
+            hoja_actual = hojas[0]
+        if not hoja_actual:
+            self.show_alert_error(e, "El archivo no tiene ninguna hoja legible.")
+            return
+
+        info = obtener_columnas_y_muestra(ruta_archivo, hoja_actual)
+        columnas_excel = info["columnas"]
+        muestra = info["muestra"]
+        sugerido = sugerir_mapeo_columnas(columnas_excel)
+
+        if not columnas_excel:
+            self.show_alert_error(e, f"La hoja '{hoja_actual}' no tiene columnas.")
+            return
+
+        NO_IMPORTAR = ""
+        opciones_columna = [ft.dropdown.Option(NO_IMPORTAR, "— No importar —")] + [
+            ft.dropdown.Option(c, c) for c in columnas_excel
+        ]
+
+        lbl_muestra_por_campo: dict[str, ft.Text] = {}
+        dd_por_campo: dict[str, ft.Dropdown] = {}
+
+        def _texto_muestra(columna: str) -> str:
+            valores = muestra.get(columna, [])
+            if not valores:
+                return "(sin datos de muestra)"
+            return "Ej: " + ", ".join(v if v else "∅" for v in valores[:4])
+
+        def _campo_mapeo_row(campo: str, etiqueta: str, obligatorio: bool) -> ft.Row:
+            valor_inicial = sugerido.get(campo, NO_IMPORTAR)
+            dd = ft.Dropdown(
+                value=valor_inicial if valor_inicial in columnas_excel else NO_IMPORTAR,
+                options=opciones_columna,
+                width=240,
+                border_radius=10,
+                dense=True,
+            )
+            lbl_muestra = ft.Text(
+                _texto_muestra(valor_inicial) if valor_inicial else "",
+                size=11, color=self.get_subtext_color(), italic=True, expand=True,
+            )
+
+            def _on_change(ev, lbl=lbl_muestra):
+                lbl.value = _texto_muestra(dd.value) if dd.value else ""
+                p.update()
+
+            dd.on_change = _on_change
+            dd_por_campo[campo] = dd
+            lbl_muestra_por_campo[campo] = lbl_muestra
+
+            etiqueta_texto = f"{etiqueta} *" if obligatorio else etiqueta
+            return ft.Row(
+                controls=[
+                    ft.Text(etiqueta_texto, size=13, weight=ft.FontWeight.BOLD if obligatorio else ft.FontWeight.NORMAL,
+                             color=self.get_text_color(), width=180),
+                    dd,
+                    lbl_muestra,
+                ],
+                spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+        filas_mapeo = [
+            _campo_mapeo_row(campo, etiqueta, obligatorio)
+            for campo, etiqueta, obligatorio in CAMPOS_PRODUCTO_MAPEO
+        ]
+
+        # ── Vista previa cruda del archivo (encabezados + primeras filas) ────
+        # Deja ver el contenido real sin depender de que el usuario recuerde
+        # los nombres de columna mientras completa el mapeo de arriba.
+        preview_table = ft.DataTable(
+            columns=[ft.DataColumn(ft.Text(c, weight=ft.FontWeight.BOLD, size=12)) for c in columnas_excel],
+            rows=[
+                ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(muestra[c][i] if i < len(muestra[c]) else "", size=12))
+                    for c in columnas_excel
+                ])
+                for i in range(max((len(v) for v in muestra.values()), default=0))
+            ],
+            column_spacing=20,
+        )
+        preview_row = ft.Row(controls=[preview_table], scroll=ft.ScrollMode.AUTO)
+
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _confirmar(ev):
+            mapeo = {campo: dd_por_campo[campo].value for campo, *_ in CAMPOS_PRODUCTO_MAPEO if dd_por_campo[campo].value}
+            if not mapeo.get("codigo"):
+                lbl_err.value = "Debe mapear una columna al campo obligatorio 'Código'."
+                p.update()
+                return
+
+            dlg.open = False
+            p.update()
+
+            analisis = analizar_proveedores_con_mapeo(ruta_archivo, hoja_actual, mapeo.get("proveedor"))
+            if not analisis.get("exito"):
+                self.show_alert_error(ev, analisis.get("mensaje"))
+                return
+
+            faltantes = analisis.get("proveedores_faltantes", [])
+            if faltantes:
+                self.mostrar_asistente_proveedores_faltantes(
+                    ev, ruta_archivo, faltantes,
+                    on_completado=lambda ev2: self.ejecutar_importacion_final_mapeada(ev2, ruta_archivo, hoja_actual, mapeo),
+                )
+            else:
+                self.ejecutar_importacion_final_mapeada(ev, ruta_archivo, hoja_actual, mapeo)
+
+        def _cancelar(ev):
+            dlg.open = False
+            p.update()
+
+        def _cambiar_hoja(ev):
+            dlg.open = False
+            p.update()
+            self.mostrar_asistente_mapeo(ev, ruta_archivo, hoja_forzada=dd_hoja.value)
+
+        contenido = [
+            ft.Text(
+                f"Se detectaron {len(columnas_excel)} columnas en la hoja seleccionada. Indique a qué campo "
+                "de la base de datos corresponde cada una (o déjelo en 'No importar'). El nombre de las "
+                "columnas del archivo no importa — usted decide el mapeo.",
+                size=12, color=self.get_subtext_color(),
+            ),
+        ]
+
+        if len(hojas) > 1:
+            dd_hoja = ft.Dropdown(
+                label="Hoja del archivo a importar como Productos",
+                value=hoja_actual,
+                options=[ft.dropdown.Option(h) for h in hojas],
+                width=320, border_radius=10,
+            )
+            dd_hoja.on_change = _cambiar_hoja
+            contenido.append(dd_hoja)
+
+        contenido += [
+            ft.Divider(height=10),
+            ft.Text("MAPEO DE COLUMNAS", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+            ft.Column(controls=filas_mapeo, spacing=6, scroll=ft.ScrollMode.AUTO, height=260),
+            ft.Divider(height=10),
+            ft.Row([
+                ft.Text("VISTA PREVIA DEL ARCHIVO", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+                build_scroll_nav(preview_row, "horizontal", self.get_accent_color(), tooltip_prefix="Vista previa: "),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Container(content=preview_row, padding=6, border_radius=10,
+                         bgcolor=self.get_card_bg(), border=ft.Border.all(1, self.get_border_color())),
+            lbl_err,
+        ]
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.RULE_ROUNDED, color=self.get_accent_color()),
+                ft.Text(f"Mapeo de Columnas — Hoja '{hoja_actual}'", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column(contenido, spacing=10, tight=True, scroll=ft.ScrollMode.AUTO),
+                # Diálogo amplio: hay 11 campos a mapear + una vista previa
+                # tabular del archivo, no caben cómodos en un modal chico.
+                width=900,
+                height=680,
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=_cancelar),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.PLAY_ARROW_ROUNDED), ft.Text("Confirmar Mapeo e Importar")], tight=True),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=_confirmar,
+                ),
+            ],
+        )
+
+        if dlg not in p.overlay:
+            p.overlay.append(dlg)
+        dlg.open = True
+        p.update()
+
+    def mostrar_asistente_proveedores_faltantes(self, e, ruta_archivo, faltantes, idx=0, on_completado=None):
+        """Muestra un diálogo dinámico secuencial para completar información
+        de proveedores nuevos. Al terminar con todos, invoca `on_completado`
+        (por defecto, la importación clásica por heurística de nombres de
+        columna); el asistente de mapeo de columnas pasa aquí su propia
+        continuación para usar el mapeo explícito que el usuario confirmó."""
         p = self.get_current_page(e)
         if not p:
             print(">>> [mostrar_asistente_proveedores_faltantes] ERROR: No se pudo obtener la instancia de Page activa.")
@@ -281,11 +474,11 @@ class GestionDatosView(BaseView):
                 # Siguiente o iniciar importación final
                 sig_idx = idx + 1
                 if sig_idx < total_faltantes:
-                    self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes, sig_idx)
+                    self.mostrar_asistente_proveedores_faltantes(e, ruta_archivo, faltantes, sig_idx, on_completado=on_completado)
                 else:
                     print(">>> [registrar_proveedor] Todos los proveedores registrados. Procediendo a la importación final...")
                     self.show_alert_success(e, "Todos los proveedores nuevos se registraron correctamente.")
-                    self.ejecutar_importacion_final(e, ruta_archivo)
+                    (on_completado or (lambda ev: self.ejecutar_importacion_final(ev, ruta_archivo)))(e)
 
             except Exception as ex:
                 import traceback
@@ -359,6 +552,35 @@ class GestionDatosView(BaseView):
             print(f"\n>>> [ejecutar_importacion_final] EXCEPCIÓN en importación final:\n{err_msg}")
             try:
                 self.show_alert_error(e, f"Excepción crítica en importación final: {str(ex)}")
+            except Exception:
+                pass
+
+    def ejecutar_importacion_final_mapeada(self, e, ruta_archivo, hoja_productos, mapeo):
+        """Ejecuta la importación usando el mapeo de columnas explícito que el
+        usuario confirmó en el asistente (services.ejecutar_importacion_completa_mapeada)."""
+        try:
+            print(f">>> [ejecutar_importacion_final_mapeada] hoja='{hoja_productos}' mapeo={mapeo}")
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Iniciando ejecutar_importacion_final_mapeada: hoja={hoja_productos} mapeo={mapeo}\n")
+
+            res = ejecutar_importacion_completa_mapeada(ruta_archivo, hoja_productos, mapeo)
+
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Resultado de la importación mapeada: {res}\n")
+            print(f">>> [ejecutar_importacion_final_mapeada] Resultado: {res}")
+
+            if res.get("exito"):
+                self.show_alert_success(e, res.get("mensaje"))
+            else:
+                self.mostrar_dialogo_error(e, res.get("mensaje"))
+        except Exception as ex:
+            import traceback
+            err_msg = traceback.format_exc()
+            with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] EXCEPCIÓN EN IMPORTACIÓN MAPEADA: {err_msg}\n")
+            print(f"\n>>> [ejecutar_importacion_final_mapeada] EXCEPCIÓN:\n{err_msg}")
+            try:
+                self.show_alert_error(e, f"Excepción crítica en importación: {str(ex)}")
             except Exception:
                 pass
 
