@@ -1,6 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
+from ui.components.scroll_nav import build_scroll_nav
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
@@ -384,6 +385,7 @@ class InventarioView(BaseView):
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
         )
+        self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.AUTO)
         self._lbl_pag = ft.Text("", color=subtext, size=12)
         self._cargar_filas(text_color, accent)
 
@@ -408,11 +410,14 @@ class InventarioView(BaseView):
                                 # Fila con scroll horizontal: evita que las columnas de la
                                 # derecha (Exist., Acciones) queden recortadas/ilegibles
                                 # cuando la sidebar expandida reduce el ancho disponible.
-                                ft.Row(controls=[self._dt], scroll=ft.ScrollMode.AUTO),
+                                self._tabla_scroll_row,
                                 ft.Row(
                                     controls=[
-                                        self._lbl_pag,
-                                        ft.Row([btn_prev, btn_next], spacing=4),
+                                        build_scroll_nav(self._tabla_scroll_row, "horizontal", accent, tooltip_prefix="Tabla: "),
+                                        ft.Row([
+                                            self._lbl_pag,
+                                            ft.Row([btn_prev, btn_next], spacing=4),
+                                        ], spacing=10),
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
