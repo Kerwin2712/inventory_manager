@@ -1,7 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
-from ui.components.scroll_nav import build_floating_nav
+from ui.components.scroll_nav import build_floating_corner_nav
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
@@ -423,7 +423,7 @@ class InventarioView(BaseView):
                                 ft.Stack(
                                     controls=[
                                         self._tabla_scroll_col,
-                                        build_floating_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent),
+                                        *build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent),
                                     ],
                                     height=460,
                                 ),

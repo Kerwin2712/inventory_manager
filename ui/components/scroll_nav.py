@@ -1,15 +1,28 @@
 """Botones de navegación rápida para listas/tablas con scroll.
 
 Flet permite desplazar un `Column`/`Row`/`ListView` con scroll habilitado
-mediante `.scroll_to(delta=..., duration=...)`. Este helper arma una fila
-compacta de botones (extremo, paso, extremo) para moverse rápidamente sin
-depender de la rueda del mouse o de arrastrar barras de scroll finas —
-particularmente útil en tablas anchas (Inventario, Carrito de Ventas) y en
-listas largas de resultados dentro de diálogos modales.
+mediante `.scroll_to(delta=..., duration=...)`. Este helper arma botones
+compactos para moverse rápidamente sin depender de la rueda del mouse o de
+arrastrar barras de scroll finas — particularmente útil en tablas anchas
+(Inventario, Carrito de Ventas) y en listas largas de resultados dentro de
+diálogos modales.
+
+IMPORTANTE: `Control.scroll_to(...)` es un método `async def` en esta
+versión de Flet (0.86.1) — un `on_click` normal (función sync) que lo llama
+sin `await` solo crea una coroutine y la descarta sin ejecutarla nunca (no
+lanza error, simplemente no pasa nada). Flet sí soporta manejadores de
+evento `async def` de forma nativa (los detecta y los espera), así que
+todos los botones de este módulo usan handlers asíncronos.
 """
 import flet as ft
 
 _PASO_GRANDE = 999999  # clamma al límite real del scroll (Flutter lo acota).
+
+
+def _mover_async(target: ft.Control, delta: float, duration: int = 200):
+    async def handler(e):
+        await target.scroll_to(delta=delta, duration=duration)
+    return handler
 
 
 def build_scroll_nav(target: ft.Control, axis: str, accent, step: float = 260, tooltip_prefix: str = "") -> ft.Row:
@@ -31,18 +44,13 @@ def build_scroll_nav(target: ft.Control, axis: str, accent, step: float = 260, t
             (ft.Icons.VERTICAL_ALIGN_BOTTOM_ROUNDED, "Ir abajo del todo", _PASO_GRANDE),
         ]
 
-    def _mover(delta):
-        def handler(e):
-            target.scroll_to(delta=delta, duration=200)
-        return handler
-
     return ft.Row(
         controls=[
             ft.IconButton(
                 icon=icon, icon_size=16, icon_color=accent,
                 tooltip=f"{tooltip_prefix}{tip}",
                 style=ft.ButtonStyle(padding=4),
-                on_click=_mover(delta),
+                on_click=_mover_async(target, delta),
             )
             for icon, tip, delta in botones
         ],
@@ -50,66 +58,57 @@ def build_scroll_nav(target: ft.Control, axis: str, accent, step: float = 260, t
     )
 
 
-def build_floating_nav(
+def _mini_flecha(icon, tooltip: str, accent, handler) -> ft.IconButton:
+    """Botón circular pequeño y discreto (12px de ícono) para los clusters
+    flotantes — deliberadamente chico para no tapar datos de la tabla."""
+    return ft.IconButton(
+        icon=icon, icon_size=12, icon_color=ft.Colors.WHITE,
+        tooltip=tooltip, on_click=handler,
+        style=ft.ButtonStyle(
+            bgcolor={ft.ControlState.DEFAULT: ft.Colors.with_opacity(0.65, accent)},
+            shape=ft.CircleBorder(),
+            padding=2,
+        ),
+        width=24, height=24,
+    )
+
+
+def build_floating_corner_nav(
     h_target: ft.Control, v_target: ft.Control, accent,
-    right: float = 10, bottom: float = 10,
-) -> ft.Container:
-    """Cruceta de 4 flechas flotantes, ancladas a una esquina fija dentro de
-    un `ft.Stack` (posición `right`/`bottom`) — a diferencia de
-    `build_scroll_nav`, esta no vive junto al contenido que se desplaza, así
-    que sigue al alcance de un clic sin importar hasta dónde se haya
-    scrolleado la tabla. Pensada para tablas anchas y largas (Inventario):
-    izquierda/derecha saltan al inicio/final de la fila (Código ↔ Acciones),
-    arriba/abajo saltan al primer/último ítem de la página actual.
+    right: float = 6,
+) -> list[ft.Container]:
+    """Dos clusters flotantes pequeños, pensados para vivir como hijos
+    adicionales dentro de un `ft.Stack` (posición `right`/`top`/`bottom`
+    fija) — permanecen anclados a una esquina del viewport de la tabla
+    (no de la página), siempre al alcance sin importar cuánto se haya
+    scrolleado:
+
+    - Esquina superior derecha: ← / → (saltan al Código / a Acciones,
+      inicio y final de la fila).
+    - Esquina inferior derecha: ↑ / ↓ (saltan al primer / último ítem).
     """
-    _SALTO = 999999  # el scroll real lo acota a su límite disponible.
-
-    def _mover(target, delta):
-        def handler(e):
-            target.scroll_to(delta=delta, duration=250)
-        return handler
-
-    def _flecha(icon, tooltip, handler):
-        return ft.IconButton(
-            icon=icon, icon_size=20, icon_color=ft.Colors.WHITE,
-            tooltip=tooltip, on_click=handler,
-            style=ft.ButtonStyle(
-                bgcolor={ft.ControlState.DEFAULT: accent, ft.ControlState.HOVERED: accent},
-                shape=ft.CircleBorder(),
-                padding=8,
-                elevation={ft.ControlState.DEFAULT: 3},
-            ),
-        )
-
-    def _espaciador():
-        return ft.Container(width=36, height=36)
-
-    cruceta = ft.Column(
-        controls=[
-            ft.Row(
-                [_espaciador(), _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_UP_ROUNDED, "Ir al primer ítem", _mover(v_target, -_SALTO)), _espaciador()],
-                spacing=4, alignment=ft.MainAxisAlignment.CENTER,
-            ),
-            ft.Row(
-                [
-                    _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_LEFT_ROUNDED, "Ir al Código (inicio de la fila)", _mover(h_target, -_SALTO)),
-                    _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_RIGHT_ROUNDED, "Ir a Acciones (final de la fila)", _mover(h_target, _SALTO)),
-                ],
-                spacing=4, alignment=ft.MainAxisAlignment.CENTER,
-            ),
-            ft.Row(
-                [_espaciador(), _flecha(ft.Icons.KEYBOARD_DOUBLE_ARROW_DOWN_ROUNDED, "Ir al último ítem", _mover(v_target, _SALTO)), _espaciador()],
-                spacing=4, alignment=ft.MainAxisAlignment.CENTER,
-            ),
-        ],
-        spacing=4, tight=True,
+    horizontal = ft.Container(
+        content=ft.Row(
+            [
+                _mini_flecha(ft.Icons.CHEVRON_LEFT_ROUNDED, "Ir al Código (inicio de la fila)", accent, _mover_async(h_target, -_PASO_GRANDE, 250)),
+                _mini_flecha(ft.Icons.CHEVRON_RIGHT_ROUNDED, "Ir a Acciones (final de la fila)", accent, _mover_async(h_target, _PASO_GRANDE, 250)),
+            ],
+            spacing=3, tight=True,
+        ),
+        padding=2, border_radius=16,
+        right=right, top=4,
     )
 
-    return ft.Container(
-        content=cruceta,
-        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
-        border_radius=50,
-        padding=6,
-        right=right,
-        bottom=bottom,
+    vertical = ft.Container(
+        content=ft.Row(
+            [
+                _mini_flecha(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, "Ir al primer ítem", accent, _mover_async(v_target, -_PASO_GRANDE, 250)),
+                _mini_flecha(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, "Ir al último ítem", accent, _mover_async(v_target, _PASO_GRANDE, 250)),
+            ],
+            spacing=3, tight=True,
+        ),
+        padding=2, border_radius=16,
+        right=right, bottom=4,
     )
+
+    return [horizontal, vertical]
