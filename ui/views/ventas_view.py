@@ -443,10 +443,10 @@ class VentasView(BaseView):
         )
 
         # ── 4. Carrito de Compras (Tabla de Ítems Renglones) ──────────────────
-        # Se establece una altura fija (height=420) para evitar que colapse verticalmente en el layout
+        # Se establece una altura fija (height=440) para evitar que colapse verticalmente en el layout
         self.tabla_carrito_container = ft.Container(
             content=self.build_tabla_carrito(carrito_activo["items"]),
-            height=420,
+            height=440,
             expand=True
         )
 
@@ -1193,7 +1193,7 @@ class VentasView(BaseView):
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                 padding=40,
                 border_radius=16,
-                height=420,
+                height=440,
             )
 
         accent = self.get_accent_color()
@@ -1300,14 +1300,14 @@ class VentasView(BaseView):
                 horizontal_lines=ft.BorderSide(1, border),
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
-            tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, expand=True)
+            tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=304)
             contenido_vista = ft.Column([
                 ft.Row([
                     ft.Container(expand=True),
                     build_scroll_nav(tabla_scroll_row, "horizontal", accent, tooltip_prefix="Carrito: "),
                 ]),
                 tabla_scroll_col,
-            ], spacing=6, expand=True)
+            ], spacing=6)
 
         elif modo == "agrupado":
             filas = []
@@ -1376,14 +1376,14 @@ class VentasView(BaseView):
                 data_row_max_height=95,
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
-            tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, expand=True)
+            tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=304)
             contenido_vista = ft.Column([
                 ft.Row([
                     ft.Container(expand=True),
                     build_scroll_nav(tabla_scroll_row, "horizontal", accent, tooltip_prefix="Carrito: "),
                 ]),
                 tabla_scroll_col,
-            ], spacing=6, expand=True)
+            ], spacing=6)
 
         else:  # modo == "tarjetas"
             tarjetas = []
@@ -1437,7 +1437,7 @@ class VentasView(BaseView):
             contenido_vista = ft.Column(
                 controls=[ft.Row(controls=tarjetas, wrap=True, spacing=8)],
                 scroll=ft.ScrollMode.ALWAYS,
-                expand=True,
+                height=346,
             )
 
         selector_cols = self._build_selector_columnas_carrito() if modo == "separado" else ft.Container()
@@ -1454,11 +1454,11 @@ class VentasView(BaseView):
                     wrap=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
-                ft.Container(content=contenido_vista, height=360),
+                ft.Container(content=contenido_vista, height=350),
             ], spacing=10),
             padding=15,
             border_radius=16,
-            height=420,
+            height=440,
         )
 
     # ── Procesamiento de Venta & Diálogo PDF (ERS 3.5) ─────────────────────

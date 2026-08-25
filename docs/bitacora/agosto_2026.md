@@ -420,13 +420,15 @@
 - **Verificaciones realizadas:** Prueba automatizada verificando la tarjeta del carrito sin productos (`height=420`, `expand=None`) y con productos (`height=420`, `expand=None`), confirmando 0 recuadros grises y renderizado correcto.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
-### Fix Layout: Envoltura de Tabla de Carrito con Scroll Vertical (tabla_scroll_col) - 24/08/2026
+### Fix Layout: Corrección Definitiva de Restricciones Acotadas en Tabla de Carrito de Ventas - 25/08/2026
 - **Responsable:** Antigravity (IA Coding Assistant)
-- **Problema reportado:** Al agregar un ítem al carrito de ventas, continuaba apareciendo un rectángulo gris en la lista de ítems.
+- **Problema reportado:** En el módulo de Ventas, la lista de ítems en el carrito se dañaba al agregar productos, mostrándose únicamente como un rectángulo gris.
 - **Causa raíz y solución:**
-  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** `tabla_scroll_row` (`ft.Row(scroll=ft.ScrollMode.ALWAYS)`) se encontraba insertado directamente dentro de `contenido_vista` (`ft.Column(expand=True)`) sin un envoltorio de scroll vertical. En Flutter/Flet, una `Row` scrolleable horizontalmente colocada directamente en una `Column` flexible sin un eje scrolleable vertical o restricciones explícitas de altura provocaba un error de layout no acotado al insertar datos en la tabla, renderizando un recuadro gris. Se envolvió `tabla_scroll_row` en `tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, expand=True)` en los modos separado y agrupado.
-- **Verificaciones realizadas:** Prueba automatizada verificando la vista de carrito vacío y con productos en los 3 modos de vista (Separado, Agrupado, Tarjetas), confirmando renderizado correcto y 0 recuadros grises.
-- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - **Desbordamiento de contenedor y restricciones infinitas:** `build_tabla_carrito` especificaba un contenedor interno de `height=360` dentro de una tarjeta de `height=420`. Sumando el padding de la tarjeta (`30px`), el encabezado (~`38px`) y los espaciados (`10px`), la altura requerida era de `408px`, sobrepasando los `390px` útiles. Además, `tabla_scroll_col` (`ft.Column(scroll=ft.ScrollMode.ALWAYS)`) y `contenido_vista` tenían `expand=True` anidado dentro de la tarjeta, lo que transmitía restricciones de altura ilimitadas ("unbounded height constraints") a Flutter en layouts scrolleables, causando que la aserción de renderizado fallara y pintara un recuadro gris.
+    - **Ajustes aplicados:** Se ajustó la altura de la tarjeta a `height=440` y del contenedor interno a `height=350`. En los modos `separado` y `agrupado`, se fijó `tabla_scroll_col` a una altura acotada explícita de `height=304` y se removió `expand=True` de `contenido_vista` y `tabla_scroll_col`. En el modo `tarjetas`, se fijó `contenido_vista` a `height=346`. Se actualizó `self.tabla_carrito_container` a `height=440`.
+- **Verificaciones realizadas:** Prueba script automatizada verificando la creación e inserción de productos en el carrito, cambiando dinámicamente entre los 3 modos de vista (Separado, Agrupado, Tarjetas) y refrescando in-situ, confirmando renderizado correcto con 0 excepciones de layout y 0 recuadros grises.
+- **Estado del proyecto:** Corrección aplicada, bitácora actualizada y cambios committeados atómicamente.
 
 
 
