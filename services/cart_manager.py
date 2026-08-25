@@ -20,7 +20,7 @@ from services.bcv_service import obtener_estado_tasa
 # Precio USD Efectivo; Pago Móvil/Transferencia cobran el equivalente en
 # Bolívares calculado con el Precio USD BCV x tasa vigente.
 METODOS_PAGO_USD = ("Efectivo", "Binance")
-METODOS_PAGO_BS = ("Pago Móvil", "Transferencia")
+METODOS_PAGO_BS = ("Pago Móvil", "Transferencia", "Punto")
 METODOS_PAGO = METODOS_PAGO_USD + METODOS_PAGO_BS
 
 # session_id -> {"carritos": {...}, "activo": str, "contador": int}
