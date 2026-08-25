@@ -76,7 +76,7 @@ class VentasView(BaseView):
     def _handle_cambio_modo_vista_carrito(self, e):
         if e.control.selected:
             VentasView._modo_vista_carrito_estatico = list(e.control.selected)[0]
-            self.rebuild_ui(e)
+            self._refrescar_carrito_y_resumen(e)
 
     def rebuild_ui(self, e=None):
         """Sobreescribe BaseView.rebuild_ui(): esta vista es reconstruida por
@@ -90,6 +90,56 @@ class VentasView(BaseView):
                 pass
         else:
             super().rebuild_ui()
+
+    def _refrescar_carrito_y_resumen(self, e=None):
+        """Actualiza in-situ la tabla del carrito y el panel de resumen de venta
+        sin provocar la reconstrucción completa del Dashboard."""
+        c_activo = obtener_carrito_activo(self._sid)
+        items = c_activo["items"]
+
+        if hasattr(self, "tabla_carrito_container"):
+            self.tabla_carrito_container.content = self.build_tabla_carrito(items)
+
+        tot_usd = sum(item["subtotal_usd"] for item in items)
+        tot_bcv = sum(item["subtotal_bcv"] for item in items)
+        tot_usd_bcv_equivalente = round(tot_bcv / self.tasa_bcv, 2) if self.tasa_bcv > 0 else 0.0
+
+        if hasattr(self, "lbl_subtotal_usd"):
+            self.lbl_subtotal_usd.value = f"$ {tot_usd:,.2f}"
+        if hasattr(self, "lbl_subtotal_bcv"):
+            self.lbl_subtotal_bcv.value = f"Bs. {tot_bcv:,.2f}"
+        if hasattr(self, "lbl_total_usd_efectivo"):
+            self.lbl_total_usd_efectivo.value = f"$ {tot_usd:,.2f}"
+        if hasattr(self, "lbl_total_usd_pago_bs"):
+            self.lbl_total_usd_pago_bs.value = f"$ {tot_usd_bcv_equivalente:,.2f}"
+        if hasattr(self, "lbl_total_bcv"):
+            self.lbl_total_bcv.value = f"Bs. {tot_bcv:,.2f}"
+
+        metodo_pago_actual = c_activo.get("metodo_pago", "Efectivo")
+        cobra_en_bs = metodo_pago_actual in METODOS_PAGO_BS
+        if hasattr(self, "lbl_monto_a_pagar"):
+            self.lbl_monto_a_pagar.value = f"Bs. {tot_bcv:,.2f}" if cobra_en_bs else f"$ {tot_usd:,.2f}"
+            self.lbl_monto_a_pagar.color = ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700
+
+        if hasattr(self, "txt_sub_metodo_ref"):
+            self.txt_sub_metodo_ref.value = f"Ref: $ {tot_usd_bcv_equivalente:,.2f} BCV" if cobra_en_bs else "Dólares en Efectivo"
+            self.txt_sub_metodo_ref.color = ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700
+
+        if hasattr(self, "tira_carritos_container"):
+            carritos_dict = obtener_todos_los_carritos(self._sid)
+            self.tira_carritos_container.content = self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
+
+        if hasattr(self, "dd_carritos"):
+            carritos_dict = obtener_todos_los_carritos(self._sid)
+            def _etiqueta_carrito(cinfo: dict) -> str:
+                cliente = cinfo.get("cliente")
+                n_items = len(cinfo.get("items", []))
+                quien = cliente["nombre"] if cliente else "Sin cliente"
+                return f"{cinfo['nombre']} — {quien} ({n_items} ítem{'s' if n_items != 1 else ''})"
+            self.dd_carritos.options = [ft.dropdown.Option(cid, _etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
+            self.dd_carritos.value = obtener_id_carrito_activo(self._sid)
+
+        self.safe_update(e)
 
     def _calcular_sid(self, e=None) -> str:
         """Resuelve el ID de sesión de Flet (page.session.id) para aislar los
@@ -211,10 +261,14 @@ class VentasView(BaseView):
             border=ft.Border.all(1, self.get_border_color())
         )
 
+        self.tira_carritos_container = ft.Container(
+            content=self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
+        )
+
         cabecera_card = self.create_card(
             content=ft.Column(
                 controls=[
-                    self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid)),
+                    self.tira_carritos_container,
                     ft.Row(
                         controls=[
                             ft.Row([self.dd_carritos, btn_nuevo_carrito, btn_eliminar_carrito], spacing=5),
@@ -441,6 +495,7 @@ class VentasView(BaseView):
 
         self.lbl_monto_a_pagar = ft.Text(monto_a_pagar_str, size=18, weight=ft.FontWeight.BOLD, color=lbl_monto_color)
         lbl_monto_titulo = ft.Text(f"MONTO A COBRAR ({metodo_pago_actual}):", size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color())
+        self.txt_sub_metodo_ref = ft.Text(txt_sub_metodo, size=11, color=lbl_monto_color, weight=ft.FontWeight.W_600)
 
         panel_totales = self.create_card(
             content=ft.Column([
@@ -458,7 +513,7 @@ class VentasView(BaseView):
                 ft.Container(
                     content=ft.Column([
                         ft.Row([lbl_monto_titulo, self.lbl_monto_a_pagar], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Row([ft.Text(txt_sub_metodo, size=11, color=lbl_monto_color, weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.END),
+                        ft.Row([self.txt_sub_metodo_ref], alignment=ft.MainAxisAlignment.END),
                     ], spacing=2),
                     padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                     bgcolor=self.get_card_bg(),
@@ -597,18 +652,18 @@ class VentasView(BaseView):
     def handle_cambiar_carrito(self, e):
         cid = e.control.value
         cambiar_carrito_activo(self._sid, cid)
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_cambiar_carrito_click(self, e, cid: str):
         """Igual que handle_cambiar_carrito pero disparado desde una tarjeta
         de la tira de carritos (no tiene e.control.value de un Dropdown)."""
         cambiar_carrito_activo(self._sid, cid)
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_crear_nuevo_carrito(self, e):
         c_nuevo = crear_nuevo_carrito(self._sid)
         self.show_alert_success(e, f"¡Creado nuevo '{c_nuevo['nombre']}'!")
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_eliminar_carrito(self, e, cid: str):
         carritos = obtener_todos_los_carritos(self._sid)
@@ -618,14 +673,14 @@ class VentasView(BaseView):
         else:
             eliminar_carrito(self._sid, cid)
             self.show_alert_success(e, f"Carrito '{cid}' eliminado.")
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_eliminar_carrito_activo(self, e):
         self.handle_eliminar_carrito(e, obtener_id_carrito_activo(self._sid))
 
     def handle_cambio_metodo_pago(self, e):
         establecer_metodo_pago(self._sid, e.control.value)
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_cambio_tipo_venta(self, e):
         val = list(e.control.selected)[0] if e.control.selected else "Formal"
@@ -749,7 +804,7 @@ class VentasView(BaseView):
         c, es_nuevo = agregar_o_actualizar_producto(self._sid, producto, cantidad=cantidad, tasa_bcv=self.tasa_bcv)
         nombre_c = producto.get("nombre_referencia_corto") or producto.get("referencia") or producto["codigo"]
         self.show_alert_success(e, f"Agregado {cantidad:.0f} ud(s) de '{nombre_c}' al {c['id']}.")
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_agregar_producto(self, e):
         codigo_query = (self.prod_search_input.value or "").strip()
@@ -1015,12 +1070,12 @@ class VentasView(BaseView):
             self.handle_remover_item(e, item["codigo"])
             return
         editar_item_en_carrito(self._sid, item["codigo"], nueva_cant, item["precio_usd"], tasa_bcv=self.tasa_bcv)
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_remover_item(self, e, codigo):
         remover_item_de_carrito(self._sid, codigo)
         self.show_alert_info(e, f"Producto '{codigo}' removido del carrito.")
-        self.rebuild_ui()
+        self._refrescar_carrito_y_resumen(e)
 
     def handle_abrir_modal_editar_item(self, item: dict, e=None):
         """Abre un diálogo emergente para editar cantidad o precio de un renglón del carrito."""
@@ -1056,7 +1111,7 @@ class VentasView(BaseView):
                 dlg.open = False
                 p.update()
                 self.show_alert_success(e_save, f"Renglón '{item['codigo']}' actualizado.")
-                self.rebuild_ui()
+                self._refrescar_carrito_y_resumen(e_save)
             except ValueError as ex:
                 lbl_err.value = str(ex) if str(ex) else "Ingrese valores numéricos válidos."
                 p.update()
@@ -1397,11 +1452,10 @@ class VentasView(BaseView):
                     wrap=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
-                ft.Container(content=contenido_vista, expand=True),
-            ], spacing=10, expand=True),
+                ft.Container(content=contenido_vista, height=360),
+            ], spacing=10),
             padding=15,
             border_radius=16,
-            expand=True
         )
 
     # ── Procesamiento de Venta & Diálogo PDF (ERS 3.5) ─────────────────────
