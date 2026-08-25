@@ -550,6 +550,8 @@ class InventarioView(BaseView):
         self._dt.rows = []
 
         if self._modo_vista == "separado":
+            self._dt.data_row_min_height = 48
+            self._dt.data_row_max_height = 48
             self._dt.columns = [self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()]
             constructores_celda = {
                 "codigo": lambda p: ft.Text(p["codigo"], color=accent, weight=ft.FontWeight.W_600),
@@ -577,6 +579,8 @@ class InventarioView(BaseView):
             )
 
         elif self._modo_vista == "agrupado":
+            self._dt.data_row_min_height = 72
+            self._dt.data_row_max_height = float("inf")
             self._dt.columns = [
                 ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
@@ -608,8 +612,8 @@ class InventarioView(BaseView):
                             ),
                         ], spacing=6),
                     ], spacing=4, tight=True),
-                    width=380,
-                    padding=ft.Padding.symmetric(vertical=4),
+                    width=450,
+                    padding=ft.Padding.symmetric(vertical=6),
                 )
 
                 celda_clasif = ft.Container(
@@ -617,8 +621,8 @@ class InventarioView(BaseView):
                         ft.Text(p["departamento"] or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
                         ft.Text(p["marca"] or "-", size=11, color=subtext),
                     ], spacing=2, tight=True),
-                    width=150,
-                    padding=ft.Padding.symmetric(vertical=4),
+                    width=180,
+                    padding=ft.Padding.symmetric(vertical=6),
                 )
 
                 celda_precios = ft.Container(
@@ -629,20 +633,20 @@ class InventarioView(BaseView):
                         ], spacing=6),
                         ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", size=11, color=ft.Colors.AMBER_300, weight=ft.FontWeight.W_600),
                     ], spacing=2, tight=True),
-                    width=160,
-                    padding=ft.Padding.symmetric(vertical=4),
+                    width=220,
+                    padding=ft.Padding.symmetric(vertical=6),
                 )
 
                 celda_stock = ft.Container(
                     content=ft.Text(str(p["existencia"]), color=text_color, weight=ft.FontWeight.BOLD, size=13),
-                    width=70,
+                    width=80,
                     alignment=ft.Alignment.CENTER,
                 )
 
                 celda_acc = ft.Container(
                     content=celda_acciones_lineal(p),
-                    width=210,
-                    padding=ft.Padding.symmetric(vertical=4),
+                    width=250,
+                    padding=ft.Padding.symmetric(vertical=6),
                 )
 
                 rows.append(
