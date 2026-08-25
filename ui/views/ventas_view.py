@@ -1300,12 +1300,13 @@ class VentasView(BaseView):
                 horizontal_lines=ft.BorderSide(1, border),
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
+            tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, expand=True)
             contenido_vista = ft.Column([
                 ft.Row([
                     ft.Container(expand=True),
                     build_scroll_nav(tabla_scroll_row, "horizontal", accent, tooltip_prefix="Carrito: "),
                 ]),
-                tabla_scroll_row,
+                tabla_scroll_col,
             ], spacing=6, expand=True)
 
         elif modo == "agrupado":
@@ -1375,12 +1376,13 @@ class VentasView(BaseView):
                 data_row_max_height=95,
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
+            tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, expand=True)
             contenido_vista = ft.Column([
                 ft.Row([
                     ft.Container(expand=True),
                     build_scroll_nav(tabla_scroll_row, "horizontal", accent, tooltip_prefix="Carrito: "),
                 ]),
-                tabla_scroll_row,
+                tabla_scroll_col,
             ], spacing=6, expand=True)
 
         else:  # modo == "tarjetas"
