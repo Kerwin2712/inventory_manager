@@ -1141,10 +1141,22 @@ class VentasView(BaseView):
             border_radius=12
         )
         txt_precio_usd = ft.TextField(
-            label="Precio Unitario ($)",
+            label="Precio Unit. Efectivo ($)",
             value=f"{item['precio_usd']:.2f}",
             keyboard_type=ft.KeyboardType.NUMBER,
-            width=150,
+            width=170,
+            border_radius=12
+        )
+        # Precio USD BCV: independiente del Efectivo (regla de negocio
+        # Venezuela — suele ser más alto, es el que se usa para calcular el
+        # monto en Bolívares). Antes este diálogo no lo exponía y al guardar
+        # (aunque solo fuera para cambiar la cantidad) lo igualaba
+        # silenciosamente al precio Efectivo, rompiendo el cálculo en Bs.
+        txt_precio_bcv = ft.TextField(
+            label="Precio Unit. BCV ($)",
+            value=f"{item.get('precio_usd_bcv_ref', item['precio_usd']):.2f}",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            width=170,
             border_radius=12
         )
         lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
@@ -1154,10 +1166,11 @@ class VentasView(BaseView):
             try:
                 n_cant = float(txt_cant.value.strip().replace(",", "."))
                 n_precio = float(txt_precio_usd.value.strip().replace(",", "."))
-                if n_cant <= 0 or n_precio <= 0:
+                n_precio_bcv = float(txt_precio_bcv.value.strip().replace(",", "."))
+                if n_cant <= 0 or n_precio <= 0 or n_precio_bcv <= 0:
                     raise ValueError("Los valores deben ser mayores a cero.")
 
-                editar_item_en_carrito(self._sid, item["codigo"], n_cant, n_precio, tasa_bcv=self.tasa_bcv)
+                editar_item_en_carrito(self._sid, item["codigo"], n_cant, n_precio, n_precio_bcv, tasa_bcv=self.tasa_bcv)
                 dlg.open = False
                 p.update()
                 self.show_alert_success(e_save, f"Renglón '{item['codigo']}' actualizado.")
@@ -1179,10 +1192,11 @@ class VentasView(BaseView):
                 content=ft.Column([
                     ft.Text(f"Código: {item['codigo']}", size=12, color=self.get_subtext_color()),
                     ft.Divider(height=10),
-                    ft.Row([txt_cant, txt_precio_usd], spacing=10),
+                    txt_cant,
+                    ft.Row([txt_precio_usd, txt_precio_bcv], spacing=10),
                     lbl_err
                 ], spacing=10, tight=True),
-                width=360,
+                width=400,
                 padding=10
             ),
             actions=[

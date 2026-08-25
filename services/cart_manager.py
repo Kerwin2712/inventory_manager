@@ -209,23 +209,33 @@ def agregar_o_actualizar_producto(
 
 def editar_item_en_carrito(
     session_id: str, codigo: str, nueva_cantidad: float, nuevo_precio_usd: float,
+    nuevo_precio_usd_bcv: float | None = None,
     tasa_bcv: float | None = None, id_carrito: str = None,
 ) -> bool:
-    """Modifica la cantidad y/o el precio unitario de un renglón del carrito.
-    El monto en Bolívares se recalcula con la tasa BCV vigente a partir del
-    precio USD editado (simplificación: el diálogo de edición manual usa un
-    único precio USD para ambas divisas en vez de mantener Efectivo/BCV
-    por separado; el precio BCV propio del producto solo se usa al agregarlo
-    por primera vez desde Inventario/Ventas)."""
+    """Modifica la cantidad y/o los precios unitarios de un renglón del
+    carrito, manteniendo el Precio USD Efectivo y el Precio USD BCV como los
+    dos valores independientes que son (ver regla de negocio Venezuela): el
+    BCV es el que se usa para calcular el monto en Bolívares, y normalmente
+    es distinto (mayor) al Efectivo.
+
+    `nuevo_precio_usd_bcv` es opcional únicamente por compatibilidad con
+    llamadores antiguos que no lo pasen — si se omite, se conserva el valor
+    de referencia BCV que ya tenía el renglón (NUNCA se colapsa al precio
+    Efectivo editado, que fue el bug original: guardar solo la cantidad ya
+    igualaba silenciosamente ambos precios)."""
     estado = _estado_sesion(session_id)
     c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
     tasa_actual = tasa_bcv if tasa_bcv else obtener_estado_tasa().get("tasa", 0.0)
     for item in c["items"]:
         if item["codigo"] == codigo:
+            precio_bcv_ref = (
+                nuevo_precio_usd_bcv if nuevo_precio_usd_bcv is not None
+                else item.get("precio_usd_bcv_ref", item["precio_usd"])
+            )
             item["cantidad"] = nueva_cantidad
             item["precio_usd"] = nuevo_precio_usd
-            item["precio_usd_bcv_ref"] = nuevo_precio_usd
-            item["precio_bcv"] = round(nuevo_precio_usd * tasa_actual, 2)
+            item["precio_usd_bcv_ref"] = precio_bcv_ref
+            item["precio_bcv"] = round(precio_bcv_ref * tasa_actual, 2)
             item["subtotal_usd"] = nueva_cantidad * item["precio_usd"]
             item["subtotal_bcv"] = nueva_cantidad * item["precio_bcv"]
             return True
