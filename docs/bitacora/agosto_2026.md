@@ -389,6 +389,20 @@
 - **Verificaciones realizadas:** Ejecución de prueba de estrés automatizada alternando secuencialmente entre 6 conmutaciones de modo (`separado` ➔ `agrupado` ➔ `tarjetas` ➔ `agrupado` ➔ `separado` ➔ `agrupado`) e invocando los 8 handlers de scroll en cada paso, confirmando un 100% de éxito sin pérdida de manejadores de eventos.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Feature: Modos de Vista en Carrito de Ventas, Método de Pago 'Punto' y Resumen Bimoneda Dinámico - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Solicitud del usuario:** Incorporar las funciones de vista (Separado, Agrupado, Tarjetas) en el carrito de Ventas, mostrar todos los precios y subtotales por renglón, añadir el método de pago 'Punto' (Punto de Venta) y dinamizar el resumen de venta según la divisa del pago elegido.
+- **Solución implementada:**
+  - **[services/cart_manager.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/services/cart_manager.py):** Se incorporó `"Punto"` dentro de la constante `METODOS_PAGO_BS` y la lista global `METODOS_PAGO`.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - Se agregó el selector `ft.SegmentedButton` en la cabecera del carrito para alternar modos (**Separado**, **Agrupado**, **Tarjetas**). Se mantuvo el estado en `_modo_vista_carrito_estatico` para preservar la vista entre re-renders.
+    - Se incluyó la opción `Punto de Venta (Bs)` en el dropdown `dd_metodo_pago`.
+    - Se actualizó el panel **RESUMEN DE VENTA** para destacar dinámicamente el monto a cobrar en `Bs.` (y su equivalente en `$ BCV`) al seleccionar `Pago Móvil`, `Transferencia` o `Punto`, y en `$ Efectivo` al seleccionar `Efectivo` o `Binance`.
+    - Se configuraron los desgloses bimoneda completos en cada renglón mostrando precios unitarios ($ Efvo, $ BCV, Bs) y subtotales ($ Efvo, $ BCV, Bs) en los 3 modos de vista. En modo agrupado se fijaron alturas acotadas de fila (`72px`–`95px`).
+- **Verificaciones realizadas:** Ejecución de prueba automatizada verificando cambio de métodos de pago, recálculo de montos a cobrar, conmutaciones continuas entre los 3 modos de vista y renderizado bimoneda sin excepciones.
+- **Estado del proyecto:** Cambios aplicados y committeados atómicamente.
+
+
 
 
 
