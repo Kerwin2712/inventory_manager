@@ -580,7 +580,7 @@ class InventarioView(BaseView):
 
         elif self._modo_vista == "agrupado":
             self._dt.data_row_min_height = 72
-            self._dt.data_row_max_height = float("inf")
+            self._dt.data_row_max_height = 95
             self._dt.columns = [
                 ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
