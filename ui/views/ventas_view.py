@@ -1193,7 +1193,7 @@ class VentasView(BaseView):
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                 padding=40,
                 border_radius=16,
-                expand=True
+                height=420,
             )
 
         accent = self.get_accent_color()
@@ -1456,6 +1456,7 @@ class VentasView(BaseView):
             ], spacing=10),
             padding=15,
             border_radius=16,
+            height=420,
         )
 
     # ── Procesamiento de Venta & Diálogo PDF (ERS 3.5) ─────────────────────
