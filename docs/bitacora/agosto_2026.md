@@ -402,6 +402,17 @@
 - **Verificaciones realizadas:** Ejecución de prueba automatizada verificando cambio de métodos de pago, recálculo de montos a cobrar, conmutaciones continuas entre los 3 modos de vista y renderizado bimoneda sin excepciones.
 - **Estado del proyecto:** Cambios aplicados y committeados atómicamente.
 
+### Fix UX: Corrección de Recuadro Gris y Actualización In-Situ del Carrito de Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Se mostraba un rectángulo gris en la lista de ítems del carrito y la aplicación se recargaba completamente al agregar o modificar la cantidad de un producto.
+- **Causa raíz y solución:**
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - **Recuadro gris:** Se debía a un conflicto de restricciones de altura no acotada en Flutter (`expand=True` anidado dentro de una `Column` con scroll). Se fijó la altura del contenedor interno de la vista del carrito a `height=360` y del contenedor principal a `height=440`, eliminando las restricciones de altura infinita.
+    - **Recarga completa:** La función `rebuild_ui()` invocaba el callback `on_update_callback()`, reconstruyendo todo el árbol de vista de `DashboardView`. Se implementó el método `_refrescar_carrito_y_resumen(e)`, el cual re-renderiza únicamente la tabla del carrito y actualiza las etiquetas del resumen de venta in-situ sin parpadear la pantalla ni recargar el Dashboard.
+- **Verificaciones realizadas:** Prueba automatizada de ciclo completo agregando productos, ajustando cantidades (+/-), cambiando método de pago a Punto/Efectivo y conmutando modos de vista. Se confirmó 0 recargas globales del Dashboard y 0 advertencias de restricciones de altura.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
