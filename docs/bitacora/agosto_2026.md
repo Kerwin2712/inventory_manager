@@ -412,6 +412,15 @@
 - **Verificaciones realizadas:** Prueba automatizada de ciclo completo agregando productos, ajustando cantidades (+/-), cambiando método de pago a Punto/Efectivo y conmutando modos de vista. Se confirmó 0 recargas globales del Dashboard y 0 advertencias de restricciones de altura.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Fix Layout: Eliminación Definitiva de expand=True en Carrito Vacío de Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Al abrir el módulo de Ventas con el carrito vacío continuaba visualizándose un rectángulo gris en la lista de ítems.
+- **Causa raíz y solución:**
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** En la rama `if not items:` dentro de `build_tabla_carrito`, el widget `self.create_card` retornaba con `expand=True`. Al posicionarse dentro de la columna scrolleable global (`scroll=ft.ScrollMode.AUTO`), Flutter recibía restricciones infinitas de altura y fallaba el cálculo de layout renderizando un recuadro gris. Se reemplazó `expand=True` por la dimensión fija `height=420` tanto en el carrito vacío como con ítems.
+- **Verificaciones realizadas:** Prueba automatizada verificando la tarjeta del carrito sin productos (`height=420`, `expand=None`) y con productos (`height=420`, `expand=None`), confirmando 0 recuadros grises y renderizado correcto.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
