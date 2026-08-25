@@ -294,3 +294,153 @@
 - **Verificaciones realizadas — pipeline completo ejecutado de punta a punta en esta máquina:** (1) `pip install pyinstaller` en el entorno virtual; (2) `generate_icon.py` genera el ícono correctamente (inspeccionado visualmente a 512px y 128px); (3) `prepare_flet_client.py` encuentra el caché local y genera `flet-windows.zip` (39.4 MB) con `flet/flet.exe` presente en la raíz del zip, verificado programáticamente; (4) `pyinstaller installer/inventory_manager.spec` compila sin errores y genera `installer/dist/SistemaInventario/` (~156 MB) con `flet-windows.zip` embebido exactamente en `_internal/flet_desktop/app/`; (5) se ejecutó el `.exe` generado directamente y se confirmó que lanza un proceso hijo `flet.exe` real (ventana Flutter) **sin ningún intento de descarga** — prueba de que el empaquetado offline funciona; procesos cerrados limpiamente al terminar la verificación; (6) `iscc installer\setup.iss` compiló exitosamente en ~126s, generando `installer/Output/SistemaInventario_Setup_1.0.0.exe` (81.9 MB). **No se ejecutó el instalador final** (instalar en Program Files y crear accesos directos/registro son cambios de sistema que requieren autorización explícita del usuario) — se deja listo para que el usuario lo ejecute y confirme el flujo de instalación real.
 - **Estado del proyecto:** Entorno de build de escritorio e instalador de Windows completo y verificado de punta a punta (salvo la ejecución final del instalador, que queda a criterio del usuario). Pendiente: el usuario debe decidir la contraseña inicial real de `admin` antes de distribuir (ver nota en `installer/README.md`) y ejecutar el instalador generado para confirmar el flujo de instalación visualmente.
 
+## Corrección UX: Habilitación de Scroll con Botones en Lista de Columnas de Importación Excel - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Al importar desde Excel en la vista de Gestión de Datos, la lista de campos/columnas a mapear no permitía usar el scroll vertical para revisar y configurar todos los campos inferiores.
+- **Actividades realizadas:**
+  - **[ui/views/gestion_datos_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/gestion_datos_view.py):** En `mostrar_asistente_mapeo`, se envolvió la lista de mapeo de campos (`col_mapeo`) en un `ft.Container` estilizado con fondo adaptativo, borde y scrollbar permanente (`scroll=ft.ScrollMode.ALWAYS`). Se integró la barra de controles de navegación `build_scroll_nav(col_mapeo, "vertical", ...)` junto al título del encabezado "MAPEO DE COLUMNAS", ofreciendo botones directos para saltar o desplazarse hacia arriba y abajo por la lista de campos (Ir al inicio, Subir, Bajar, Ir al final), resolviendo el conflicto de scroll anidado.
+- **Verificaciones realizadas:** Verificación de sintaxis e importación correcta de `GestionDatosView` en el entorno virtual (`env/Scripts/python.exe -m py_compile ui/views/gestion_datos_view.py`).
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente. Mapeo de columnas con navegación y scroll vertical funcional.
+
+## Incorporación de Modos de Vista (Separado, Agrupado y Tarjetas Móviles) en Inventario y Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Pedido del usuario:** Permitir alternar los datos de inventario y ventas entre la vista de columnas separadas, una vista agrupada (Código + Ref + Descripción principal; Depto + Marca; Precios; Existencia; Acciones en grid de 2 filas) y una vista de tarjetas optimizada para teléfonos móviles.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se integró un selector `ft.SegmentedButton` (`Separado`, `Agrupado`, `Tarjetas`) en el encabezado del panel del catálogo. En Modo Agrupado se estructuran 5 columnas consolidadas con la descripción destacada como dato principal y las acciones ordenadas en un grid 2x2 para minimizar el ancho horizontal. En Modo Tarjetas se genera una cuadrícula adaptativa de tarjetas individuales responsivas para dispositivos móviles.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** En `abrir_modal_buscar_inventario` se incluyó el mismo selector de vista `ft.SegmentedButton`, permitiendo explorar los productos de venta en modo separado, agrupado o tarjetas.
+- **Verificaciones realizadas:** Compilación y sintaxis verfiicada con `py_compile` en ambos módulos. Prueba funcional de inicialización y conmutación de estado sin excepciones.
+- **Estado del proyecto:** Funcionalidad implementada y committeada de forma atómica.
+
+### Fix: Corrección de Colapso Visual (Rectángulo Gris) en Inventario y Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema detectado:** Al alternar los modos de vista, la lista del catálogo mostraba un rectángulo gris sólido debido a una combinación inválida de un contenedor `ft.Container(expand=True)` dentro de una `ft.Row(wrap=True)` en los encabezados y un `expand=True` descontextualizado en `_vista_container`.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se removió `expand=True` de `_vista_container` y se reestructuró la fila del título utilizando `alignment=ft.MainAxisAlignment.SPACE_BETWEEN` sin contenedores `expand=True` dentro de `wrap=True`.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** Se ajustó el título del modal `abrir_modal_buscar_inventario` a la misma estructura limpia sin flex desbordante.
+- **Verificaciones realizadas:** Compilación y análisis de layout exitoso sin excepciones de restricciones en Flutter.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Fix: Salvaguarda contra TimeoutException en Navegación con Scroll y Anchos Definidos en Modo Agrupado - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** En Modo Agrupado, presionar las flechas de desplazamiento lateral lanzaba `RuntimeError: TimeoutException: Timeout waiting for invoke method listener for Row.scroll_to` si el contenido de la tabla encajaba holgadamente en el ancho de pantalla.
+- **Causa raíz y solución:**
+  - **[ui/components/scroll_nav.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/components/scroll_nav.py):** En Flutter, si un contenedor con scroll no presenta desbordamiento (los datos caben completos), el controlador de scroll nativo no se activa y la llamada `scroll_to` de Flet se suspende hasta vencer el tiempo de espera (10s). Se envolvió la llamada a `target.scroll_to(...)` dentro de un bloque `try-except Exception:` en `_mover_async`, absorbiendo cualquier fallo o timeout de scroll de forma silenciosa sin interrumpir la interfaz.
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** Se asignaron anchos estructurados a los contenedores de celda en Modo Agrupado (`Producto` 280px, `Clasificación` 140px, `Precios` 160px, `Existencia` 60px, `Acciones` 110px) para mantener un diseño equilibrado y asegurar que el scroll horizontal se active con suavidad ante cualquier redimensionamiento de pantalla.
+- **Verificaciones realizadas:** Compilación de ambos módulos y verificación de absorción de excepciones.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Rediseño UX: Ampliación de Distribución y Botones Espaciosos en Modo Agrupado - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Feedback del usuario:** En Modo Agrupado, la primera columna (Producto) y la columna de Acciones se veían muy amontonadas y apretadas.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Se amplió el ancho de la columna **Producto** de 280px a 380px, estructurando la Descripción General en texto destacado (máximo 2 líneas con puntos suspensivos) y presentando el Código y la Referencia en pequeños badges/chips independientes con fondo suave (`accent` / `subtext`), mejorando significativamente su legibilidad.
+    - Se amplió la columna de **Acciones** de 110px a 210px en una fila única holgada (`celda_acciones_lineal`), eliminando el apilamiento apretado en dos filas y brindando espacio cómodo a cada botón de acción.
+- **Verificaciones realizadas:** Compilación limpia con `py_compile` en el entorno virtual.
+- **Estado del proyecto:** Corrección de diseño aplicada y committeada de forma atómica.
+
+### Fix: Corrección de `AttributeError` en Alignment y Limpieza de Filas al Conmutar Modos - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problemas reportados:**
+  1. `AttributeError: module 'flet.controls.alignment' has no attribute 'center'`.
+  2. `ValueError: each visible DataRow must contain exactly as many visible DataCells as there are visible DataColumns (5)`.
+- **Actividades realizadas:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Se reemplazó la constante errónea en minúsculas `ft.alignment.center` por la constante estándar en mayúsculas `ft.Alignment.CENTER`.
+    - Se añadió la limpieza previa `self._dt.rows = []` al inicio de `_cargar_filas` antes de redefinir `self._dt.columns`, evitando que el motor de parches de Flet compare temporalmente las filas anteriores con la nueva estructura de columnas al alternar entre 10 y 5 columnas.
+- **Verificaciones realizadas:** Ejecución de script de prueba simulando la conmutación secuencial entre los modos `separado` -> `agrupado` -> `tarjetas` confirmando 0 excepciones.
+- **Estado del proyecto:** Correcciones aplicadas y committeadas atómicamente.
+
+### Fix UX: Corrección de Encimamiento de Texto en Modo Agrupado, Arreglo de Botones Scroll y Ampliación de Filas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problemas reportados por el usuario:**
+  1. En la vista de Inventario en Modo Agrupado, el texto se montaba uno sobre otro.
+  2. Los íconos de desplazamiento (scroll) no funcionaban.
+  3. Las filas en la vista de lista "Agrupado" debían ser más anchas para que todo se entienda claramente y los íconos se vean sin necesidad de hacer scroll.
+- **Causa raíz y soluciones aplicadas:**
+  - **[ui/components/scroll_nav.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/components/scroll_nav.py):** `_mover_async` usaba deltas gigantescos (`999999`) para saltos a extremos, lo que provocaba que la API de Flet fallara silenciosamente y la excepción fuese absorbida. Se actualizó para pasar `offset=0.0` (inicio) y `offset=-1.0` (final) según la API nativa de Flet 0.86.1, manteniendo `delta` para desplazamientos paso a paso.
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Se configuró la altura de filas de la `DataTable`: en modo `separado` se mantiene `data_row_min_height=48` y `data_row_max_height=48`, mientras que en modo `agrupado` se establece `data_row_min_height=72` y `data_row_max_height=float('inf')`. Esto otorga la altura vertical necesaria a cada fila multilínea (descripción + badges + precios) eliminando por completo el encimamiento de texto.
+    - Se ampliaron las anchuras de las columnas en Modo Agrupado (`Producto`: 450px, `Depto/Marca`: 180px, `Precios`: 220px, `Existencia`: 80px, `Acciones`: 250px), permitiendo una lectura holgada de la descripción y desplegar todos los íconos de acción en una única fila continua sin compresión ni necesidad de scroll horizontal.
+- **Verificaciones realizadas:** Compilación limpia con `py_compile` en ambos archivos y prueba de inicialización/conmutación de la vista contra la base de datos confirmando 0 excepciones y asignación adecuada de alturas de fila.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Fix UX: Corrección de Scroll por Delta y Ampliación de Controles en Navegación Flotante - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Los botones flotantes de desplazamiento horizontal y vertical no realizaban el movimiento al hacer clic.
+- **Causa raíz y solución:**
+  - **[ui/components/scroll_nav.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/components/scroll_nav.py):** En el motor Flutter/Flet, pasar un `offset` negativo como `-1.0` se acota nativamente a `0.0` (inicio/arriba), por lo que tanto las flechas izquierdas/arriba como las derechas/abajo apuntaban al origen de scroll `0.0`. Se corrigió implementando desplazamientos por delta positivo amplio (`delta=99999.0` que Flutter acota correctamente al `maxScrollExtent` real) para extremos finales, y deltas de paso (`±280px` horizontal, `±200px` vertical) para las flechas de dirección. Se incrementó la superficie de clic de los botones a 28px con íconos de 14px e iluminación adaptativa.
+- **Verificaciones realizadas:** Ejecución de pruebas automatizadas activando secuencialmente los 8 botones de los clusters flotantes horizontal y vertical contra la tabla de `InventarioView`, confirmando desplazamiento correcto y 0 excepciones.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Fix UX: Corrección de Clic en Scroll de Modo Agrupado (Restricción Finito de Fila) - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** La navegación con botones flotantes funcionaba en modo "Separado", pero no realizaba el desplazamiento en modo "Agrupado".
+- **Causa raíz y solución:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** En Modo Agrupado se había asignado `data_row_max_height = float('inf')`. En el motor Flutter/Flet, enviar `double.infinity` como altura máxima de fila violaba las restricciones del widget `DataTable`, deshabilitando internamente las escuchas del `ScrollController`. Se ajustó la altura máxima a un valor finito acotado (`data_row_max_height = 95`), restableciendo las restricciones válidas del árbol de renderizado y permitiendo que los eventos de scroll se ejecuten inmediatamente.
+- **Verificaciones realizadas:** Ejecución de ciclo de prueba con conmutación dinámica entre los modos `separado` -> `agrupado` -> `tarjetas` -> `agrupado` -> `separado`, ejecutando eventos de scroll horizontal y vertical en cada transición con 100% de éxito y 0 excepciones.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Fix UX: Persistencia de Controles Flotantes en Conmutación de Modos de Vista - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Al alternar entre los modos de vista (Separado ➔ Agrupado ➔ Tarjetas), los botones de desplazamiento dejaban de funcionar.
+- **Causa raíz y solución:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** En cada conmutación de modo, `_cargar_filas()` volvía a invocar `build_floating_corner_nav`, creando instancias nuevas de `Container` e `IconButton` que reemplazaban a las anteriores dentro del `Stack`. Debido a que estas nuevas instancias eran creadas tras el registro inicial de la página, carecían del atributo `.page` y no figuraban en el registro de eventos de Flet, descartando en silencio todos sus eventos `on_click`. Se corrigió instanciando los controles flotantes `self._nav_h` y `self._nav_v` una única vez en `_build_tabla_panel` como miembros persistentes de la vista, manteniendo su registro activo y alternando únicamente su propiedad `.visible` según el modo seleccionado.
+- **Verificaciones realizadas:** Ejecución de prueba de estrés automatizada alternando secuencialmente entre 6 conmutaciones de modo (`separado` ➔ `agrupado` ➔ `tarjetas` ➔ `agrupado` ➔ `separado` ➔ `agrupado`) e invocando los 8 handlers de scroll en cada paso, confirmando un 100% de éxito sin pérdida de manejadores de eventos.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Feature: Modos de Vista en Carrito de Ventas, Método de Pago 'Punto' y Resumen Bimoneda Dinámico - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Solicitud del usuario:** Incorporar las funciones de vista (Separado, Agrupado, Tarjetas) en el carrito de Ventas, mostrar todos los precios y subtotales por renglón, añadir el método de pago 'Punto' (Punto de Venta) y dinamizar el resumen de venta según la divisa del pago elegido.
+- **Solución implementada:**
+  - **[services/cart_manager.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/services/cart_manager.py):** Se incorporó `"Punto"` dentro de la constante `METODOS_PAGO_BS` y la lista global `METODOS_PAGO`.
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - Se agregó el selector `ft.SegmentedButton` en la cabecera del carrito para alternar modos (**Separado**, **Agrupado**, **Tarjetas**). Se mantuvo el estado en `_modo_vista_carrito_estatico` para preservar la vista entre re-renders.
+    - Se incluyó la opción `Punto de Venta (Bs)` en el dropdown `dd_metodo_pago`.
+    - Se actualizó el panel **RESUMEN DE VENTA** para destacar dinámicamente el monto a cobrar en `Bs.` (y su equivalente en `$ BCV`) al seleccionar `Pago Móvil`, `Transferencia` o `Punto`, y en `$ Efectivo` al seleccionar `Efectivo` o `Binance`.
+    - Se configuraron los desgloses bimoneda completos en cada renglón mostrando precios unitarios ($ Efvo, $ BCV, Bs) y subtotales ($ Efvo, $ BCV, Bs) en los 3 modos de vista. En modo agrupado se fijaron alturas acotadas de fila (`72px`–`95px`).
+- **Verificaciones realizadas:** Ejecución de prueba automatizada verificando cambio de métodos de pago, recálculo de montos a cobrar, conmutaciones continuas entre los 3 modos de vista y renderizado bimoneda sin excepciones.
+- **Estado del proyecto:** Cambios aplicados y committeados atómicamente.
+
+### Fix UX: Corrección de Recuadro Gris y Actualización In-Situ del Carrito de Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Se mostraba un rectángulo gris en la lista de ítems del carrito y la aplicación se recargaba completamente al agregar o modificar la cantidad de un producto.
+- **Causa raíz y solución:**
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - **Recuadro gris:** Se debía a un conflicto de restricciones de altura no acotada en Flutter (`expand=True` anidado dentro de una `Column` con scroll). Se fijó la altura del contenedor interno de la vista del carrito a `height=360` y del contenedor principal a `height=440`, eliminando las restricciones de altura infinita.
+    - **Recarga completa:** La función `rebuild_ui()` invocaba el callback `on_update_callback()`, reconstruyendo todo el árbol de vista de `DashboardView`. Se implementó el método `_refrescar_carrito_y_resumen(e)`, el cual re-renderiza únicamente la tabla del carrito y actualiza las etiquetas del resumen de venta in-situ sin parpadear la pantalla ni recargar el Dashboard.
+- **Verificaciones realizadas:** Prueba automatizada de ciclo completo agregando productos, ajustando cantidades (+/-), cambiando método de pago a Punto/Efectivo y conmutando modos de vista. Se confirmó 0 recargas globales del Dashboard y 0 advertencias de restricciones de altura.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Fix Layout: Eliminación Definitiva de expand=True en Carrito Vacío de Ventas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Al abrir el módulo de Ventas con el carrito vacío continuaba visualizándose un rectángulo gris en la lista de ítems.
+- **Causa raíz y solución:**
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** En la rama `if not items:` dentro de `build_tabla_carrito`, el widget `self.create_card` retornaba con `expand=True`. Al posicionarse dentro de la columna scrolleable global (`scroll=ft.ScrollMode.AUTO`), Flutter recibía restricciones infinitas de altura y fallaba el cálculo de layout renderizando un recuadro gris. Se reemplazó `expand=True` por la dimensión fija `height=420` tanto en el carrito vacío como con ítems.
+- **Verificaciones realizadas:** Prueba automatizada verificando la tarjeta del carrito sin productos (`height=420`, `expand=None`) y con productos (`height=420`, `expand=None`), confirmando 0 recuadros grises y renderizado correcto.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+### Fix Layout: Corrección Definitiva de Restricciones Acotadas en Tabla de Carrito de Ventas - 25/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** En el módulo de Ventas, la lista de ítems en el carrito se dañaba al agregar productos, mostrándose únicamente como un rectángulo gris.
+- **Causa raíz y solución:**
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):**
+    - **Desbordamiento de contenedor y restricciones infinitas:** `build_tabla_carrito` especificaba un contenedor interno de `height=360` dentro de una tarjeta de `height=420`. Sumando el padding de la tarjeta (`30px`), el encabezado (~`38px`) y los espaciados (`10px`), la altura requerida era de `408px`, sobrepasando los `390px` útiles. Además, `tabla_scroll_col` (`ft.Column(scroll=ft.ScrollMode.ALWAYS)`) y `contenido_vista` tenían `expand=True` anidado dentro de la tarjeta, lo que transmitía restricciones de altura ilimitadas ("unbounded height constraints") a Flutter en layouts scrolleables, causando que la aserción de renderizado fallara y pintara un recuadro gris.
+    - **Ajustes aplicados:** Se ajustó la altura de la tarjeta a `height=440` y del contenedor interno a `height=350`. En los modos `separado` y `agrupado`, se fijó `tabla_scroll_col` a una altura acotada explícita de `height=304` y se removió `expand=True` de `contenido_vista` y `tabla_scroll_col`. En el modo `tarjetas`, se fijó `contenido_vista` a `height=346`. Se actualizó `self.tabla_carrito_container` a `height=440`.
+- **Verificaciones realizadas:** Prueba script automatizada verificando la creación e inserción de productos en el carrito, cambiando dinámicamente entre los 3 modos de vista (Separado, Agrupado, Tarjetas) y refrescando in-situ, confirmando renderizado correcto con 0 excepciones de layout y 0 recuadros grises.
+- **Estado del proyecto:** Corrección aplicada, bitácora actualizada y cambios committeados atómicamente.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

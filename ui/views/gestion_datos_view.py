@@ -322,10 +322,22 @@ class GestionDatosView(BaseView):
             dd_hoja.on_change = _cambiar_hoja
             contenido.append(dd_hoja)
 
+        col_mapeo = ft.Column(controls=filas_mapeo, spacing=6, scroll=ft.ScrollMode.ALWAYS, height=260)
+        container_mapeo = ft.Container(
+            content=col_mapeo,
+            padding=6,
+            border_radius=10,
+            bgcolor=self.get_card_bg(),
+            border=ft.Border.all(1, self.get_border_color()),
+        )
+
         contenido += [
             ft.Divider(height=10),
-            ft.Text("MAPEO DE COLUMNAS", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
-            ft.Column(controls=filas_mapeo, spacing=6, scroll=ft.ScrollMode.AUTO, height=260),
+            ft.Row([
+                ft.Text("MAPEO DE COLUMNAS", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+                build_scroll_nav(col_mapeo, "vertical", self.get_accent_color(), step=180, tooltip_prefix="Columnas: "),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            container_mapeo,
             ft.Divider(height=10),
             ft.Row([
                 ft.Text("VISTA PREVIA DEL ARCHIVO", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),

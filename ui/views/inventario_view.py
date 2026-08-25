@@ -53,6 +53,7 @@ class InventarioView(BaseView):
             "acciones": "Acciones",
         }
         self._columnas_visibles = {k: True for k in self._columnas_ocultables}
+        self._modo_vista = "separado"  # "separado", "agrupado", "tarjetas"
 
         super().__init__(route="/inventario", title="Módulo de Inventario")
 
@@ -380,20 +381,45 @@ class InventarioView(BaseView):
         self._cargar_filas(text_color, accent)
         self._safe_update(e)
 
+    def _handle_cambio_modo_vista(self, e):
+        if e.control.selected:
+            self._modo_vista = list(e.control.selected)[0]
+            self._cargar_filas()
+            self._safe_update(e)
+
     def _build_tabla_panel(self, accent, card_bg, text_color, subtext, border) -> ft.Control:
         self._dt = ft.DataTable(
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
         )
-        # Viewport acotado con scroll propio en ambos ejes (independiente del
-        # scroll de la página): así "arriba/abajo" y "izquierda/derecha"
-        # tienen un recorrido real y acotado dentro del cual la cruceta
-        # flotante de navegación tiene sentido — antes el scroll vertical lo
-        # manejaba la página completa, obligando a desplazarse más allá de la
-        # tabla (filtros, panel BCV) para ver el primer/último ítem.
         self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
         self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=460)
+        self._nav_h, self._nav_v = build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent)
+        self._vista_container = ft.Container(height=460)
         self._lbl_pag = ft.Text("", color=subtext, size=12)
+
+        self._btn_modo_vista = ft.SegmentedButton(
+            selected=[self._modo_vista],
+            segments=[
+                ft.Segment(
+                    value="separado",
+                    label=ft.Text("Separado", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_COLUMN_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="agrupado",
+                    label=ft.Text("Agrupado", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_LIST_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="tarjetas",
+                    label=ft.Text("Tarjetas", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.GRID_VIEW_ROUNDED, size=16),
+                ),
+            ],
+            on_change=self._handle_cambio_modo_vista,
+        )
+
         self._cargar_filas(text_color, accent)
 
         btn_prev = ft.IconButton(ft.Icons.CHEVRON_LEFT, on_click=self._pagina_anterior)
@@ -404,29 +430,22 @@ class InventarioView(BaseView):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=accent),
-                            ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
-                            ft.Container(expand=True),
-                            self._build_selector_columnas(accent, text_color),
+                            ft.Row([
+                                ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=accent),
+                                ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ], spacing=8),
+                            ft.Row([
+                                self._btn_modo_vista,
+                                self._build_selector_columnas(accent, text_color),
+                            ], spacing=8),
                         ],
-                        spacing=8,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        wrap=True,
                     ),
                     ft.Container(
                         content=ft.Column(
                             controls=[
-                                # Stack: la tabla (con scroll propio horizontal Y vertical)
-                                # de fondo, con una cruceta de flechas flotante anclada
-                                # siempre en la misma esquina — no hay que buscar la
-                                # barra de scroll ni desplazarse para encontrarla, salta
-                                # directo a Código/Acciones (izq./der.) o al primer/último
-                                # ítem (arriba/abajo) desde donde sea que esté la vista.
-                                ft.Stack(
-                                    controls=[
-                                        self._tabla_scroll_col,
-                                        *build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent),
-                                    ],
-                                    height=460,
-                                ),
+                                self._vista_container,
                                 ft.Row(
                                     controls=[
                                         self._lbl_pag,
@@ -451,10 +470,10 @@ class InventarioView(BaseView):
             text_color = self.get_text_color()
         if accent is None:
             accent = self.get_accent_color()
+        subtext = self.get_subtext_color()
+        card_bg = self.get_card_bg()
+        border = self.get_border_color()
 
-        # Búsqueda general de texto + filtros avanzados combinables (multi-
-        # selección con buscador para categóricos, rango para numéricos y
-        # fechas de ingreso/actualización) — todos se combinan con AND.
         busqueda = getattr(self, "_f_busqueda", None) and self._f_busqueda.value or ""
         filtros = {
             "departamento": sorted(self._msf_departamento.selected) if hasattr(self, "_msf_departamento") else [],
@@ -484,21 +503,25 @@ class InventarioView(BaseView):
         total_pags = max(1, (total + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
 
-        def celda_acciones(p):
+        # Selector de columnas visible solo en modo separado
+        if hasattr(self, "_btn_columnas"):
+            self._btn_columnas.visible = (self._modo_vista == "separado")
+
+        def celda_acciones_lineal(p):
             return ft.Row([
                 ft.IconButton(
                     ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
-                    tooltip="Procesar Venta (abre Ventas con este ítem, cant.=1)",
+                    tooltip="Procesar Venta",
                     on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
                 ),
                 ft.IconButton(
                     ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400,
-                    tooltip="Añadir al Carrito de Ventas",
+                    tooltip="Añadir al Carrito",
                     on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
                 ),
                 *([ft.IconButton(
                     ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300,
-                    tooltip="Historial Clínico del Producto (ERS 3.6 — admin/gerencia)",
+                    tooltip="Historial Clínico",
                     on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev),
                 )] if self.es_admin else []),
                 ft.IconButton(
@@ -512,28 +535,202 @@ class InventarioView(BaseView):
                 ),
             ], spacing=0)
 
-        constructores_celda = {
-            "codigo": lambda p: ft.Text(p["codigo"], color=accent, weight=ft.FontWeight.W_600),
-            "referencia": lambda p: ft.Text(p["referencia"] or "-", color=text_color),
-            "descripcion": lambda p: ft.Text((p["descripcion_general"] or "-")[:40], color=text_color),
-            "departamento": lambda p: ft.Text(p["departamento"] or "-", color=text_color),
-            "marca": lambda p: ft.Text(p["marca"] or "-", color=text_color),
-            "precio_efectivo": lambda p: ft.Text(f"${p['precio_dolares']:.2f}", color=ft.Colors.GREEN_400),
-            "precio_bcv": lambda p: ft.Text(f"${p.get('precio_bcv', 0):.2f}", color=ft.Colors.CYAN_300),
-            "monto_bs": lambda p: ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", color=ft.Colors.AMBER_300),
-            "existencia": lambda p: ft.Text(str(p["existencia"]), color=text_color),
-            "acciones": celda_acciones,
-        }
+        def celda_acciones_grid(p):
+            fila1 = [
+                ft.IconButton(ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400, icon_size=18, tooltip="Procesar Venta", on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev)),
+                ft.IconButton(ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400, icon_size=18, tooltip="Añadir al Carrito", on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev)),
+            ]
+            fila2 = [
+                *([ft.IconButton(ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300, icon_size=18, tooltip="Historial Clínico", on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev))] if self.es_admin else []),
+                ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, icon_size=18, tooltip="Editar", on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev)),
+                ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, icon_size=18, tooltip="Eliminar", on_click=lambda ev, cod=p["codigo"]: self._confirmar_eliminar(cod, ev)),
+            ]
+            return ft.Column([ft.Row(fila1, spacing=0, tight=True), ft.Row(fila2, spacing=0, tight=True)], spacing=0, tight=True)
 
-        columnas = self._columnas_orden_visible()
-        rows = []
-        for p in todos:
-            rows.append(
-                ft.DataRow(
-                    cells=[ft.DataCell(constructores_celda[k](p)) for k in columnas],
-                )
+        # Limpiar filas primero para evitar descalce de conteo entre celdas y columnas durante el diff de Flet al alternar modos
+        self._dt.rows = []
+
+        if self._modo_vista == "separado":
+            self._dt.data_row_min_height = 48
+            self._dt.data_row_max_height = 48
+            self._dt.columns = [self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()]
+            constructores_celda = {
+                "codigo": lambda p: ft.Text(p["codigo"], color=accent, weight=ft.FontWeight.W_600),
+                "referencia": lambda p: ft.Text(p["referencia"] or "-", color=text_color),
+                "descripcion": lambda p: ft.Text((p["descripcion_general"] or "-")[:40], color=text_color),
+                "departamento": lambda p: ft.Text(p["departamento"] or "-", color=text_color),
+                "marca": lambda p: ft.Text(p["marca"] or "-", color=text_color),
+                "precio_efectivo": lambda p: ft.Text(f"${p['precio_dolares']:.2f}", color=ft.Colors.GREEN_400),
+                "precio_bcv": lambda p: ft.Text(f"${p.get('precio_bcv', 0):.2f}", color=ft.Colors.CYAN_300),
+                "monto_bs": lambda p: ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", color=ft.Colors.AMBER_300),
+                "existencia": lambda p: ft.Text(str(p["existencia"]), color=text_color),
+                "acciones": celda_acciones_lineal,
+            }
+            columnas = self._columnas_orden_visible()
+            self._dt.rows = [
+                ft.DataRow(cells=[ft.DataCell(constructores_celda[k](p)) for k in columnas])
+                for p in todos
+            ]
+            self._nav_h.visible = True
+            self._nav_v.visible = True
+            self._vista_container.content = ft.Stack(
+                controls=[
+                    self._tabla_scroll_col,
+                    self._nav_h,
+                    self._nav_v,
+                ],
+                height=460,
             )
-        self._dt.rows = rows
+
+        elif self._modo_vista == "agrupado":
+            self._dt.data_row_min_height = 72
+            self._dt.data_row_max_height = 95
+            self._dt.columns = [
+                ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Precios (Efvo / BCV / Bs)", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Exist.", color=text_color, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Acciones", color=accent, weight=ft.FontWeight.BOLD)),
+            ]
+            rows = []
+            for p in todos:
+                celda_prod = ft.Container(
+                    content=ft.Column([
+                        ft.Text(
+                            p["descripcion_general"] or "-",
+                            size=13, weight=ft.FontWeight.BOLD, color=text_color,
+                            max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        ft.Row([
+                            ft.Container(
+                                content=ft.Text(f"Cód: {p['codigo']}", size=11, weight=ft.FontWeight.W_600, color=accent),
+                                bgcolor=ft.Colors.with_opacity(0.12, accent),
+                                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                border_radius=6,
+                            ),
+                            ft.Container(
+                                content=ft.Text(f"Ref: {p['referencia'] or '-'}", size=11, color=subtext),
+                                bgcolor=ft.Colors.with_opacity(0.08, subtext),
+                                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                border_radius=6,
+                            ),
+                        ], spacing=6),
+                    ], spacing=4, tight=True),
+                    width=450,
+                    padding=ft.Padding.symmetric(vertical=6),
+                )
+
+                celda_clasif = ft.Container(
+                    content=ft.Column([
+                        ft.Text(p["departamento"] or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
+                        ft.Text(p["marca"] or "-", size=11, color=subtext),
+                    ], spacing=2, tight=True),
+                    width=180,
+                    padding=ft.Padding.symmetric(vertical=6),
+                )
+
+                celda_precios = ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(f"${p['precio_dolares']:.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+                            ft.Text(f"${p.get('precio_bcv', 0):.2f}", size=11, color=ft.Colors.CYAN_300),
+                        ], spacing=6),
+                        ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", size=11, color=ft.Colors.AMBER_300, weight=ft.FontWeight.W_600),
+                    ], spacing=2, tight=True),
+                    width=220,
+                    padding=ft.Padding.symmetric(vertical=6),
+                )
+
+                celda_stock = ft.Container(
+                    content=ft.Text(str(p["existencia"]), color=text_color, weight=ft.FontWeight.BOLD, size=13),
+                    width=80,
+                    alignment=ft.Alignment.CENTER,
+                )
+
+                celda_acc = ft.Container(
+                    content=celda_acciones_lineal(p),
+                    width=250,
+                    padding=ft.Padding.symmetric(vertical=6),
+                )
+
+                rows.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(celda_prod),
+                        ft.DataCell(celda_clasif),
+                        ft.DataCell(celda_precios),
+                        ft.DataCell(celda_stock),
+                        ft.DataCell(celda_acc),
+                    ])
+                )
+            self._dt.rows = rows
+            self._nav_h.visible = True
+            self._nav_v.visible = True
+            self._vista_container.content = ft.Stack(
+                controls=[
+                    self._tabla_scroll_col,
+                    self._nav_h,
+                    self._nav_v,
+                ],
+                height=460,
+            )
+
+        elif self._modo_vista == "tarjetas":
+            self._nav_h.visible = False
+            self._nav_v.visible = False
+            tarjetas = []
+            for p in todos:
+                tarjeta = ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(f"Código: {p['codigo']}", size=12, weight=ft.FontWeight.BOLD, color=accent),
+                            ft.Container(
+                                content=ft.Text(f"Stock: {p['existencia']:.0f}", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                                bgcolor=ft.Colors.GREEN_700 if p['existencia'] > 0 else ft.Colors.RED_700,
+                                padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+                                border_radius=10,
+                            )
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Divider(height=4),
+                        ft.Text(p["descripcion_general"] or "-", size=14, weight=ft.FontWeight.BOLD, color=text_color, max_lines=2),
+                        ft.Row([
+                            ft.Text(f"Ref: {p['referencia'] or '-'}", size=11, color=subtext),
+                            ft.Text(f"{p['departamento'] or '-'} / {p['marca'] or '-'}", size=11, color=subtext),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Divider(height=4),
+                        ft.Row([
+                            ft.Column([
+                                ft.Text("Efvo ($)", size=10, color=subtext),
+                                ft.Text(f"${p['precio_dolares']:.2f}", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+                            ], spacing=1),
+                            ft.Column([
+                                ft.Text("BCV ($)", size=10, color=subtext),
+                                ft.Text(f"${p.get('precio_bcv', 0):.2f}", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_300),
+                            ], spacing=1),
+                            ft.Column([
+                                ft.Text("Monto (Bs)", size=10, color=subtext),
+                                ft.Text(f"Bs {p.get('monto_bcv_bolivares', 0):.2f}", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_300),
+                            ], spacing=1),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Divider(height=4),
+                        celda_acciones_lineal(p),
+                    ], spacing=6),
+                    padding=12, border_radius=14, width=320,
+                    bgcolor=card_bg,
+                    border=ft.Border.all(1, border),
+                )
+                tarjetas.append(tarjeta)
+
+            if not tarjetas:
+                self._vista_container.content = ft.Container(
+                    content=ft.Text("No se encontraron productos.", color=subtext),
+                    alignment=ft.alignment.center, height=460,
+                )
+            else:
+                self._vista_container.content = ft.Column(
+                    controls=[ft.Row(controls=tarjetas, wrap=True, spacing=10)],
+                    scroll=ft.ScrollMode.ALWAYS,
+                    height=460,
+                )
 
     def _abrir_modal_historial(self, codigo: str, e=None):
         """Historial Clínico de Producto (ERS 3.6): movimientos cronológicos
