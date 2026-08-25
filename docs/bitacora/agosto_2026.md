@@ -373,6 +373,15 @@
 - **Verificaciones realizadas:** Ejecución de pruebas automatizadas activando secuencialmente los 8 botones de los clusters flotantes horizontal y vertical contra la tabla de `InventarioView`, confirmando desplazamiento correcto y 0 excepciones.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Fix UX: Corrección de Clic en Scroll de Modo Agrupado (Restricción Finito de Fila) - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** La navegación con botones flotantes funcionaba en modo "Separado", pero no realizaba el desplazamiento en modo "Agrupado".
+- **Causa raíz y solución:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** En Modo Agrupado se había asignado `data_row_max_height = float('inf')`. En el motor Flutter/Flet, enviar `double.infinity` como altura máxima de fila violaba las restricciones del widget `DataTable`, deshabilitando internamente las escuchas del `ScrollController`. Se ajustó la altura máxima a un valor finito acotado (`data_row_max_height = 95`), restableciendo las restricciones válidas del árbol de renderizado y permitiendo que los eventos de scroll se ejecuten inmediatamente.
+- **Verificaciones realizadas:** Ejecución de ciclo de prueba con conmutación dinámica entre los modos `separado` -> `agrupado` -> `tarjetas` -> `agrupado` -> `separado`, ejecutando eventos de scroll horizontal y vertical en cada transición con 100% de éxito y 0 excepciones.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
