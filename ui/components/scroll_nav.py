@@ -19,10 +19,13 @@ import flet as ft
 _PASO_GRANDE = 999999  # clamma al límite real del scroll (Flutter lo acota).
 
 
-def _mover_async(target: ft.Control, delta: float, duration: int = 200):
+def _mover_async(target: ft.Control, offset: float | None = None, delta: float | None = None, duration: int = 200):
     async def handler(e):
         try:
-            await target.scroll_to(delta=delta, duration=duration)
+            if offset is not None:
+                await target.scroll_to(offset=offset, duration=duration)
+            elif delta is not None:
+                await target.scroll_to(delta=delta, duration=duration)
         except Exception:
             pass
     return handler
@@ -34,17 +37,17 @@ def build_scroll_nav(target: ft.Control, axis: str, accent, step: float = 260, t
     `"horizontal"` (Izquierda/Derecha) o `"vertical"` (Arriba/Abajo)."""
     if axis == "horizontal":
         botones = [
-            (ft.Icons.FIRST_PAGE_ROUNDED, "Ir al inicio", -_PASO_GRANDE),
-            (ft.Icons.CHEVRON_LEFT_ROUNDED, "Desplazar a la izquierda", -step),
-            (ft.Icons.CHEVRON_RIGHT_ROUNDED, "Desplazar a la derecha", step),
-            (ft.Icons.LAST_PAGE_ROUNDED, "Ir al final", _PASO_GRANDE),
+            (ft.Icons.FIRST_PAGE_ROUNDED, "Ir al inicio", 0.0, None),
+            (ft.Icons.CHEVRON_LEFT_ROUNDED, "Desplazar a la izquierda", None, -step),
+            (ft.Icons.CHEVRON_RIGHT_ROUNDED, "Desplazar a la derecha", None, step),
+            (ft.Icons.LAST_PAGE_ROUNDED, "Ir al final", -1.0, None),
         ]
     else:
         botones = [
-            (ft.Icons.VERTICAL_ALIGN_TOP_ROUNDED, "Ir arriba del todo", -_PASO_GRANDE),
-            (ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, "Subir", -step),
-            (ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, "Bajar", step),
-            (ft.Icons.VERTICAL_ALIGN_BOTTOM_ROUNDED, "Ir abajo del todo", _PASO_GRANDE),
+            (ft.Icons.VERTICAL_ALIGN_TOP_ROUNDED, "Ir arriba del todo", 0.0, None),
+            (ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, "Subir", None, -step),
+            (ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, "Bajar", None, step),
+            (ft.Icons.VERTICAL_ALIGN_BOTTOM_ROUNDED, "Ir abajo del todo", -1.0, None),
         ]
 
     return ft.Row(
@@ -53,9 +56,9 @@ def build_scroll_nav(target: ft.Control, axis: str, accent, step: float = 260, t
                 icon=icon, icon_size=16, icon_color=accent,
                 tooltip=f"{tooltip_prefix}{tip}",
                 style=ft.ButtonStyle(padding=4),
-                on_click=_mover_async(target, delta),
+                on_click=_mover_async(target, offset=offset, delta=delta),
             )
-            for icon, tip, delta in botones
+            for icon, tip, offset, delta in botones
         ],
         spacing=0, tight=True,
     )
@@ -93,8 +96,8 @@ def build_floating_corner_nav(
     horizontal = ft.Container(
         content=ft.Row(
             [
-                _mini_flecha(ft.Icons.CHEVRON_LEFT_ROUNDED, "Ir al Código (inicio de la fila)", accent, _mover_async(h_target, -_PASO_GRANDE, 250)),
-                _mini_flecha(ft.Icons.CHEVRON_RIGHT_ROUNDED, "Ir a Acciones (final de la fila)", accent, _mover_async(h_target, _PASO_GRANDE, 250)),
+                _mini_flecha(ft.Icons.CHEVRON_LEFT_ROUNDED, "Ir al Código (inicio de la fila)", accent, _mover_async(h_target, offset=0.0, duration=250)),
+                _mini_flecha(ft.Icons.CHEVRON_RIGHT_ROUNDED, "Ir a Acciones (final de la fila)", accent, _mover_async(h_target, offset=-1.0, duration=250)),
             ],
             spacing=3, tight=True,
         ),
@@ -105,8 +108,8 @@ def build_floating_corner_nav(
     vertical = ft.Container(
         content=ft.Row(
             [
-                _mini_flecha(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, "Ir al primer ítem", accent, _mover_async(v_target, -_PASO_GRANDE, 250)),
-                _mini_flecha(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, "Ir al último ítem", accent, _mover_async(v_target, _PASO_GRANDE, 250)),
+                _mini_flecha(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, "Ir al primer ítem", accent, _mover_async(v_target, offset=0.0, duration=250)),
+                _mini_flecha(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, "Ir al último ítem", accent, _mover_async(v_target, offset=-1.0, duration=250)),
             ],
             spacing=3, tight=True,
         ),
