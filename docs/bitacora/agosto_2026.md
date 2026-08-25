@@ -365,6 +365,15 @@
 - **Verificaciones realizadas:** Compilación limpia con `py_compile` en ambos archivos y prueba de inicialización/conmutación de la vista contra la base de datos confirmando 0 excepciones y asignación adecuada de alturas de fila.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Fix UX: Corrección de Scroll por Delta y Ampliación de Controles en Navegación Flotante - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Los botones flotantes de desplazamiento horizontal y vertical no realizaban el movimiento al hacer clic.
+- **Causa raíz y solución:**
+  - **[ui/components/scroll_nav.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/components/scroll_nav.py):** En el motor Flutter/Flet, pasar un `offset` negativo como `-1.0` se acota nativamente a `0.0` (inicio/arriba), por lo que tanto las flechas izquierdas/arriba como las derechas/abajo apuntaban al origen de scroll `0.0`. Se corrigió implementando desplazamientos por delta positivo amplio (`delta=99999.0` que Flutter acota correctamente al `maxScrollExtent` real) para extremos finales, y deltas de paso (`±280px` horizontal, `±200px` vertical) para las flechas de dirección. Se incrementó la superficie de clic de los botones a 28px con íconos de 14px e iluminación adaptativa.
+- **Verificaciones realizadas:** Ejecución de pruebas automatizadas activando secuencialmente los 8 botones de los clusters flotantes horizontal y vertical contra la tabla de `InventarioView`, confirmando desplazamiento correcto y 0 excepciones.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
