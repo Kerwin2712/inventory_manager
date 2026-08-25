@@ -1444,12 +1444,17 @@ class VentasView(BaseView):
 
         return self.create_card(
             content=ft.Column([
+                # NOTA: nunca combinar wrap=True con un hijo expand=True en el
+                # mismo Row — Flutter's Wrap no soporta hijos Expanded y la
+                # UI se renderiza como un rectángulo gris sólido en vez del
+                # contenido real (ver bitácora 04/08/2026, mismo bug ya
+                # corregido antes en el panel de búsqueda de este archivo).
+                # `alignment=SPACE_BETWEEN` ya separa los dos grupos sin
+                # necesitar un espaciador expand.
                 ft.Row(
                     controls=[
                         ft.Text(f"CARRITO DE COMPRAS ({len(items)} renglones)", size=13, weight=ft.FontWeight.BOLD, color=accent),
-                        ft.Container(expand=True),
-                        btn_modo_vista,
-                        selector_cols,
+                        ft.Row([btn_modo_vista, selector_cols], spacing=8),
                     ],
                     wrap=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
