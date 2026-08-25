@@ -381,6 +381,15 @@
 - **Verificaciones realizadas:** Ejecución de ciclo de prueba con conmutación dinámica entre los modos `separado` -> `agrupado` -> `tarjetas` -> `agrupado` -> `separado`, ejecutando eventos de scroll horizontal y vertical en cada transición con 100% de éxito y 0 excepciones.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Fix UX: Persistencia de Controles Flotantes en Conmutación de Modos de Vista - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Al alternar entre los modos de vista (Separado ➔ Agrupado ➔ Tarjetas), los botones de desplazamiento dejaban de funcionar.
+- **Causa raíz y solución:**
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):** En cada conmutación de modo, `_cargar_filas()` volvía a invocar `build_floating_corner_nav`, creando instancias nuevas de `Container` e `IconButton` que reemplazaban a las anteriores dentro del `Stack`. Debido a que estas nuevas instancias eran creadas tras el registro inicial de la página, carecían del atributo `.page` y no figuraban en el registro de eventos de Flet, descartando en silencio todos sus eventos `on_click`. Se corrigió instanciando los controles flotantes `self._nav_h` y `self._nav_v` una única vez en `_build_tabla_panel` como miembros persistentes de la vista, manteniendo su registro activo y alternando únicamente su propiedad `.visible` según el modo seleccionado.
+- **Verificaciones realizadas:** Ejecución de prueba de estrés automatizada alternando secuencialmente entre 6 conmutaciones de modo (`separado` ➔ `agrupado` ➔ `tarjetas` ➔ `agrupado` ➔ `separado` ➔ `agrupado`) e invocando los 8 handlers de scroll en cada paso, confirmando un 100% de éxito sin pérdida de manejadores de eventos.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
