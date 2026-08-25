@@ -351,6 +351,21 @@
 - **Verificaciones realizadas:** Ejecución de script de prueba simulando la conmutación secuencial entre los modos `separado` -> `agrupado` -> `tarjetas` confirmando 0 excepciones.
 - **Estado del proyecto:** Correcciones aplicadas y committeadas atómicamente.
 
+### Fix UX: Corrección de Encimamiento de Texto en Modo Agrupado, Arreglo de Botones Scroll y Ampliación de Filas - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problemas reportados por el usuario:**
+  1. En la vista de Inventario en Modo Agrupado, el texto se montaba uno sobre otro.
+  2. Los íconos de desplazamiento (scroll) no funcionaban.
+  3. Las filas en la vista de lista "Agrupado" debían ser más anchas para que todo se entienda claramente y los íconos se vean sin necesidad de hacer scroll.
+- **Causa raíz y soluciones aplicadas:**
+  - **[ui/components/scroll_nav.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/components/scroll_nav.py):** `_mover_async` usaba deltas gigantescos (`999999`) para saltos a extremos, lo que provocaba que la API de Flet fallara silenciosamente y la excepción fuese absorbida. Se actualizó para pasar `offset=0.0` (inicio) y `offset=-1.0` (final) según la API nativa de Flet 0.86.1, manteniendo `delta` para desplazamientos paso a paso.
+  - **[ui/views/inventario_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/inventario_view.py):**
+    - Se configuró la altura de filas de la `DataTable`: en modo `separado` se mantiene `data_row_min_height=48` y `data_row_max_height=48`, mientras que en modo `agrupado` se establece `data_row_min_height=72` y `data_row_max_height=float('inf')`. Esto otorga la altura vertical necesaria a cada fila multilínea (descripción + badges + precios) eliminando por completo el encimamiento de texto.
+    - Se ampliaron las anchuras de las columnas en Modo Agrupado (`Producto`: 450px, `Depto/Marca`: 180px, `Precios`: 220px, `Existencia`: 80px, `Acciones`: 250px), permitiendo una lectura holgada de la descripción y desplegar todos los íconos de acción en una única fila continua sin compresión ni necesidad de scroll horizontal.
+- **Verificaciones realizadas:** Compilación limpia con `py_compile` en ambos archivos y prueba de inicialización/conmutación de la vista contra la base de datos confirmando 0 excepciones y asignación adecuada de alturas de fila.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
