@@ -394,6 +394,7 @@ class InventarioView(BaseView):
         )
         self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
         self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=460)
+        self._nav_h, self._nav_v = build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent)
         self._vista_container = ft.Container(height=460)
         self._lbl_pag = ft.Text("", color=subtext, size=12)
 
@@ -570,10 +571,13 @@ class InventarioView(BaseView):
                 ft.DataRow(cells=[ft.DataCell(constructores_celda[k](p)) for k in columnas])
                 for p in todos
             ]
+            self._nav_h.visible = True
+            self._nav_v.visible = True
             self._vista_container.content = ft.Stack(
                 controls=[
                     self._tabla_scroll_col,
-                    *build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent),
+                    self._nav_h,
+                    self._nav_v,
                 ],
                 height=460,
             )
@@ -659,15 +663,20 @@ class InventarioView(BaseView):
                     ])
                 )
             self._dt.rows = rows
+            self._nav_h.visible = True
+            self._nav_v.visible = True
             self._vista_container.content = ft.Stack(
                 controls=[
                     self._tabla_scroll_col,
-                    *build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent),
+                    self._nav_h,
+                    self._nav_v,
                 ],
                 height=460,
             )
 
         elif self._modo_vista == "tarjetas":
+            self._nav_h.visible = False
+            self._nav_v.visible = False
             tarjetas = []
             for p in todos:
                 tarjeta = ft.Container(
