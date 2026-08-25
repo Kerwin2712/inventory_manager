@@ -115,15 +115,37 @@ class VentasView(BaseView):
         if hasattr(self, "lbl_total_bcv"):
             self.lbl_total_bcv.value = f"Bs. {tot_bcv:,.2f}"
 
+        # Método de pago (determina qué monto se cobra realmente): Efectivo/
+        # Binance cobran en dólares (Precio USD Efectivo); Pago Móvil/
+        # Transferencia/Punto cobran en Bolívares (Precio USD BCV x tasa).
+        # Todo lo que depende de esto (monto, título, referencia, resaltado
+        # de los dos totales y el borde de la caja) debe refrescarse aquí —
+        # si no, cambiar el método en el Dropdown no se refleja visualmente.
         metodo_pago_actual = c_activo.get("metodo_pago", "Efectivo")
         cobra_en_bs = metodo_pago_actual in METODOS_PAGO_BS
+        color_metodo = ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700
+
         if hasattr(self, "lbl_monto_a_pagar"):
             self.lbl_monto_a_pagar.value = f"Bs. {tot_bcv:,.2f}" if cobra_en_bs else f"$ {tot_usd:,.2f}"
-            self.lbl_monto_a_pagar.color = ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700
+            self.lbl_monto_a_pagar.color = color_metodo
+
+        if hasattr(self, "lbl_monto_titulo"):
+            self.lbl_monto_titulo.value = f"MONTO A COBRAR ({metodo_pago_actual}):"
 
         if hasattr(self, "txt_sub_metodo_ref"):
             self.txt_sub_metodo_ref.value = f"Ref: $ {tot_usd_bcv_equivalente:,.2f} BCV" if cobra_en_bs else "Dólares en Efectivo"
-            self.txt_sub_metodo_ref.color = ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700
+            self.txt_sub_metodo_ref.color = color_metodo
+
+        if hasattr(self, "container_monto_a_pagar"):
+            self.container_monto_a_pagar.border = ft.Border.all(1.5, color_metodo)
+
+        if hasattr(self, "lbl_total_efectivo_titulo"):
+            self.lbl_total_efectivo_titulo.weight = ft.FontWeight.NORMAL if cobra_en_bs else ft.FontWeight.BOLD
+            self.lbl_total_efectivo_titulo.color = self.get_text_color() if cobra_en_bs else ft.Colors.GREEN_700
+
+        if hasattr(self, "lbl_total_bcv_titulo"):
+            self.lbl_total_bcv_titulo.weight = ft.FontWeight.BOLD if cobra_en_bs else ft.FontWeight.NORMAL
+            self.lbl_total_bcv_titulo.color = ft.Colors.AMBER_800 if cobra_en_bs else self.get_text_color()
 
         if hasattr(self, "tira_carritos_container"):
             carritos_dict = obtener_todos_los_carritos(self._sid)
@@ -494,8 +516,31 @@ class VentasView(BaseView):
             txt_sub_metodo = "Dólares en Efectivo"
 
         self.lbl_monto_a_pagar = ft.Text(monto_a_pagar_str, size=18, weight=ft.FontWeight.BOLD, color=lbl_monto_color)
-        lbl_monto_titulo = ft.Text(f"MONTO A COBRAR ({metodo_pago_actual}):", size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color())
+        self.lbl_monto_titulo = ft.Text(f"MONTO A COBRAR ({metodo_pago_actual}):", size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color())
         self.txt_sub_metodo_ref = ft.Text(txt_sub_metodo, size=11, color=lbl_monto_color, weight=ft.FontWeight.W_600)
+        # Etiquetas de los dos totales (Efectivo vs Bs): se resaltan en negrita
+        # y en el color de su moneda cuando ese es el método activo, para que
+        # sea evidente cuál de los dos montos es el que realmente se cobra.
+        self.lbl_total_efectivo_titulo = ft.Text(
+            "Total $ (Efectivo):", size=14,
+            weight=ft.FontWeight.BOLD if not cobra_en_bs else ft.FontWeight.NORMAL,
+            color=ft.Colors.GREEN_700 if not cobra_en_bs else self.get_text_color(),
+        )
+        self.lbl_total_bcv_titulo = ft.Text(
+            "TOTAL A PAGAR (Bs):", size=14,
+            weight=ft.FontWeight.BOLD if cobra_en_bs else ft.FontWeight.NORMAL,
+            color=ft.Colors.AMBER_800 if cobra_en_bs else self.get_text_color(),
+        )
+        self.container_monto_a_pagar = ft.Container(
+            content=ft.Column([
+                ft.Row([self.lbl_monto_titulo, self.lbl_monto_a_pagar], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row([self.txt_sub_metodo_ref], alignment=ft.MainAxisAlignment.END),
+            ], spacing=2),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+            bgcolor=self.get_card_bg(),
+            border_radius=10,
+            border=ft.Border.all(1.5, lbl_monto_color),
+        )
 
         panel_totales = self.create_card(
             content=ft.Column([
@@ -504,22 +549,13 @@ class VentasView(BaseView):
                 ft.Row([ft.Text("Subtotal ($):", weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_subtotal_usd], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([ft.Text("Subtotal (Bs):", weight=ft.FontWeight.BOLD, color=self.get_text_color()), self.lbl_subtotal_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Divider(height=6),
-                ft.Row([ft.Text("Total $ (Efectivo):", size=14, weight=ft.FontWeight.BOLD if not cobra_en_bs else ft.FontWeight.NORMAL, color=ft.Colors.GREEN_700 if not cobra_en_bs else self.get_text_color()), self.lbl_total_usd_efectivo], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row([self.lbl_total_efectivo_titulo, self.lbl_total_usd_efectivo], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([ft.Text("Total $ (Referencia BCV):", size=13, color=self.get_subtext_color()), self.lbl_total_usd_pago_bs], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.Row([ft.Text("TOTAL A PAGAR (Bs):", size=14, weight=ft.FontWeight.BOLD if cobra_en_bs else ft.FontWeight.NORMAL, color=ft.Colors.AMBER_800 if cobra_en_bs else self.get_text_color()), self.lbl_total_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row([self.lbl_total_bcv_titulo, self.lbl_total_bcv], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Row([self.lbl_antiguedad_resumen], alignment=ft.MainAxisAlignment.END),
                 ft.Divider(height=6),
                 self.dd_metodo_pago,
-                ft.Container(
-                    content=ft.Column([
-                        ft.Row([lbl_monto_titulo, self.lbl_monto_a_pagar], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Row([self.txt_sub_metodo_ref], alignment=ft.MainAxisAlignment.END),
-                    ], spacing=2),
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
-                    bgcolor=self.get_card_bg(),
-                    border_radius=10,
-                    border=ft.Border.all(1.5, lbl_monto_color),
-                ),
+                self.container_monto_a_pagar,
                 ft.Container(height=8),
                 ft.FilledButton(
                     content=ft.Row([
