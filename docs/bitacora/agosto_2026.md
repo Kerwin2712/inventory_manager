@@ -420,6 +420,15 @@
 - **Verificaciones realizadas:** Prueba automatizada verificando la tarjeta del carrito sin productos (`height=420`, `expand=None`) y con productos (`height=420`, `expand=None`), confirmando 0 recuadros grises y renderizado correcto.
 - **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
 
+### Fix Layout: Envoltura de Tabla de Carrito con Scroll Vertical (tabla_scroll_col) - 24/08/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Problema reportado:** Al agregar un ítem al carrito de ventas, continuaba apareciendo un rectángulo gris en la lista de ítems.
+- **Causa raíz y solución:**
+  - **[ui/views/ventas_view.py](file:///c:/Users/Usuario/Documents/GitHub/inventory_manager/ui/views/ventas_view.py):** `tabla_scroll_row` (`ft.Row(scroll=ft.ScrollMode.ALWAYS)`) se encontraba insertado directamente dentro de `contenido_vista` (`ft.Column(expand=True)`) sin un envoltorio de scroll vertical. En Flutter/Flet, una `Row` scrolleable horizontalmente colocada directamente en una `Column` flexible sin un eje scrolleable vertical o restricciones explícitas de altura provocaba un error de layout no acotado al insertar datos en la tabla, renderizando un recuadro gris. Se envolvió `tabla_scroll_row` en `tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, expand=True)` en los modos separado y agrupado.
+- **Verificaciones realizadas:** Prueba automatizada verificando la vista de carrito vacío y con productos en los 3 modos de vista (Separado, Agrupado, Tarjetas), confirmando renderizado correcto y 0 recuadros grises.
+- **Estado del proyecto:** Corrección aplicada y committeada atómicamente.
+
+
 
 
 
