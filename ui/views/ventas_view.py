@@ -161,7 +161,21 @@ class VentasView(BaseView):
             self.dd_carritos.options = [ft.dropdown.Option(cid, _etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
             self.dd_carritos.value = obtener_id_carrito_activo(self._sid)
 
-        self.safe_update(e)
+        # `safe_update(e)` resuelve la página vía `e.control.page`, pero para
+        # el `on_change` de un `Dropdown` esa referencia puede no estar
+        # disponible en el momento del evento (a diferencia de un clic de
+        # botón) — si eso pasa, todos los atributos de arriba sí se
+        # actualizan en el modelo de datos, pero `page.update()` nunca se
+        # llama y no se ve ningún cambio en pantalla, aunque los cálculos
+        # sean correctos. Se agrega `self._page_ref` (la Page real inyectada
+        # por el Dashboard al construir esta vista, ya usada como respaldo
+        # en `_calcular_sid`) como último recurso para no depender solo del
+        # evento.
+        p = self.get_current_page(e) or self._page_ref
+        if p:
+            p.update()
+        else:
+            self.safe_update(e)
 
     def _calcular_sid(self, e=None) -> str:
         """Resuelve el ID de sesión de Flet (page.session.id) para aislar los
