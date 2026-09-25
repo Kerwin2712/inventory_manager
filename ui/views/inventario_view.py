@@ -1191,8 +1191,10 @@ class InventarioView(BaseView):
         self._mostrar_paso1_dialogo(e, codigo_inicial="")
 
     def _abrir_flujo_edicion(self, codigo: str, e=None):
-        """Abre el formulario en modo edición para un producto existente."""
-        prod = obtener_producto(codigo)
+        """Abre el formulario en modo edición para un producto existente. Se
+        lee con el rol para que un administrador vea los costos ya registrados
+        (un vendedor los recibe filtrados y no puede alterarlos)."""
+        prod = obtener_producto(codigo, rol_usuario=self._rol_para_costos())
         if not prod:
             self._snack(f"Producto '{codigo}' no encontrado.", ft.Colors.RED_700, e)
             return
@@ -1397,6 +1399,30 @@ class InventarioView(BaseView):
                           value=str(d.get("existencia", "0")),
                           width=120, kb=ft.KeyboardType.NUMBER)
 
+        def _numero_o_vacio(valor) -> str:
+            """Texto para un campo numérico opcional (`None` → vacío)."""
+            return "" if valor is None else str(valor)
+
+        # Umbral de alerta propio del producto (no es un dato restringido).
+        f_alerta_stock = tf("Alerta de Stock Mínimo", "alerta_stock_minimo",
+                            value=_numero_o_vacio(d.get("alerta_stock_minimo")),
+                            width=200, kb=ft.KeyboardType.NUMBER,
+                            hint="Entero; vacío = sin alerta")
+
+        # ── COSTOS del negocio (solo administración) ─────────────────────────
+        # Distintos de los precios de venta: es lo que cuesta adquirir el
+        # producto. Con existencia >= 1 el Costo USD Efectivo es obligatorio
+        # (ERR_PROD_COSTO), así que sin estos campos el formulario no podía
+        # guardar ningún producto con stock.
+        f_costo_usd = tf("Costo USD (Efectivo)" + (" *" if self.es_admin else ""), "costo_usd_efectivo",
+                         value=_numero_o_vacio(d.get("costo_usd_efectivo")),
+                         width=190, kb=ft.KeyboardType.NUMBER)
+        f_costo_bcv = tf("Costo USD (BCV)", "costo_usd_bcv",
+                         value=_numero_o_vacio(d.get("costo_usd_bcv")),
+                         width=190, kb=ft.KeyboardType.NUMBER)
+        fila_costos = ft.Row([f_costo_usd, f_costo_bcv], spacing=12, wrap=True,
+                             visible=self.es_admin)
+
         # Fila de precios (se oculta si existencia == 0)
         fila_precios = ft.Row([f_precio_usd, f_precio_bcv, lbl_monto_bs], spacing=12, visible=float(d.get("existencia", 1) or 1) != 0)
 
@@ -1438,7 +1464,7 @@ class InventarioView(BaseView):
         titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
 
         def _limpiar_errores():
-            for campo in (f_ref, f_desc, f_precio_usd, f_precio_bcv):
+            for campo in (f_ref, f_desc, f_precio_usd, f_precio_bcv, f_costo_usd, f_alerta_stock):
                 campo.error_text = None
             selector_depto.limpiar_errores()
 
@@ -1480,6 +1506,13 @@ class InventarioView(BaseView):
                 f_precio_bcv.error_text = "Requerido (Efectivo o BCV) si Existencia > 0"
                 hay_error = True
 
+            # Con stock, el Costo USD Efectivo es obligatorio (ERR_PROD_COSTO).
+            # Se avisa aquí, junto al campo, en vez de dejar que el servicio
+            # rechace el guardado con un snack genérico al final del flujo.
+            if self.es_admin and existencia_val >= 1 and not (f_costo_usd.value or "").strip():
+                f_costo_usd.error_text = "Requerido si Existencia >= 1"
+                hay_error = True
+
             if hay_error:
                 self._snack("Complete los campos obligatorios resaltados en rojo.", ft.Colors.RED_700, ev)
                 self._safe_update(ev)
@@ -1498,8 +1531,15 @@ class InventarioView(BaseView):
                 "precio_dolares": f_precio_usd.value,
                 "precio_bcv": f_precio_bcv.value,
                 "existencia": f_existencia.value,
+                "alerta_stock_minimo": f_alerta_stock.value,
                 "proveedor_id": dd_proveedor.value or None,
             }
+            # Las claves de costo solo viajan si el rol puede editarlas: el
+            # servicio rechaza (PermissionError) que un no-admin las envíe,
+            # incluso vacías.
+            if self.es_admin:
+                datos["costo_usd_efectivo"] = f_costo_usd.value
+                datos["costo_usd_bcv"] = f_costo_bcv.value
             self._mostrar_paso3_confirmacion(ev, datos)
 
         dlg = ft.AlertDialog(
@@ -1511,8 +1551,9 @@ class InventarioView(BaseView):
                         ft.Row([cod_display, f_ref, f_marca], spacing=12, wrap=True),
                         f_desc,
                         selector_depto.construir_fila(),
-                        ft.Row([f_existencia, dd_proveedor, f_barras], spacing=12, wrap=True),
+                        ft.Row([f_existencia, f_alerta_stock, dd_proveedor, f_barras], spacing=12, wrap=True),
                         fila_precios,
+                        fila_costos,
                         f_nombre_corto,
                     ],
                     spacing=14,
@@ -1551,8 +1592,13 @@ class InventarioView(BaseView):
             ("Sub-Departamento", "sub_departamento"),
             ("Marca", "marca"),
             ("Existencia", "existencia"),
+            ("Alerta de Stock Mínimo", "alerta_stock_minimo"),
             ("Precio USD (Efectivo)", "precio_dolares"),
             ("Precio USD (BCV)", "precio_bcv"),
+            # Las claves de costo solo están en `datos` si el rol es
+            # administrativo, y las filas se arman solo con las presentes.
+            ("Costo USD (Efectivo)", "costo_usd_efectivo"),
+            ("Costo USD (BCV)", "costo_usd_bcv"),
             ("Proveedor ID", "proveedor_id"),
             ("Código de Barras", "codigo_barras"),
             ("Nombre Corto", "nombre_referencia_corto"),
@@ -1564,6 +1610,10 @@ class InventarioView(BaseView):
         # elidir, nunca desbordarse hacia la derecha del diálogo.
         filas_resumen = []
         for etiqueta, key in campos_orden:
+            # Solo se resumen los campos que el formulario realmente envió: un
+            # rol sin acceso a los costos no debe ver ni sus etiquetas.
+            if key not in datos:
+                continue
             val = str(datos.get(key) or "").strip()
             mostrar = val if val and val not in ("0", "0.0", "None") else "— no llenado —"
             color_val = text_color if mostrar != "— no llenado —" else self.get_subtext_color()
@@ -1587,7 +1637,10 @@ class InventarioView(BaseView):
 
         def _editar(ev):
             self._close_dialog(ev)
-            prod_actual = obtener_producto(datos["codigo"]) if self._editing_codigo else None
+            prod_actual = (
+                obtener_producto(datos["codigo"], rol_usuario=self._rol_para_costos())
+                if self._editing_codigo else None
+            )
             self._mostrar_paso2_dialogo(ev, codigo=datos["codigo"], datos_iniciales=prod_actual or datos)
 
         def _cancelar_todo(ev):
@@ -1660,6 +1713,13 @@ class InventarioView(BaseView):
                 existencia=_to_float(datos.get("existencia", 0)),
                 codigo_barras=datos.get("codigo_barras", ""),
                 nombre_referencia_corto=datos.get("nombre_referencia_corto", ""),
+                alerta_stock_minimo=datos.get("alerta_stock_minimo") or None,
+                # Los costos solo viajan si el formulario los recogió (rol
+                # administrativo); `None` significa "no modificar", con lo que
+                # un vendedor nunca pisa el costo ya almacenado.
+                costo_usd_efectivo=datos.get("costo_usd_efectivo") or None,
+                costo_usd_bcv=datos.get("costo_usd_bcv") or None,
+                rol_usuario=self._rol_para_costos(),
             )
 
             if self._editing_codigo:

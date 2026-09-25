@@ -293,6 +293,18 @@ class DashboardView(BaseView):
             )
         )
 
+    def _mostrar_alertas_stock(self, e=None):
+        """Resumen rápido de stock crítico desde el ícono de notificaciones
+        (antes era un `print` de marcador de posición)."""
+        try:
+            total = len(obtener_alertas_stock())
+        except Exception:
+            total = 0
+        if total:
+            self.show_alert_info(f"{total} producto(s) con stock crítico. Revise Inicio → Auditoría de Stock.", e)
+        else:
+            self.show_alert_success("Sin alertas de stock activas.", e)
+
     def build_header(self) -> ft.Control:
         """Franja superior ÚNICA: título global · módulo actual · usuario ·
         opciones de interfaz · cerrar sesión.
@@ -323,7 +335,7 @@ class DashboardView(BaseView):
             icon=ft.Icons.NOTIFICATIONS_OUTLINED,
             icon_color=ft.Colors.AMBER_500,
             tooltip="Alertas de Stock Crítico",
-            on_click=lambda e: print("Notificaciones"),
+            on_click=self._mostrar_alertas_stock,
         )
 
         theme_toggle_btn = ft.IconButton(
