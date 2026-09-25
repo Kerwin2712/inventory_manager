@@ -291,7 +291,11 @@ def run_seed():
                 precio_dolares=p["precio_dolares"],
                 proveedor_id=p["proveedor_id"],
                 existencia=p["existencia"],
-                nombre_referencia_corto=p["nombre_referencia_corto"]
+                nombre_referencia_corto=p["nombre_referencia_corto"],
+                # Todo producto con existencia exige Costo USD Efectivo; para
+                # los datos de prueba se estima un margen del 30% sobre venta.
+                costo_usd_efectivo=round(p["precio_dolares"] * 0.70, 2),
+                rol_usuario="superadmin",
             )
             print(f"  + Producto creado: {prod['codigo']} - {prod['nombre_referencia_corto']} (Stock: {prod['existencia']}, Price $: {prod['precio_dolares']:.2f}, Bs: {prod['precio_bcv']:.2f})")
         except Exception as e:

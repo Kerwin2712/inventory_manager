@@ -1,6 +1,78 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
+
+# ─── Normalizadores compartidos de los campos nuevos de inventario ───────────
+# Viven en el dominio (`core`) para que el servicio y la dataclass apliquen
+# exactamente las mismas reglas sin que `core` dependa de `services`.
+
+def normalizar_costo(valor, etiqueta: str = "costo") -> float | None:
+    """Normaliza un COSTO del negocio (distinto del precio de venta).
+
+    `None` y la cadena vacía significan "sin costo registrado" → `None`.
+    Acepta int/float/str (con coma o punto decimal). Rechaza no numéricos y
+    negativos con `ValueError` de prefijo `ERR_PROD_COSTO`.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, bool):
+        raise ValueError(f"ERR_PROD_COSTO: El {etiqueta} debe ser un número válido.")
+    if isinstance(valor, str):
+        crudo = valor.strip().replace(",", ".")
+        if not crudo:
+            return None
+        valor = crudo
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        raise ValueError(f"ERR_PROD_COSTO: El {etiqueta} debe ser un número válido.")
+    if numero < 0:
+        raise ValueError(f"ERR_PROD_COSTO: El {etiqueta} no puede ser negativo.")
+    return numero
+
+
+def validar_costo_obligatorio(existencia, costo_usd_efectivo) -> None:
+    """Regla de negocio: todo producto con existencia (>= 1 unidad) debe tener
+    registrado su Costo USD Efectivo. `costo_usd_bcv` es siempre opcional."""
+    try:
+        cantidad = float(existencia or 0.0)
+    except (TypeError, ValueError):
+        cantidad = 0.0
+    if cantidad >= 1 and costo_usd_efectivo is None:
+        raise ValueError(
+            "ERR_PROD_COSTO: El producto tiene existencia, por lo que un "
+            "administrador debe registrar el Costo USD Efectivo antes de guardarlo."
+        )
+
+
+def normalizar_alerta_stock_minimo(valor) -> int | None:
+    """Normaliza el umbral de alerta propio del producto: entero >= 0 o `None`.
+
+    Acepta enteros y cadenas enteras (`"5"`). Rechaza decimales no enteros,
+    texto no numérico y negativos con `ValueError` de prefijo `ERR_PROD_ALERTA`.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, bool):
+        raise ValueError("ERR_PROD_ALERTA: La alerta de stock mínimo debe ser un número entero.")
+    if isinstance(valor, str):
+        crudo = valor.strip().replace(",", ".")
+        if not crudo:
+            return None
+        valor = crudo
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        raise ValueError("ERR_PROD_ALERTA: La alerta de stock mínimo debe ser un número entero.")
+    if numero != int(numero):
+        raise ValueError(
+            "ERR_PROD_ALERTA: La alerta de stock mínimo debe ser un número entero, sin decimales."
+        )
+    entero = int(numero)
+    if entero < 0:
+        raise ValueError("ERR_PROD_ALERTA: La alerta de stock mínimo no puede ser negativa.")
+    return entero
+
 @dataclass
 class Cliente:
     """Modelo de dominio para la Cartera de Clientes (Sección 1.2 ERS)."""
@@ -95,6 +167,15 @@ class Producto:
     codigo_barras: str | None = None
     # 12. Nombre de Referencia Corto / Descripción Corta (Máximo 30 caracteres para notas impresas)
     nombre_referencia_corto: str = ""
+    # Sub-Departamento (hijo del Departamento en el catálogo jerárquico)
+    sub_departamento: str | None = None
+    # Costo USD Efectivo: lo que le cuesta al negocio adquirir el producto.
+    # NO es un precio de venta; obligatorio si hay existencia (>= 1 unidad).
+    costo_usd_efectivo: float | None = None
+    # Costo USD BCV: costo de referencia para la vía BCV. Siempre opcional.
+    costo_usd_bcv: float | None = None
+    # Umbral de alerta de stock propio del producto (entero) o None
+    alerta_stock_minimo: int | None = None
     # ID opcional de registro en SQLite
     id: int | None = None
 
@@ -121,6 +202,14 @@ class Producto:
             corto = corto[:30].strip()
             
         self.nombre_referencia_corto = corto
+
+        # Jerarquía y campos administrativos nuevos
+        sub = (self.sub_departamento or "").strip()
+        self.sub_departamento = sub or None
+        self.costo_usd_efectivo = normalizar_costo(self.costo_usd_efectivo, "Costo USD Efectivo")
+        self.costo_usd_bcv = normalizar_costo(self.costo_usd_bcv, "Costo USD BCV")
+        self.alerta_stock_minimo = normalizar_alerta_stock_minimo(self.alerta_stock_minimo)
+        validar_costo_obligatorio(self.existencia, self.costo_usd_efectivo)
 
         if not self.fecha_ultima_modificacion:
             self.fecha_ultima_modificacion = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

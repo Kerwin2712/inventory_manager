@@ -1,12 +1,31 @@
 import sqlite3
 from datetime import datetime
 from core.database import get_connection
+from core.models import (
+    normalizar_alerta_stock_minimo,
+    normalizar_costo,
+    validar_costo_obligatorio,
+)
 from services.bcv_service import obtener_estado_tasa
+from services.departamentos_service import registrar_desde_producto
+from services.permisos_service import filtrar_campos_costo, puede_editar_costos
 
 
 def _row_to_dict(row) -> dict:
     """Convierte una sqlite3.Row en diccionario estándar."""
     return dict(row) if row else {}
+
+
+def _validar_permiso_costos(costo_usd_efectivo, costo_usd_bcv, rol_usuario) -> None:
+    """Fail-closed: solo un administrador puede enviar valores de costo. Un rol
+    no administrador (incluido `None`) que intente mutarlos es rechazado."""
+    if puede_editar_costos(rol_usuario):
+        return
+    if costo_usd_efectivo is not None or costo_usd_bcv is not None:
+        raise PermissionError(
+            "ERR_PROD_ROL: Su rol no tiene permiso para ver ni modificar los "
+            "costos del inventario. Solicítelo a un administrador."
+        )
 
 
 def calcular_monto_bolivares(precio_bcv_usd: float) -> float:
@@ -43,18 +62,29 @@ def crear_producto(
     existencia: float = 0.0,
     codigo_barras: str = "",
     nombre_referencia_corto: str = "",
+    costo_usd_efectivo=None,
+    costo_usd_bcv=None,
+    alerta_stock_minimo=None,
+    sub_departamento: str = "",
+    rol_usuario: str | None = None,
 ) -> dict:
     """Crea un nuevo producto en inventario. Aplica reglas ERS 3.1.
 
     `precio_dolares` = Precio USD Efectivo (pago en dólares físicos).
     `precio_bcv` = Precio USD BCV (referencia en dólares para pago en
     Bolívares a la tasa vigente) — ambos son valores manuales independientes.
+
+    `costo_usd_efectivo` / `costo_usd_bcv` son los COSTOS del negocio, campos
+    distintos de los precios anteriores y restringidos a roles administrativos
+    (`rol_usuario`). El criterio es fail-closed: sin rol admin no se pueden
+    enviar ni se devuelven en el diccionario resultante.
     """
     # ── Validaciones de campos obligatorios ──────────────────────────────────
     codigo = (codigo or "").strip()
     referencia = (referencia or "").strip()
     descripcion_general = (descripcion_general or "").strip()
     departamento = (departamento or "").strip()
+    sub_departamento = (sub_departamento or "").strip()
 
     if not codigo:
         raise ValueError("ERR_PROD_REQ: El código de producto es obligatorio.")
@@ -73,6 +103,13 @@ def crear_producto(
             "ERR_PROD_PRICE: Si el producto tiene existencia, al menos el "
             "Precio USD Efectivo o el Precio USD BCV debe ser mayor a cero."
         )
+
+    # ── Costos (rol admin) y umbral de alerta propio ─────────────────────────
+    _validar_permiso_costos(costo_usd_efectivo, costo_usd_bcv, rol_usuario)
+    costo_usd_efectivo = normalizar_costo(costo_usd_efectivo, "Costo USD Efectivo")
+    costo_usd_bcv = normalizar_costo(costo_usd_bcv, "Costo USD BCV")
+    alerta_stock_minimo = normalizar_alerta_stock_minimo(alerta_stock_minimo)
+    validar_costo_obligatorio(existencia, costo_usd_efectivo)
 
     # ── Nombre corto auto-generado si no se provee ───────────────────────────
     nombre_referencia_corto = (nombre_referencia_corto or "").strip()
@@ -95,13 +132,16 @@ def crear_producto(
                     codigo, referencia, departamento, descripcion_general,
                     marca, precio_dolares, precio_bcv, proveedor_id,
                     existencia, codigo_barras, nombre_referencia_corto,
-                    fecha_ultima_modificacion
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fecha_ultima_modificacion, sub_departamento,
+                    costo_usd_efectivo, costo_usd_bcv, alerta_stock_minimo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     codigo, referencia, departamento, descripcion_general,
                     marca, precio_dolares, precio_bcv, proveedor_id,
                     existencia, codigo_barras, nombre_referencia_corto, fecha_mod,
+                    sub_departamento or None,
+                    costo_usd_efectivo, costo_usd_bcv, alerta_stock_minimo,
                 ),
             )
             conn.commit()
@@ -111,12 +151,18 @@ def crear_producto(
             raise ValueError(f"ERR_PROD_DUPLICADO: Ya existe un producto con el código '{codigo}'.")
         raise ValueError(f"ERR_PROD_DB: Error de integridad al guardar el producto: {ex}")
 
-    return obtener_producto(codigo) or {}
+    # El catálogo jerárquico aprende los valores nuevos que use el usuario.
+    registrar_desde_producto(departamento, sub_departamento)
+
+    return obtener_producto(codigo, rol_usuario=rol_usuario) or {}
 
 
-def obtener_producto(codigo: str) -> dict | None:
+def obtener_producto(codigo: str, rol_usuario: str | None = None) -> dict | None:
     """Obtiene un producto por su código primario. Agrega `monto_bcv_bolivares`
-    (Precio USD BCV convertido a Bolívares con la tasa vigente, en vivo)."""
+    (Precio USD BCV convertido a Bolívares con la tasa vigente, en vivo).
+
+    Los campos de costo solo se incluyen si `rol_usuario` es administrativo
+    (fail-closed: el valor por defecto `None` NO es administrador)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM productos WHERE codigo = ?", (codigo.strip(),))
@@ -125,7 +171,7 @@ def obtener_producto(codigo: str) -> dict | None:
             return None
         prod = _row_to_dict(row)
         prod["monto_bcv_bolivares"] = calcular_monto_bolivares(prod.get("precio_bcv", 0.0))
-        return prod
+        return filtrar_campos_costo(prod, rol_usuario)
 
 
 def actualizar_producto(
@@ -140,12 +186,25 @@ def actualizar_producto(
     existencia: float = 0.0,
     codigo_barras: str = "",
     nombre_referencia_corto: str = "",
+    costo_usd_efectivo=None,
+    costo_usd_bcv=None,
+    alerta_stock_minimo=None,
+    sub_departamento: str = "",
+    rol_usuario: str | None = None,
 ) -> dict:
-    """Actualiza un producto existente. Aplica las mismas reglas ERS 3.1."""
+    """Actualiza un producto existente. Aplica las mismas reglas ERS 3.1.
+
+    Costos: un rol no administrativo no puede enviarlos (`PermissionError`) y
+    los valores almacenados se PRESERVAN intactos en su actualización. Para
+    cualquier rol, `None` en un costo significa "no modificar": nunca se pone
+    un costo en NULL por omisión, con lo que la regla de obligatoriedad se
+    satisface también con el costo ya almacenado.
+    """
     codigo = (codigo or "").strip()
     referencia = (referencia or "").strip()
     descripcion_general = (descripcion_general or "").strip()
     departamento = (departamento or "").strip()
+    sub_departamento = (sub_departamento or "").strip()
 
     if not codigo:
         raise ValueError("ERR_PROD_REQ: El código de producto es obligatorio.")
@@ -162,6 +221,21 @@ def actualizar_producto(
             "ERR_PROD_PRICE: Si el producto tiene existencia, al menos el "
             "Precio USD Efectivo o el Precio USD BCV debe ser mayor a cero."
         )
+
+    # ── Costos: permiso, normalización y preservación de lo almacenado ───────
+    _validar_permiso_costos(costo_usd_efectivo, costo_usd_bcv, rol_usuario)
+    costo_usd_efectivo = normalizar_costo(costo_usd_efectivo, "Costo USD Efectivo")
+    costo_usd_bcv = normalizar_costo(costo_usd_bcv, "Costo USD BCV")
+    alerta_stock_minimo = normalizar_alerta_stock_minimo(alerta_stock_minimo)
+
+    almacenado = _obtener_costos_almacenados(codigo)
+    if almacenado is None:
+        raise ValueError(f"ERR_PROD_NOT_FOUND: No se encontró el producto con código '{codigo}'.")
+    if costo_usd_efectivo is None:
+        costo_usd_efectivo = almacenado["costo_usd_efectivo"]
+    if costo_usd_bcv is None:
+        costo_usd_bcv = almacenado["costo_usd_bcv"]
+    validar_costo_obligatorio(existencia, costo_usd_efectivo)
 
     nombre_referencia_corto = (nombre_referencia_corto or "").strip()
     if not nombre_referencia_corto:
@@ -183,6 +257,8 @@ def actualizar_producto(
                 marca = ?, precio_dolares = ?, precio_bcv = ?,
                 proveedor_id = ?, existencia = ?, codigo_barras = ?,
                 nombre_referencia_corto = ?, fecha_ultima_modificacion = ?,
+                sub_departamento = ?, costo_usd_efectivo = ?,
+                costo_usd_bcv = ?, alerta_stock_minimo = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE codigo = ?
             """,
@@ -190,25 +266,43 @@ def actualizar_producto(
                 referencia, departamento, descripcion_general,
                 marca, precio_dolares, precio_bcv,
                 proveedor_id, existencia, codigo_barras,
-                nombre_referencia_corto, fecha_mod, codigo,
+                nombre_referencia_corto, fecha_mod,
+                sub_departamento or None, costo_usd_efectivo,
+                costo_usd_bcv, alerta_stock_minimo, codigo,
             ),
         )
         conn.commit()
 
-    resultado = obtener_producto(codigo)
+    registrar_desde_producto(departamento, sub_departamento)
+
+    resultado = obtener_producto(codigo, rol_usuario=rol_usuario)
     if not resultado:
         raise ValueError(f"ERR_PROD_NOT_FOUND: No se encontró el producto con código '{codigo}'.")
     return resultado
 
 
+def _obtener_costos_almacenados(codigo: str) -> dict | None:
+    """Costos actualmente guardados del producto, sin filtro de rol (uso
+    interno para preservarlos en las actualizaciones). `None` si no existe."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT costo_usd_efectivo, costo_usd_bcv FROM productos WHERE codigo = ?",
+            (codigo,),
+        )
+        row = cursor.fetchone()
+    return dict(row) if row else None
+
+
 # Columnas categóricas del inventario ofrecidas como filtros de selección
 # múltiple con buscador (ver `ui/components/multi_select_filter.py`).
-_COLUMNAS_MULTISELECT = ("departamento", "marca")
+_COLUMNAS_MULTISELECT = ("departamento", "sub_departamento", "marca")
 
 
 def obtener_opciones_filtro(columna: str) -> list[dict]:
     """Valores distintos no vacíos de una columna categórica del inventario
-    (`departamento` o `marca`), con la cantidad de productos que la usan.
+    (`departamento`, `sub_departamento` o `marca`), con la cantidad de
+    productos que la usan.
     Ordenados por popularidad descendente: el filtro multi-selección con
     buscador muestra primero los valores más usados cuando no hay texto
     escrito en el buscador."""
@@ -251,6 +345,7 @@ def listar_productos(
     filtros: dict | None = None,
     page: int = 1,
     per_page: int = 20,
+    rol_usuario: str | None = None,
 ) -> list[dict]:
     """Lista productos con filtros opcionales.
 
@@ -259,10 +354,12 @@ def listar_productos(
       de Inventario). Cada palabra se exige con AND sobre el conjunto de
       columnas de texto (codigo, referencia, descripcion_general, marca,
       codigo_barras, nombre_referencia_corto).
+    - `rol_usuario`: si no es administrativo, los campos de costo no aparecen
+      en los diccionarios devueltos (fail-closed, por defecto `None`).
     - `filtros`: diccionario de filtros avanzados combinables, todos con AND
       entre sí:
-        - `departamento`, `marca`: lista de valores exactos (selección
-          múltiple) — IN.
+        - `departamento`, `sub_departamento`, `marca`: lista de valores
+          exactos (selección múltiple) — IN.
         - `proveedor_ids`: lista de IDs de proveedor — IN.
         - `precio_dolares_min/max`, `precio_bcv_min/max`, `existencia_min/max`:
           rango numérico (inclusive en ambos extremos).
@@ -358,7 +455,7 @@ def listar_productos(
     tasa = obtener_estado_tasa().get("tasa", 0.0)
     for p in productos:
         p["monto_bcv_bolivares"] = round(p.get("precio_bcv", 0.0) * tasa, 2) if tasa > 0 else 0.0
-    return productos
+    return [filtrar_campos_costo(p, rol_usuario) for p in productos]
 
 
 def eliminar_producto(codigo: str) -> None:
