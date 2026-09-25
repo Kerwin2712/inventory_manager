@@ -10,6 +10,9 @@ from services.inventario_service import (
 )
 from services.cartera_service import listar_proveedores
 from services.reportes_service import obtener_historial_producto
+from services.preferencias_service import (
+    obtener_vista_inventario, guardar_vista_inventario,
+)
 
 
 class InventarioView(BaseView):
@@ -18,13 +21,19 @@ class InventarioView(BaseView):
 
     ITEMS_PER_PAGE = 15
 
-    def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False):
+    def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
+                 username: str | None = None, rol_usuario: str | None = None):
         self.on_back_callback = on_back_callback
         # Callback (ERS 3.3 — Flujo Directo Inventario→Ventas): recibe el
         # producto seleccionado y navega automáticamente a Ventas cargándolo.
         self.on_procesar_venta = on_procesar_venta
         # ERS 3.6: el historial clínico de producto es exclusivo admin/gerencia.
         self.es_admin = es_admin
+        # `username` namespacea las preferencias de interfaz (modo de vista) y
+        # `rol_usuario` es el rol nombrado que exigen los servicios para los
+        # campos de costo. Ambos llegan desde `DashboardView`.
+        self.username = username
+        self._rol_usuario = rol_usuario
         self._page_num = 1
 
         # ── Estado del formulario de ingreso ────────────────────────────────
@@ -58,7 +67,9 @@ class InventarioView(BaseView):
             "acciones": "Acciones",
         }
         self._columnas_visibles = {k: True for k in self._columnas_ocultables}
-        self._modo_vista = "separado"  # "separado", "agrupado", "tarjetas"
+        # Última vista elegida por este usuario ("separado", "agrupado" o
+        # "tarjetas"); cae al modo por defecto si no hay preferencia guardada.
+        self._modo_vista = obtener_vista_inventario(self.username)
 
         super().__init__(route="/inventario", title="Módulo de Inventario")
 
@@ -425,6 +436,12 @@ class InventarioView(BaseView):
     def _handle_cambio_modo_vista(self, e):
         if e.control.selected:
             self._modo_vista = list(e.control.selected)[0]
+            # La elección sobrevive al cierre de la aplicación (por usuario);
+            # un modo desconocido no debe tumbar la interfaz.
+            try:
+                guardar_vista_inventario(self.username, self._modo_vista)
+            except ValueError:
+                pass
             self._cargar_filas()
             self._safe_update(e)
 

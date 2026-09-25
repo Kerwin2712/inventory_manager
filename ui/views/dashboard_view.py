@@ -102,6 +102,10 @@ class DashboardView(BaseView):
             inv_view = InventarioView(
                 on_procesar_venta=self.procesar_venta_desde_inventario,
                 es_admin=self.es_admin,
+                # `username` namespacea las preferencias de interfaz (modo de
+                # vista del catálogo); `rol_usuario` habilita los costos.
+                username=(self.user_info or {}).get("username"),
+                rol_usuario=(self.user_info or {}).get("role"),
             )
             try:
                 if self.page:
