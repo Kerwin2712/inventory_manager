@@ -18,6 +18,10 @@ class DashboardView(BaseView):
     # ERS 3.6: módulo exclusivo de uso administrativo/gerencial.
     ROLES_CON_ACCESO_AUDITORIA = ("administrador", "superadmin", "gerencia")
 
+    # El título global ("General") viaja DENTRO de `build_header()`: una sola
+    # franja horizontal con título + módulo + usuario + opciones + salir.
+    mostrar_titulo_por_defecto = False
+
     def __init__(self, user_info: dict = None, on_logout_callback=None):
         self.user_info = user_info or {"username": "usuario", "role": "administrador"}
         self.on_logout_callback = on_logout_callback
@@ -286,7 +290,14 @@ class DashboardView(BaseView):
         )
 
     def build_header(self) -> ft.Control:
-        """Encabezado superior con acento focalizado en el título e icono de usuario."""
+        """Franja superior ÚNICA: título global · módulo actual · usuario ·
+        opciones de interfaz · cerrar sesión.
+
+        El título global ya no se pinta arriba en una línea aparte (ver
+        `mostrar_titulo_por_defecto`): se absorbe aquí para recuperar ese alto
+        para el contenido. El bloque de título toma el ancho sobrante y elide
+        con puntos suspensivos, mientras la zona de acciones va `tight` para
+        que en ventanas angostas los botones nunca salgan de pantalla."""
         accent = self.get_accent_color()
         role_label = self.user_info.get('role', 'usuario').capitalize()
 
@@ -356,9 +367,33 @@ class DashboardView(BaseView):
 
         header_title = f"{self.current_section}" if self.current_section != "Inicio" else "Principal"
 
+        # Título global + módulo actual en un solo bloque jerárquico
+        # ("General · Inventario"): el global en acento y el módulo en el color
+        # de texto, separados por un punto medio. El módulo lleva `expand` para
+        # que sea él (y no los botones) el que ceda ancho y elida.
+        bloque_titulo = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Text(
+                        self.view_title, size=20, weight=ft.FontWeight.BOLD, color=accent,
+                        no_wrap=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Text("·", size=20, weight=ft.FontWeight.BOLD, color=self.get_subtext_color()),
+                    ft.Text(
+                        header_title, size=18, weight=ft.FontWeight.W_600, color=self.get_text_color(),
+                        no_wrap=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                        expand=True,
+                    ),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            expand=True,
+        )
+
         return ft.Row(
             controls=[
-                ft.Text(header_title, size=22, weight=ft.FontWeight.BOLD, color=accent),
+                bloque_titulo,
                 ft.Row(
                     controls=[
                         user_badge,
@@ -367,10 +402,12 @@ class DashboardView(BaseView):
                         color_picker_btn,
                         logout_btn,
                     ],
-                    spacing=10,
+                    spacing=6,
+                    tight=True,
                 )
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
     def build_metrics_cards(self) -> ft.Control:
