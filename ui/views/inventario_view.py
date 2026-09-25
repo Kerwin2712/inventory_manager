@@ -31,8 +31,13 @@ class InventarioView(BaseView):
         self._form_codigo_verificado = False
         self._editing_codigo: str | None = None
 
-        # ── Dialogo activo (referencia para cerrarlo) ────────────────────────
-        self._dialog: ft.AlertDialog | None = None
+        # ── Pila de diálogos abiertos (el tope es el activo) ─────────────────
+        # Es una PILA y no una única referencia porque un diálogo puede abrir
+        # otro encima (p. ej. el aviso de código duplicado sobre el paso 1): al
+        # cerrar el de arriba hay que volver a apuntar al de abajo, no perderlo
+        # (con una sola referencia, "Cancelar" del paso 1 cerraba el aviso ya
+        # cerrado y dejaba al usuario atrapado en el paso 1).
+        self._dialog_stack: list[ft.AlertDialog] = []
 
         # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
         # "acciones" es estructural (íconos de edición/venta) y no se puede ocultar.
@@ -83,19 +88,45 @@ class InventarioView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
 
-    def _close_dialog(self, e=None):
-        p = self._get_page(e)
-        if p and self._dialog:
-            self._dialog.open = False
-            p.update()
+    @property
+    def _dialog(self) -> "ft.AlertDialog | None":
+        """Diálogo activo (tope de la pila) o `None` si no hay ninguno."""
+        return self._dialog_stack[-1] if self._dialog_stack else None
 
-    def _open_dialog(self, dialog: ft.AlertDialog, e=None):
-        self._dialog = dialog
+    def _close_dialog(self, e=None, dialog: ft.AlertDialog = None):
+        """Cierra el diálogo indicado (por defecto el del tope), lo saca de la
+        pila y del `overlay`, y deja como activo el que estaba debajo."""
+        if dialog is None:
+            dialog = self._dialog
+        if dialog is None:
+            return
+        if dialog in self._dialog_stack:
+            self._dialog_stack.remove(dialog)
+        dialog.open = False
         p = self._get_page(e)
         if p:
-            if dialog not in p.overlay:
-                p.overlay.append(dialog)
-            dialog.open = True
+            if dialog in p.overlay:
+                p.overlay.remove(dialog)
+            p.update()
+
+    def _cerrar_todos_los_dialogos(self, e=None):
+        """Vacía la pila cerrando de arriba hacia abajo (cancelación total)."""
+        while self._dialog_stack:
+            self._close_dialog(e, dialog=self._dialog_stack[-1])
+
+    def _open_dialog(self, dialog: ft.AlertDialog, e=None):
+        """Apila un diálogo y lo muestra; el anterior queda debajo intacto."""
+        if dialog not in self._dialog_stack:
+            self._dialog_stack.append(dialog)
+        p = self._get_page(e)
+        if p and dialog not in p.overlay:
+            p.overlay.append(dialog)
+        # `open` se fija SIEMPRE, incluso si todavía no hay una `page`
+        # resoluble: así el estado del diálogo no depende del momento en que
+        # se resuelve la página, y `open is False` significa únicamente
+        # "lo cerró `_close_dialog`" (invariante en el que se apoya la pila).
+        dialog.open = True
+        if p:
             p.update()
 
     def _snack(self, msg: str, color: str, e=None):
@@ -119,18 +150,28 @@ class InventarioView(BaseView):
         subtext = self.get_subtext_color()
         border = self.get_border_color()
 
-        return ft.Column(
-            controls=[
-                self._build_bcv_panel(accent, card_bg, text_color, subtext, border),
-                ft.Divider(height=6, color=border),
-                self._build_filtros_panel(accent, card_bg, text_color, border),
-                ft.Divider(height=6, color=border),
-                self._build_tabla_panel(accent, card_bg, text_color, subtext, border),
-            ],
+        # ── Dueño único del scroll VERTICAL de la página ─────────────────────
+        # Antes coexistían dos scrolls verticales anidados (este Column con
+        # AUTO y el contenedor de la tabla con ALWAYS + altura fija): sobre la
+        # tabla, la rueda no propagaba al padre y el desplazamiento se
+        # bloqueaba. Ahora el eje vertical es de este Column y el eje
+        # HORIZONTAL es exclusivo de `_tabla_scroll_row` (tabla ancha).
+        # Se crea antes de construir los paneles porque el panel de tabla lo
+        # necesita como destino de los botones flotantes de scroll vertical.
+        self._body_scroll_col = ft.Column(
+            controls=[],
             spacing=10,
             expand=True,
             scroll=ft.ScrollMode.AUTO,
         )
+        self._body_scroll_col.controls = [
+            self._build_bcv_panel(accent, card_bg, text_color, subtext, border),
+            ft.Divider(height=6, color=border),
+            self._build_filtros_panel(accent, card_bg, text_color, border),
+            ft.Divider(height=6, color=border),
+            self._build_tabla_panel(accent, card_bg, text_color, subtext, border),
+        ]
+        return self._body_scroll_col
 
     # ─────────────────────────────────────────────────────────────────────────
     # PANEL BCV
@@ -392,10 +433,20 @@ class InventarioView(BaseView):
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
         )
+        # Separación de ejes (ver nota en `get_body`): la Row scrollea en
+        # HORIZONTAL (única dueña de ese eje, la tabla es más ancha que la
+        # pantalla) y la Column contenedora NO scrollea — crece con su
+        # contenido y el desplazamiento vertical lo maneja el cuerpo de la
+        # página. Ambos atributos conservan su nombre porque son los targets
+        # de los botones flotantes (`build_floating_corner_nav`).
         self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
-        self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=460)
-        self._nav_h, self._nav_v = build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent)
-        self._vista_container = ft.Container(height=460)
+        self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], tight=True)
+        self._nav_h, self._nav_v = build_floating_corner_nav(
+            self._tabla_scroll_row,
+            getattr(self, "_body_scroll_col", None) or self._tabla_scroll_col,
+            accent,
+        )
+        self._vista_container = ft.Container()
         self._lbl_pag = ft.Text("", color=subtext, size=12)
 
         self._btn_modo_vista = ft.SegmentedButton(
@@ -573,13 +624,14 @@ class InventarioView(BaseView):
             ]
             self._nav_h.visible = True
             self._nav_v.visible = True
+            # Sin altura fija: el Stack se ajusta a la tabla y el scroll
+            # vertical lo aporta el cuerpo de la página (un solo dueño del eje).
             self._vista_container.content = ft.Stack(
                 controls=[
                     self._tabla_scroll_col,
                     self._nav_h,
                     self._nav_v,
                 ],
-                height=460,
             )
 
         elif self._modo_vista == "agrupado":
@@ -665,13 +717,14 @@ class InventarioView(BaseView):
             self._dt.rows = rows
             self._nav_h.visible = True
             self._nav_v.visible = True
+            # Sin altura fija: el Stack se ajusta a la tabla y el scroll
+            # vertical lo aporta el cuerpo de la página (un solo dueño del eje).
             self._vista_container.content = ft.Stack(
                 controls=[
                     self._tabla_scroll_col,
                     self._nav_h,
                     self._nav_v,
                 ],
-                height=460,
             )
 
         elif self._modo_vista == "tarjetas":
@@ -723,13 +776,14 @@ class InventarioView(BaseView):
             if not tarjetas:
                 self._vista_container.content = ft.Container(
                     content=ft.Text("No se encontraron productos.", color=subtext),
-                    alignment=ft.alignment.center, height=460,
+                    alignment=ft.Alignment.CENTER, height=180,
                 )
             else:
+                # Sin scroll propio ni altura fija: las tarjetas envuelven y el
+                # eje vertical sigue siendo del cuerpo de la página.
                 self._vista_container.content = ft.Column(
                     controls=[ft.Row(controls=tarjetas, wrap=True, spacing=10)],
-                    scroll=ft.ScrollMode.ALWAYS,
-                    height=460,
+                    tight=True,
                 )
 
     def _abrir_modal_historial(self, codigo: str, e=None):
@@ -769,8 +823,7 @@ class InventarioView(BaseView):
             filas_mov.append(ft.Text("Sin movimientos de venta registrados.", color=self.get_subtext_color()))
 
         def cerrar(ev):
-            dlg.open = False
-            self._safe_update(ev)
+            self._close_dialog(ev, dialog=dlg)
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -1045,10 +1098,24 @@ class InventarioView(BaseView):
     # =========================================================================
     # FLUJO DE INGRESO DE PRODUCTO — 3 PASOS (ERS 3.1)
     # =========================================================================
-    def _abrir_flujo_ingreso(self, e):
-        """Paso 1: Mostrar campo de código para verificar existencia."""
+    def _resetear_estado_formulario(self):
+        """Deja el flujo de ingreso/edición en su estado inicial. Se invoca
+        desde TODOS los puntos de salida (cancelar, guardar, reabrir) para que
+        ningún registro herede el código verificado ni el modo edición del
+        anterior."""
         self._form_codigo_verificado = False
         self._editing_codigo = None
+
+    def _cancelar_flujo_formulario(self, e=None):
+        """Cancelación desde cualquier paso: cierra los diálogos del flujo que
+        queden abiertos (incluido un aviso superpuesto) y limpia el estado."""
+        self._cerrar_todos_los_dialogos(e)
+        self._resetear_estado_formulario()
+
+    def _abrir_flujo_ingreso(self, e):
+        """Paso 1: Mostrar campo de código para verificar existencia."""
+        self._cerrar_todos_los_dialogos(e)
+        self._resetear_estado_formulario()
         self._mostrar_paso1_dialogo(e, codigo_inicial="")
 
     def _abrir_flujo_edicion(self, codigo: str, e=None):
@@ -1057,6 +1124,7 @@ class InventarioView(BaseView):
         if not prod:
             self._snack(f"Producto '{codigo}' no encontrado.", ft.Colors.RED_700, e)
             return
+        self._cerrar_todos_los_dialogos(e)
         self._editing_codigo = codigo
         self._form_codigo_verificado = True
         self._mostrar_paso2_dialogo(e, codigo=codigo, datos_iniciales=prod)
@@ -1100,6 +1168,23 @@ class InventarioView(BaseView):
                 self._mostrar_paso2_dialogo(ev, codigo=codigo)
 
         def _confirmar_duplicado(ev, codigo, existente):
+            """Aviso superpuesto al paso 1 (queda encima en la pila): al
+            descartarlo, el paso 1 sigue abierto y operativo."""
+
+            async def _limpiar_codigo(ev2):
+                """Botón "No — Limpiar Código": cierra SOLO el aviso y devuelve
+                el paso 1 usable, con el campo vacío y el foco dentro. Es `async`
+                porque `Control.focus()` es una coroutine en Flet 0.86 (un
+                handler sync la descartaría sin ejecutarla)."""
+                _close_dup(ev2)
+                inp_cod.value = ""
+                lbl_status.value = ""
+                self._safe_update(ev2)
+                try:
+                    await inp_cod.focus()
+                except Exception:
+                    pass  # sin page viva (o control desmontado) no hay foco que dar.
+
             dlg_dup = ft.AlertDialog(
                 modal=True,
                 title=ft.Row([
@@ -1113,12 +1198,7 @@ class InventarioView(BaseView):
                     color=text_color,
                 ),
                 actions=[
-                    ft.TextButton("No — Limpiar Código", on_click=lambda ev2: (
-                        _close_dup(ev2),
-                        setattr(inp_cod, "value", ""),
-                        setattr(lbl_status, "value", ""),
-                        self._safe_update(ev2),
-                    )),
+                    ft.TextButton("No — Limpiar Código", on_click=_limpiar_codigo),
                     ft.Button(
                         "Sí — Ver Producto",
                         style=ft.ButtonStyle(
@@ -1127,7 +1207,6 @@ class InventarioView(BaseView):
                         ),
                         on_click=lambda ev2: (
                             _close_dup(ev2),
-                            self._close_dialog(ev2),
                             self._abrir_flujo_edicion(codigo, ev2),
                         ),
                     ),
@@ -1136,8 +1215,8 @@ class InventarioView(BaseView):
             )
 
             def _close_dup(ev2):
-                dlg_dup.open = False
-                self._safe_update(ev2)
+                """Cierra SOLO el aviso; el paso 1 vuelve a ser el tope."""
+                self._close_dialog(ev2, dialog=dlg_dup)
 
             self._open_dialog(dlg_dup, ev)
 
@@ -1154,7 +1233,7 @@ class InventarioView(BaseView):
                 tight=True,
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
+                ft.TextButton("Cancelar", on_click=self._cancelar_flujo_formulario),
                 ft.Button(
                     "Verificar",
                     icon=ft.Icons.SEARCH,
@@ -1355,7 +1434,7 @@ class InventarioView(BaseView):
                 height=420,
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
+                ft.TextButton("Cancelar", on_click=self._cancelar_flujo_formulario),
                 ft.Button(
                     "Revisar y Guardar",
                     icon=ft.Icons.FACT_CHECK_OUTLINED,
@@ -1390,6 +1469,10 @@ class InventarioView(BaseView):
             ("Nombre Corto", "nombre_referencia_corto"),
         ]
 
+        # El valor va SIEMPRE dentro de un contenedor de ancho acotado
+        # (`expand=True` sobre el ancho restante del diálogo) y con envoltura
+        # multilínea: una descripción larga debe cortar en varias líneas y
+        # elidir, nunca desbordarse hacia la derecha del diálogo.
         filas_resumen = []
         for etiqueta, key in campos_orden:
             val = str(datos.get(key) or "").strip()
@@ -1398,8 +1481,15 @@ class InventarioView(BaseView):
             filas_resumen.append(
                 ft.Row([
                     ft.Text(f"{etiqueta}:", width=200, color=self.get_subtext_color(), size=13),
-                    ft.Text(mostrar, color=color_val, size=13, weight=ft.FontWeight.W_600),
-                ], spacing=8)
+                    ft.Container(
+                        content=ft.Text(
+                            mostrar, color=color_val, size=13, weight=ft.FontWeight.W_600,
+                            no_wrap=False, max_lines=4, overflow=ft.TextOverflow.ELLIPSIS,
+                            selectable=True,
+                        ),
+                        expand=True,
+                    ),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
             )
 
         def _confirmar(ev):
@@ -1413,9 +1503,7 @@ class InventarioView(BaseView):
 
         def _cancelar_todo(ev):
             """Cancelar en el paso 3 descarta todo y vuelve al paso 1 (ERS 3.1 paso 5)."""
-            self._close_dialog(ev)
-            self._form_codigo_verificado = False
-            self._editing_codigo = None
+            self._cancelar_flujo_formulario(ev)
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -1488,7 +1576,7 @@ class InventarioView(BaseView):
                 crear_producto(**kwargs)
                 self._snack(f"Producto '{datos['codigo']}' registrado exitosamente.", ft.Colors.GREEN_700, e)
 
-            self._editing_codigo = None
+            self._resetear_estado_formulario()
             self._refrescar_tabla(e)
         except ValueError as ex:
             self._snack(str(ex), ft.Colors.RED_700, e)
