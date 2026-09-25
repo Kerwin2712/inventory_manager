@@ -1,7 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
-from ui.components.scroll_nav import build_floating_corner_nav
+from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
@@ -461,11 +461,15 @@ class InventarioView(BaseView):
         # pantalla) y la Column contenedora NO scrollea — crece con su
         # contenido y el desplazamiento vertical lo maneja el cuerpo de la
         # página. Ambos atributos conservan su nombre porque son los targets
-        # de los botones flotantes (`build_floating_corner_nav`).
+        # de los botones de navegación rápida (`ui.components.scroll_nav`).
         self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
         self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], tight=True)
-        self._nav_h, self._nav_v = build_floating_corner_nav(
-            self._tabla_scroll_row,
+        # El cluster HORIZONTAL va en la barra de herramientas de la tarjeta:
+        # flotando en la esquina superior derecha del `Stack` tapaba la fila de
+        # encabezados de columna. El VERTICAL sí sigue flotando abajo a la
+        # derecha, donde no cubre nada.
+        self._nav_h = build_inline_h_nav(self._tabla_scroll_row, accent)
+        self._nav_v = build_floating_v_nav(
             getattr(self, "_body_scroll_col", None) or self._tabla_scroll_col,
             accent,
         )
@@ -499,7 +503,7 @@ class InventarioView(BaseView):
         btn_prev = ft.IconButton(ft.Icons.CHEVRON_LEFT, on_click=self._pagina_anterior)
         btn_next = ft.IconButton(ft.Icons.CHEVRON_RIGHT, on_click=self._pagina_siguiente)
 
-        return self.create_card(
+        self._tabla_panel = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -509,6 +513,7 @@ class InventarioView(BaseView):
                                 ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
                             ], spacing=8),
                             ft.Row([
+                                self._nav_h,
                                 self._btn_modo_vista,
                                 self._build_selector_columnas(accent, text_color),
                             ], spacing=8),
@@ -538,6 +543,7 @@ class InventarioView(BaseView):
                 spacing=10,
             ),
         )
+        return self._tabla_panel
 
     def _cargar_filas(self, text_color=None, accent=None):
         if text_color is None:
@@ -655,10 +661,11 @@ class InventarioView(BaseView):
             self._nav_v.visible = True
             # Sin altura fija: el Stack se ajusta a la tabla y el scroll
             # vertical lo aporta el cuerpo de la página (un solo dueño del eje).
+            # Solo flota el cluster VERTICAL: el horizontal vive en la barra de
+            # herramientas y ya no se solapa con los encabezados de columna.
             self._vista_container.content = ft.Stack(
                 controls=[
                     self._tabla_scroll_col,
-                    self._nav_h,
                     self._nav_v,
                 ],
             )
@@ -748,10 +755,11 @@ class InventarioView(BaseView):
             self._nav_v.visible = True
             # Sin altura fija: el Stack se ajusta a la tabla y el scroll
             # vertical lo aporta el cuerpo de la página (un solo dueño del eje).
+            # Solo flota el cluster VERTICAL: el horizontal vive en la barra de
+            # herramientas y ya no se solapa con los encabezados de columna.
             self._vista_container.content = ft.Stack(
                 controls=[
                     self._tabla_scroll_col,
-                    self._nav_h,
                     self._nav_v,
                 ],
             )

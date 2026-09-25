@@ -78,18 +78,16 @@ def _mini_flecha(icon, tooltip: str, accent, handler) -> ft.IconButton:
     )
 
 
-def build_floating_corner_nav(
-    h_target: ft.Control, v_target: ft.Control, accent,
-    right: float = 6,
-) -> list[ft.Container]:
-    """Dos clusters flotantes discretos, pensados para vivir como hijos
-    adicionales dentro de un `ft.Stack` (posición `right`/`top`/`bottom`
-    fija) — permanecen anclados a la esquina del viewport de la tabla:
+def build_inline_h_nav(h_target: ft.Control, accent) -> ft.Container:
+    """Cluster ← / → PARA LA BARRA DE HERRAMIENTAS (flujo normal, sin
+    posicionamiento absoluto).
 
-    - Esquina superior derecha: ← / → (desplazamiento horizontal paso a paso y saltos a extremos).
-    - Esquina inferior derecha: ↑ / ↓ (desplazamiento vertical paso a paso y saltos a extremos).
+    Antes este cluster flotaba con `right`/`top` dentro del `ft.Stack` de la
+    tabla y quedaba tapando la fila de encabezados de columna. Al vivir en la
+    barra de la tarjeta, junto al selector de modo de vista, ya no se solapa
+    con nada y sigue apuntando al mismo `h_target`.
     """
-    horizontal = ft.Container(
+    return ft.Container(
         content=ft.Row(
             [
                 _mini_flecha(ft.Icons.FIRST_PAGE_ROUNDED, "Ir al Código (inicio)", accent, _mover_async(h_target, offset=0.0, duration=250)),
@@ -101,10 +99,14 @@ def build_floating_corner_nav(
         ),
         padding=3, border_radius=16,
         bgcolor=ft.Colors.with_opacity(0.2, accent),
-        right=right, top=4,
     )
 
-    vertical = ft.Container(
+
+def build_floating_v_nav(v_target: ft.Control, accent, right: float = 6, bottom: float = 4) -> ft.Container:
+    """Cluster ↑ / ↓ flotante en la esquina INFERIOR derecha, pensado para
+    vivir como hijo adicional de un `ft.Stack`. Abajo no hay encabezados que
+    tapar, así que este sí conserva el anclaje al viewport de la tabla."""
+    return ft.Container(
         content=ft.Row(
             [
                 _mini_flecha(ft.Icons.VERTICAL_ALIGN_TOP_ROUNDED, "Ir al primer ítem", accent, _mover_async(v_target, offset=0.0, duration=250)),
@@ -116,7 +118,5 @@ def build_floating_corner_nav(
         ),
         padding=3, border_radius=16,
         bgcolor=ft.Colors.with_opacity(0.2, accent),
-        right=right, bottom=4,
+        right=right, bottom=bottom,
     )
-
-    return [horizontal, vertical]
