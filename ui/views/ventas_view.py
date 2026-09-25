@@ -8,6 +8,12 @@ from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
 from services.cartera_service import buscar_cliente_por_cedula, crear_cliente, parse_documento, format_documento
 from services.inventario_service import listar_productos
+from services.busqueda_service import (
+    CRITERIOS_BUSQUEDA,
+    CRITERIO_POR_DEFECTO,
+    buscar_productos,
+    resolver_coincidencia_exacta,
+)
 from services.ventas_service import procesar_venta
 from services.pdf_service import generar_nota_entrega_pdf, enviar_a_impresora
 from services.cart_manager import (
@@ -389,27 +395,28 @@ class VentasView(BaseView):
         self.panel_cliente_container.visible = (carrito_activo.get("tipo_venta") == "Formal")
 
         # ── 3. Panel de Búsqueda Multicriterio e Inserción de Productos ──────
+        # El selector de criterio va a la IZQUIERDA del campo de texto y sus
+        # opciones se generan desde `CRITERIOS_BUSQUEDA` (mismo orden que el
+        # mapa) para que agregar un criterio en el servicio no obligue a
+        # tocar esta vista.
         self.criterio_busqueda_dd = ft.Dropdown(
             label="Buscar por",
-            value="Todos",
-            width=140,
+            value=CRITERIO_POR_DEFECTO,
+            width=165,
             border_radius=12,
-            options=[
-                ft.dropdown.Option("Todos"),
-                ft.dropdown.Option("Código"),
-                ft.dropdown.Option("Nombre/Ref"),
-                ft.dropdown.Option("Departamento"),
-                ft.dropdown.Option("Marca"),
-            ]
+            options=[ft.dropdown.Option(c) for c in CRITERIOS_BUSQUEDA]
         )
 
+        # Enter busca y MUESTRA resultados; nunca muta el carrito. Agregar al
+        # carrito es siempre un acto explícito: el botón "Agregar" de la barra
+        # o el botón "Agregar" de una fila de resultados.
         self.prod_search_input = ft.TextField(
-            label="Buscar o Escanear Producto",
-            hint_text="Ingrese nombre, código de barras o referencia...",
-            prefix_icon=ft.Icons.QR_CODE_SCANNER,
+            label="Buscar Producto",
+            hint_text="Escriba o escanee y presione Enter para ver coincidencias...",
+            prefix_icon=ft.Icons.SEARCH,
             border_radius=12,
             width=320,
-            on_submit=self.handle_agregar_producto
+            on_submit=self.handle_buscar_producto
         )
         self.cant_input = ft.TextField(
             label="Cant.",
@@ -418,6 +425,12 @@ class VentasView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER,
             text_align=ft.TextAlign.CENTER,
             border_radius=12,
+        )
+        self.btn_buscar_prod = ft.IconButton(
+            icon=ft.Icons.MANAGE_SEARCH,
+            icon_color=self.get_accent_color(),
+            tooltip="Buscar coincidencias con el criterio seleccionado (equivale a presionar Enter)",
+            on_click=self.handle_buscar_producto,
         )
         self.btn_agregar_prod = ft.ElevatedButton(
             content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART, size=18), ft.Text("Agregar", weight=ft.FontWeight.BOLD)], tight=True),
@@ -468,10 +481,23 @@ class VentasView(BaseView):
             ft.Row(controls=chips_recomendaciones, wrap=True, spacing=6)
         ], spacing=4) if chips_recomendaciones else ft.Container()
 
+        # Panel de resultados embebido en la vista (no un modal): se puebla con
+        # `handle_buscar_producto` y arranca oculto para no ocupar espacio antes
+        # de la primera búsqueda. Único dueño del scroll vertical: la Column
+        # interna que construye `build_panel_resultados`, dentro de este
+        # contenedor de altura acotada (no se anida otro scroll adentro).
+        self.panel_resultados_container = ft.Container(
+            content=None,
+            visible=False,
+            padding=ft.Padding.only(top=4),
+        )
+        self._resultados_busqueda: list[dict] = []
+
         panel_agregar_prod = self.create_card(
             content=ft.Column([
                 ft.Text("BÚSQUEDA Y SELECCIÓN DE ARTÍCULOS", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
-                ft.Row([self.criterio_busqueda_dd, self.prod_search_input, self.cant_input, self.btn_agregar_prod, self.btn_buscar_inventario], alignment=ft.MainAxisAlignment.START, wrap=True),
+                ft.Row([self.criterio_busqueda_dd, self.prod_search_input, self.btn_buscar_prod, self.cant_input, self.btn_agregar_prod, self.btn_buscar_inventario], alignment=ft.MainAxisAlignment.START, wrap=True),
+                self.panel_resultados_container,
                 panel_recomendaciones
             ], spacing=10),
             padding=15,
@@ -856,51 +882,271 @@ class VentasView(BaseView):
         self.show_alert_success(e, f"Agregado {cantidad:.0f} ud(s) de '{nombre_c}' al {c['id']}.")
         self._refrescar_carrito_y_resumen(e)
 
-    def handle_agregar_producto(self, e):
-        codigo_query = (self.prod_search_input.value or "").strip()
-        if not codigo_query:
-            self.show_alert_error(e, "Ingrese un término o código para buscar.")
-            return
+    # ── Búsqueda de artículos (separada de la mutación del carrito) ──────────
+    # Regla de diseño: BUSCAR y AGREGAR son dos responsabilidades distintas.
+    # Enter en el campo de texto solo busca y renderiza coincidencias; agregar
+    # al carrito ocurre únicamente al pulsar un botón "Agregar" explícito.
 
+    _LIMITE_RESULTADOS_BUSQUEDA = 25
+
+    def _leer_cantidad_solicitada(self, e=None) -> float | None:
+        """Cantidad del `cant_input` validada; `None` (y alerta) si es inválida."""
         try:
-            cant_deseada = float(self.cant_input.value or "1")
-            if cant_deseada <= 0:
+            cantidad = float(self.cant_input.value or "1")
+            if cantidad <= 0:
                 raise ValueError()
         except ValueError:
             self.show_alert_error(e, "La cantidad debe ser mayor a cero.")
+            return None
+        return cantidad
+
+    def _ejecutar_busqueda(self, e=None) -> tuple[str, list[dict]] | None:
+        """Lee término + criterio de la barra y consulta el motor de búsqueda.
+        Devuelve (término, resultados) o `None` si el término está vacío."""
+        termino = (self.prod_search_input.value or "").strip()
+        if not termino:
+            self.show_alert_error(e, "Ingrese un término o código para buscar.")
+            return None
+
+        criterio = self.criterio_busqueda_dd.value or CRITERIO_POR_DEFECTO
+        resultados = buscar_productos(
+            termino, criterio=criterio, limite=self._LIMITE_RESULTADOS_BUSQUEDA
+        )
+        return termino, resultados
+
+    def handle_buscar_producto(self, e):
+        """Handler del Enter y del botón de lupa: SOLO busca y muestra. No
+        toca el carrito bajo ninguna circunstancia — ni cuando el término
+        coincide exactamente con un código o un código de barras (ahí el
+        producto se destaca primero en la lista, pero no se agrega solo)."""
+        consulta = self._ejecutar_busqueda(e)
+        if consulta is None:
             return
+        termino, resultados = consulta
+        self._renderizar_resultados(termino, resultados, e)
 
-        criterio = self.criterio_busqueda_dd.value or "Todos"
-        prods = listar_productos(busqueda=codigo_query)
-        prod_encontrado = None
+    def _renderizar_resultados(self, termino: str, resultados: list[dict], e=None) -> None:
+        """Puebla el panel de resultados con las coincidencias (la exacta
+        primero) y refresca la pantalla."""
+        exacto = resolver_coincidencia_exacta(termino, resultados)
+        if exacto is not None:
+            ordenados = [exacto] + [p for p in resultados if p["codigo"] != exacto["codigo"]]
+        else:
+            ordenados = list(resultados)
 
-        for p in prods:
-            if p["codigo"].upper() == codigo_query.upper() or (p.get("codigo_barras") and p["codigo_barras"].upper() == codigo_query.upper()):
-                prod_encontrado = p
-                break
+        self._resultados_busqueda = ordenados
+        if hasattr(self, "panel_resultados_container"):
+            self.panel_resultados_container.content = self.build_panel_resultados(
+                termino, ordenados, exacto
+            )
+            self.panel_resultados_container.visible = True
 
-        if not prod_encontrado and prods:
-            prod_encontrado = prods[0]
+        p = self.get_current_page(e) or self._page_ref
+        if p:
+            p.update()
+        else:
+            self.safe_update(e)
 
-        if not prod_encontrado:
-            self.show_alert_error(e, f"No se encontró ningún producto para '{codigo_query}'.")
-            return
+    def build_panel_resultados(self, termino: str, resultados: list[dict], exacto: dict | None = None) -> ft.Control:
+        """Lista de coincidencias con un botón "Agregar" por fila. Incluye
+        estado vacío y avisa cuando se alcanzó el límite de resultados."""
+        accent = self.get_accent_color()
+        subtext = self.get_subtext_color()
+        text_color = self.get_text_color()
 
-        stock_disponible = float(prod_encontrado["existencia"])
+        if not resultados:
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.SEARCH_OFF, size=16, color=subtext),
+                    ft.Text(
+                        f"No se encontraron productos para '{termino}'.",
+                        size=12, color=subtext, weight=ft.FontWeight.W_600,
+                        no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ], tight=True, spacing=6),
+                padding=10,
+                border_radius=12,
+                bgcolor=self.get_card_bg(),
+                border=ft.Border.all(1, self.get_border_color()),
+            )
+
+        filas: list[ft.Control] = []
+        for pr in resultados:
+            es_exacto = exacto is not None and pr["codigo"] == exacto["codigo"]
+            nombre = pr.get("nombre_referencia_corto") or pr.get("referencia") or pr["codigo"]
+            descripcion = pr.get("descripcion_general") or ""
+            existencia = float(pr.get("existencia") or 0.0)
+            sin_stock = existencia <= 0
+
+            filas.append(ft.Container(
+                content=ft.Row([
+                    # Código (+ marca de coincidencia exacta para el escáner).
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.QR_CODE_2, size=13, color=accent) if es_exacto else ft.Container(width=0),
+                            ft.Text(pr["codigo"], size=11, weight=ft.FontWeight.BOLD, color=text_color,
+                                    no_wrap=False, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        ], tight=True, spacing=4),
+                        width=110,
+                    ),
+                    # Nombre corto + descripción larga acotada (sin desbordes).
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text(nombre, size=11, weight=ft.FontWeight.W_600, color=text_color,
+                                    no_wrap=False, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                            ft.Text(descripcion, size=10, color=subtext,
+                                    no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
+                        ], spacing=1, tight=True),
+                        expand=True,
+                    ),
+                    ft.Container(
+                        content=ft.Text(pr.get("departamento") or "—", size=10, color=subtext,
+                                        no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
+                        width=110,
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text(f"$ {float(pr.get('precio_dolares') or 0):,.2f}", size=11,
+                                    weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
+                            ft.Text(f"Bs. {float(pr.get('monto_bcv_bolivares') or 0):,.2f}", size=10,
+                                    color=ft.Colors.AMBER_700),
+                        ], spacing=1, tight=True),
+                        width=110,
+                    ),
+                    ft.Container(
+                        content=ft.Text(
+                            f"Exist.: {existencia:,.2f}", size=10,
+                            weight=ft.FontWeight.W_600,
+                            color=ft.Colors.RED_400 if sin_stock else subtext,
+                            no_wrap=False, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        width=95,
+                    ),
+                    ft.TextButton(
+                        content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART, size=14), ft.Text("Agregar", size=11, weight=ft.FontWeight.BOLD)], tight=True, spacing=4),
+                        disabled=sin_stock,
+                        tooltip="Sin existencia disponible" if sin_stock else f"Agregar {nombre} al carrito activo",
+                        on_click=lambda ev, p=pr: self.handle_agregar_desde_resultado(ev, p),
+                    ),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+                padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+                border_radius=10,
+                bgcolor=ft.Colors.with_opacity(0.10, accent) if es_exacto else None,
+            ))
+
+        pie: list[ft.Control] = []
+        if len(resultados) >= self._LIMITE_RESULTADOS_BUSQUEDA:
+            pie.append(ft.Text(
+                f"Se muestran las primeras {self._LIMITE_RESULTADOS_BUSQUEDA} coincidencias; refine el término o el criterio.",
+                size=10, color=subtext, italic=True,
+                no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+            ))
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Text(
+                        f"{len(resultados)} coincidencia(s) para '{termino}' — elija el artículo a agregar:",
+                        size=11, weight=ft.FontWeight.W_600, color=accent, expand=True,
+                        no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE, icon_size=16, icon_color=subtext,
+                        tooltip="Cerrar resultados",
+                        on_click=self.handle_limpiar_resultados,
+                    ),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                # Único scroll vertical del panel, dentro de una altura acotada.
+                ft.Container(
+                    content=ft.Column(controls=filas, spacing=2, scroll=ft.ScrollMode.AUTO),
+                    height=min(240, 46 * len(filas) + 8),
+                ),
+                *pie,
+            ], spacing=6),
+            padding=10,
+            border_radius=12,
+            bgcolor=self.get_card_bg(),
+            border=ft.Border.all(1, self.get_border_color()),
+        )
+
+    def handle_limpiar_resultados(self, e):
+        """Oculta y vacía el panel de resultados."""
+        self._resultados_busqueda = []
+        if hasattr(self, "panel_resultados_container"):
+            self.panel_resultados_container.content = None
+            self.panel_resultados_container.visible = False
+        p = self.get_current_page(e) or self._page_ref
+        if p:
+            p.update()
+        else:
+            self.safe_update(e)
+
+    def _validar_stock_y_agregar(self, producto: dict, cantidad: float, e=None) -> bool:
+        """Verifica la existencia contra lo que ya hay en el carrito activo y,
+        si alcanza, agrega el producto. Devuelve si se agregó."""
+        stock_disponible = float(producto.get("existencia") or 0.0)
         c_activo = obtener_carrito_activo(self._sid)
-        cant_en_carrito = sum(item["cantidad"] for item in c_activo["items"] if item["codigo"] == prod_encontrado["codigo"])
+        cant_en_carrito = sum(
+            item["cantidad"] for item in c_activo["items"] if item["codigo"] == producto["codigo"]
+        )
 
-        if (cant_en_carrito + cant_deseada) > stock_disponible:
+        if (cant_en_carrito + cantidad) > stock_disponible:
             self.show_alert_error(
                 e,
-                f"Stock insuficiente para {prod_encontrado['codigo']}.\n"
+                f"Stock insuficiente para {producto['codigo']}.\n"
                 f"Disponible: {stock_disponible:.2f} | En carrito: {cant_en_carrito:.2f}"
+            )
+            return False
+
+        self.agregar_producto_directo(producto, cantidad, e)
+        return True
+
+    def handle_agregar_desde_resultado(self, e, producto: dict):
+        """Botón "Agregar" de una fila del panel de resultados: agrega ese
+        producto concreto con la cantidad indicada en la barra de búsqueda."""
+        cantidad = self._leer_cantidad_solicitada(e)
+        if cantidad is None:
+            return
+        if self._validar_stock_y_agregar(producto, cantidad, e):
+            self.cant_input.value = "1"
+
+    def handle_agregar_producto(self, e):
+        """Botón "Agregar" de la barra: es el atajo explícito de agregar. Usa el
+        mismo motor de búsqueda (criterio incluido) y solo agrega cuando la
+        coincidencia es inequívoca: un único resultado, o una coincidencia
+        exacta por código / código de barras (escáner). Si hay varias
+        candidatas, NO adivina: muestra los resultados y pide elegir."""
+        consulta = self._ejecutar_busqueda(e)
+        if consulta is None:
+            return
+        termino, resultados = consulta
+
+        cantidad = self._leer_cantidad_solicitada(e)
+        if cantidad is None:
+            return
+
+        if not resultados:
+            self._renderizar_resultados(termino, resultados, e)
+            self.show_alert_error(e, f"No se encontró ningún producto para '{termino}'.")
+            return
+
+        prod_encontrado = resolver_coincidencia_exacta(termino, resultados)
+        if prod_encontrado is None and len(resultados) == 1:
+            prod_encontrado = resultados[0]
+
+        if prod_encontrado is None:
+            self._renderizar_resultados(termino, resultados, e)
+            self.show_alert_error(
+                e,
+                f"{len(resultados)} productos coinciden con '{termino}'. "
+                "Elija uno en la lista de resultados."
             )
             return
 
-        self.agregar_producto_directo(prod_encontrado, cant_deseada, e)
-        self.prod_search_input.value = ""
-        self.cant_input.value = "1"
+        if self._validar_stock_y_agregar(prod_encontrado, cantidad, e):
+            self.prod_search_input.value = ""
+            self.cant_input.value = "1"
+            self.handle_limpiar_resultados(e)
 
     def abrir_modal_buscar_inventario(self, e):
         """Flujo Inverso (ERS 3.3): abre el Inventario en un modal con filtro de
