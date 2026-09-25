@@ -3,6 +3,7 @@ from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
 from ui.components.scroll_nav import build_floating_corner_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
+from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
@@ -583,6 +584,11 @@ class InventarioView(BaseView):
         def celda_acciones_lineal(p):
             return ft.Row([
                 ft.IconButton(
+                    ft.Icons.INFO_OUTLINE_ROUNDED, icon_color=accent,
+                    tooltip="Ver detalle del ítem",
+                    on_click=lambda ev, prod=p: self._abrir_modal_detalle(prod, ev),
+                ),
+                ft.IconButton(
                     ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
                     tooltip="Procesar Venta",
                     on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
@@ -610,6 +616,7 @@ class InventarioView(BaseView):
 
         def celda_acciones_grid(p):
             fila1 = [
+                ft.IconButton(ft.Icons.INFO_OUTLINE_ROUNDED, icon_color=accent, icon_size=18, tooltip="Ver detalle del ítem", on_click=lambda ev, prod=p: self._abrir_modal_detalle(prod, ev)),
                 ft.IconButton(ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400, icon_size=18, tooltip="Procesar Venta", on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev)),
                 ft.IconButton(ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400, icon_size=18, tooltip="Añadir al Carrito", on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev)),
             ]
@@ -807,6 +814,41 @@ class InventarioView(BaseView):
                     controls=[ft.Row(controls=tarjetas, wrap=True, spacing=10)],
                     tight=True,
                 )
+
+    def _rol_para_costos(self) -> str | None:
+        """Rol nombrado que exigen los servicios para devolver los costos. La
+        vista recibe `es_admin` como bandera, así que cuando no llega un rol
+        explícito se traduce a un rol administrativo equivalente."""
+        return self._rol_usuario or ("administrador" if self.es_admin else None)
+
+    def _abrir_modal_detalle(self, prod: dict, e=None):
+        """Resumen completo del ítem en el modal reutilizable. Se relee el
+        producto con el rol para que los COSTOS lleguen solo si corresponde
+        (las filas de la tabla se cargan sin ellos)."""
+        codigo = (prod or {}).get("codigo", "")
+        completo = obtener_producto(codigo, rol_usuario=self._rol_para_costos()) or dict(prod or {})
+
+        def _cerrar(ev):
+            self._close_dialog(ev, dialog=dlg)
+
+        def _editar(ev):
+            self._close_dialog(ev, dialog=dlg)
+            self._abrir_flujo_edicion(codigo, ev)
+
+        dlg = construir_modal_detalle_producto(
+            completo,
+            es_admin=self.es_admin,
+            paleta={
+                "texto": self.get_text_color(),
+                "subtexto": self.get_subtext_color(),
+                "acento": self.get_accent_color(),
+                "fondo": self.get_card_bg(),
+                "borde": self.get_border_color(),
+            },
+            on_cerrar=_cerrar,
+            on_editar=_editar,
+        )
+        self._open_dialog(dlg, e)
 
     def _abrir_modal_historial(self, codigo: str, e=None):
         """Historial Clínico de Producto (ERS 3.6): movimientos cronológicos
