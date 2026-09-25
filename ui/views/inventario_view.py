@@ -2,6 +2,7 @@ import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
 from ui.components.scroll_nav import build_floating_corner_nav
+from ui.components.selector_departamentos import SelectorDepartamentos
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
@@ -10,6 +11,10 @@ from services.inventario_service import (
 )
 from services.cartera_service import listar_proveedores
 from services.reportes_service import obtener_historial_producto
+from services.departamentos_service import (
+    listar_departamentos, listar_sub_departamentos,
+    crear_departamento, crear_sub_departamento,
+)
 from services.preferencias_service import (
     obtener_vista_inventario, guardar_vista_inventario,
 )
@@ -1291,7 +1296,20 @@ class InventarioView(BaseView):
         )
         f_ref = tf("Referencia *", "referencia")
         f_desc = tf("Descripción General *", "descripcion_general", width=520)
-        f_depto = tf("Departamento *", "departamento", width=200)
+        # El departamento ya no es texto libre: dos dropdowns jerárquicos
+        # alimentados por el catálogo, con la opción de registrar valores
+        # nuevos al final de cada lista. La lógica vive en el componente.
+        selector_depto = SelectorDepartamentos(
+            obtener_departamentos=listar_departamentos,
+            obtener_sub_departamentos=listar_sub_departamentos,
+            on_crear_departamento=crear_departamento,
+            on_crear_sub_departamento=crear_sub_departamento,
+            on_cambio=self._safe_update,
+            ancho=230,
+            color_texto=text_color, color_borde=border, color_acento=accent,
+        )
+        selector_depto.set_valores(d.get("departamento", ""), d.get("sub_departamento", ""))
+        self._selector_depto = selector_depto
         f_marca = tf("Marca", "marca", width=200)
         f_barras = tf("Código de Barras", "codigo_barras", width=200)
         f_nombre_corto = tf("Nombre Corto (máx 30 car.)", "nombre_referencia_corto", width=260)
@@ -1370,8 +1388,9 @@ class InventarioView(BaseView):
         titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
 
         def _limpiar_errores():
-            for campo in (f_ref, f_desc, f_depto, f_precio_usd, f_precio_bcv):
+            for campo in (f_ref, f_desc, f_precio_usd, f_precio_bcv):
                 campo.error_text = None
+            selector_depto.limpiar_errores()
 
         def _guardar(ev):
             # ── Requisito de guardado mínimo (ERS 3.1 paso 4) ────────────────
@@ -1387,8 +1406,8 @@ class InventarioView(BaseView):
             if not (f_desc.value or "").strip():
                 f_desc.error_text = "Campo obligatorio"
                 hay_error = True
-            if not (f_depto.value or "").strip():
-                f_depto.error_text = "Campo obligatorio"
+            if not selector_depto.valor_departamento():
+                selector_depto.marcar_error()
                 hay_error = True
 
             try:
@@ -1421,7 +1440,8 @@ class InventarioView(BaseView):
                 "codigo": codigo,
                 "referencia": f_ref.value,
                 "descripcion_general": f_desc.value,
-                "departamento": f_depto.value,
+                "departamento": selector_depto.valor_departamento(),
+                "sub_departamento": selector_depto.valor_sub_departamento(),
                 "marca": f_marca.value,
                 "codigo_barras": f_barras.value,
                 "nombre_referencia_corto": f_nombre_corto.value,
@@ -1438,8 +1458,9 @@ class InventarioView(BaseView):
             content=ft.Container(
                 content=ft.Column(
                     controls=[
-                        ft.Row([cod_display, f_ref, f_depto, f_marca], spacing=12, wrap=True),
+                        ft.Row([cod_display, f_ref, f_marca], spacing=12, wrap=True),
                         f_desc,
+                        selector_depto.construir_fila(),
                         ft.Row([f_existencia, dd_proveedor, f_barras], spacing=12, wrap=True),
                         fila_precios,
                         f_nombre_corto,
@@ -1477,6 +1498,7 @@ class InventarioView(BaseView):
             ("Referencia", "referencia"),
             ("Descripción General", "descripcion_general"),
             ("Departamento", "departamento"),
+            ("Sub-Departamento", "sub_departamento"),
             ("Marca", "marca"),
             ("Existencia", "existencia"),
             ("Precio USD (Efectivo)", "precio_dolares"),
@@ -1577,6 +1599,10 @@ class InventarioView(BaseView):
                 referencia=datos.get("referencia", ""),
                 descripcion_general=datos.get("descripcion_general", ""),
                 departamento=datos.get("departamento", ""),
+                # El servicio registra el par en el catálogo jerárquico
+                # (`registrar_desde_producto`), así que guardar el producto es
+                # el único punto de escritura del catálogo.
+                sub_departamento=datos.get("sub_departamento", ""),
                 marca=datos.get("marca", ""),
                 precio_dolares=_to_float(datos.get("precio_dolares", 0)),
                 precio_bcv=_to_float(datos.get("precio_bcv", 0)),
