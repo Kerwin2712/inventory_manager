@@ -23,8 +23,14 @@ METODOS_PAGO_USD = ("Efectivo", "Binance")
 METODOS_PAGO_BS = ("Pago Móvil", "Transferencia", "Punto")
 METODOS_PAGO = METODOS_PAGO_USD + METODOS_PAGO_BS
 
-# session_id -> {"carritos": {...}, "activo": str, "contador": int}
+# session_id -> {"carritos": {...}, "activo": str}
+# El número de cada carrito NO se guarda en un contador monótono: se deriva
+# siempre del conjunto de carritos vivos (ver `_siguiente_id_carrito`), de modo
+# que al eliminar un carrito su número vuelve a estar disponible y la secuencia
+# nunca queda con huecos ni se desincroniza del conjunto real.
 _sesiones: dict[str, dict] = {}
+
+PREFIJO_CARRITO = "Carrito "
 
 
 def _carrito_vacio(id_carrito: str, nombre: str) -> dict:
@@ -39,6 +45,17 @@ def _carrito_vacio(id_carrito: str, nombre: str) -> dict:
     }
 
 
+def _siguiente_id_carrito(carritos: dict) -> str:
+    """Menor número libre de la secuencia: devuelve `Carrito n` con el mínimo
+    `n >= 1` que no esté ya en uso. Al derivarlo del conjunto de carritos vivos
+    se reutilizan los números liberados por `eliminar_carrito` (sin huecos) y
+    nunca se colisiona con un ID existente."""
+    n = 1
+    while f"{PREFIJO_CARRITO}{n}" in carritos:
+        n += 1
+    return f"{PREFIJO_CARRITO}{n}"
+
+
 def _estado_sesion(session_id: str) -> dict:
     """Devuelve (creando si hace falta) el namespace de carritos aislado
     para una sesión de Flet. Cada sesión arranca con un único "Carrito 1"."""
@@ -47,7 +64,6 @@ def _estado_sesion(session_id: str) -> dict:
         estado = {
             "carritos": {"Carrito 1": _carrito_vacio("Carrito 1", "Carrito 1 (Principal)")},
             "activo": "Carrito 1",
-            "contador": 1,
         }
         _sesiones[session_id] = estado
     return estado
@@ -65,10 +81,16 @@ def obtener_todos_los_carritos(session_id: str) -> dict:
 
 
 def obtener_id_carrito_activo(session_id: str) -> str:
-    """Devuelve la clave del carrito activo actual de la sesión."""
+    """Devuelve la clave del carrito activo actual de la sesión. Si el ID activo
+    ya no existe (p. ej. se eliminó ese carrito) reengancha al primero vivo, y
+    si no quedara ninguno reconstruye el carrito inicial de la secuencia."""
     estado = _estado_sesion(session_id)
-    if estado["activo"] not in estado["carritos"] and estado["carritos"]:
-        estado["activo"] = list(estado["carritos"].keys())[0]
+    carritos = estado["carritos"]
+    if estado["activo"] not in carritos:
+        if not carritos:
+            nuevo_id = _siguiente_id_carrito(carritos)
+            carritos[nuevo_id] = _carrito_vacio(nuevo_id, nuevo_id)
+        estado["activo"] = next(iter(carritos))
     return estado["activo"]
 
 
@@ -76,8 +98,6 @@ def obtener_carrito_activo(session_id: str) -> dict:
     """Devuelve la estructura de datos del carrito activo de la sesión."""
     estado = _estado_sesion(session_id)
     cid = obtener_id_carrito_activo(session_id)
-    if cid not in estado["carritos"]:
-        estado["carritos"][cid] = _carrito_vacio(cid, f"Carrito {cid}")
     return estado["carritos"][cid]
 
 
@@ -92,8 +112,9 @@ def cambiar_carrito_activo(session_id: str, id_carrito: str) -> dict:
 def crear_nuevo_carrito(session_id: str, nombre_personalizado: str = None) -> dict:
     """Crea un nuevo carrito independiente en la sesión y lo activa."""
     estado = _estado_sesion(session_id)
-    estado["contador"] += 1
-    nuevo_id = f"Carrito {estado['contador']}"
+    # El ID se deriva del conjunto vivo: reutiliza el número del carrito
+    # eliminado más bajo en vez de avanzar un contador y dejar huecos.
+    nuevo_id = _siguiente_id_carrito(estado["carritos"])
     nombre = nombre_personalizado or nuevo_id
 
     estado["carritos"][nuevo_id] = _carrito_vacio(nuevo_id, nombre)
@@ -109,17 +130,19 @@ def eliminar_carrito(session_id: str, id_carrito: str) -> bool:
         return False
 
     if len(carritos) == 1:
-        # Si es el único, solo vaciarlo en vez de dejar la sesión sin carritos.
-        c = carritos[id_carrito]
-        c["cliente"] = None
-        c["tipo_venta"] = "Formal"
-        c["metodo_pago"] = "Efectivo"
-        c["items"] = []
+        # Si es el único, se vacía en vez de dejar la sesión sin carritos, pero
+        # además se reinicia al primer número de la secuencia: así la sesión
+        # vuelve a su estado inicial y el próximo carrito creado no hereda un
+        # hueco (borrar el único "Carrito 3" no debe dejar la numeración en 3).
+        del carritos[id_carrito]
+        nuevo_id = _siguiente_id_carrito(carritos)
+        carritos[nuevo_id] = _carrito_vacio(nuevo_id, nuevo_id)
+        estado["activo"] = nuevo_id
         return True
 
     del carritos[id_carrito]
     if estado["activo"] == id_carrito:
-        estado["activo"] = list(carritos.keys())[0]
+        estado["activo"] = next(iter(carritos))
     return True
 
 
