@@ -133,8 +133,9 @@ def crear_producto(
                     marca, precio_dolares, precio_bcv, proveedor_id,
                     existencia, codigo_barras, nombre_referencia_corto,
                     fecha_ultima_modificacion, sub_departamento,
-                    costo_usd_efectivo, costo_usd_bcv, alerta_stock_minimo
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    costo_usd_efectivo, costo_usd_bcv, alerta_stock_minimo,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     codigo, referencia, departamento, descripcion_general,
@@ -142,6 +143,13 @@ def crear_producto(
                     existencia, codigo_barras, nombre_referencia_corto, fecha_mod,
                     sub_departamento or None,
                     costo_usd_efectivo, costo_usd_bcv, alerta_stock_minimo,
+                    # `created_at` explícito en hora LOCAL: el DEFAULT
+                    # CURRENT_TIMESTAMP de SQLite guarda UTC, y como
+                    # `fecha_ultima_modificacion` se escribe en hora local, un
+                    # mismo producto mostraba una fecha de ingreso adelantada
+                    # respecto de su última modificación, y los filtros por
+                    # fecha de ingreso comparaban husos distintos.
+                    fecha_mod,
                 ),
             )
             conn.commit()

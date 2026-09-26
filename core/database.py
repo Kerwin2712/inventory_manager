@@ -56,6 +56,40 @@ def _sincronizar_catalogo_departamentos(cursor) -> None:
         )
 
 
+_CLAVE_MIGRACION_CREATED_AT = "migracion_created_at_local_productos"
+
+
+def _normalizar_created_at_productos(cursor) -> bool:
+    """Pasa a hora LOCAL los `created_at` de productos guardados en UTC.
+
+    El DEFAULT `CURRENT_TIMESTAMP` de SQLite escribe UTC, mientras que
+    `fecha_ultima_modificacion` se escribe con la hora local del equipo. Un
+    mismo producto quedaba así con una fecha de ingreso adelantada respecto de
+    su última modificación, y los filtros por fecha de ingreso comparaban la
+    fecha local que escribe el usuario contra timestamps en UTC.
+
+    Los productos nuevos ya se insertan con hora local (ver
+    `services.inventario_service.crear_producto`); esta migración arregla los
+    registros anteriores y corre UNA sola vez, marcada en `app_settings`.
+    Devuelve True si hizo la conversión.
+    """
+    cursor.execute(
+        "SELECT value FROM app_settings WHERE key = ?", (_CLAVE_MIGRACION_CREATED_AT,)
+    )
+    if cursor.fetchone():
+        return False
+
+    cursor.execute(
+        "UPDATE productos SET created_at = datetime(created_at, 'localtime') "
+        "WHERE created_at IS NOT NULL AND TRIM(created_at) <> ''"
+    )
+    cursor.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, 'done')",
+        (_CLAVE_MIGRACION_CREATED_AT,),
+    )
+    return True
+
+
 def init_db():
     """Inicializa las tablas de la base de datos y los datos por defecto."""
     with get_connection() as conn:
@@ -149,6 +183,8 @@ def init_db():
             ("alerta_stock_minimo", "INTEGER"),
         ):
             _agregar_columna_si_falta(cursor, "productos", _columna, _tipo)
+
+        _normalizar_created_at_productos(cursor)
 
         # Catálogo jerárquico Departamento → Sub-Departamento. `productos`
         # sigue guardando TEXT (compatibilidad con filtros y consultas
