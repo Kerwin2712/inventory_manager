@@ -84,8 +84,26 @@ def test_el_cluster_horizontal_no_vive_en_el_stack_de_la_tabla(vista, producto, 
 
     assert isinstance(stack, ft.Stack)
     assert vista._nav_h not in stack.controls, "el cluster horizontal volvió a flotar sobre la tabla"
-    assert stack.controls[0] is vista._tabla_scroll_col, "la tabla sigue siendo el primer hijo"
+    # La tabla sigue siendo el primer hijo, ahora envuelta en el contenedor
+    # que le reserva holgura al pie para el cluster flotante.
+    assert stack.controls[0] is vista._tabla_con_holgura
+    assert vista._tabla_con_holgura.content is vista._tabla_scroll_col
     assert vista._nav_v in stack.controls
+
+
+@pytest.mark.parametrize("modo", ["separado", "agrupado"])
+def test_la_tabla_reserva_holgura_para_el_cluster_flotante(vista, producto, modo):
+    """El cluster vertical flota anclado abajo a la derecha; sin holgura al pie
+    se dibujaba encima del texto de la última fila."""
+    vista._modo_vista = modo
+    vista._cargar_filas()
+
+    holgura = vista._tabla_con_holgura.padding
+    assert holgura is not None, "la tabla debe reservar espacio al pie"
+    assert holgura.bottom >= 28, "la holgura debe cubrir el alto del cluster"
+    # La holgura no puede reintroducir un scroll propio ni una altura fija.
+    assert getattr(vista._tabla_con_holgura, "height", None) is None
+    assert getattr(vista._tabla_con_holgura, "scroll", None) is None
 
 
 @pytest.mark.parametrize("modo", ["separado", "agrupado"])

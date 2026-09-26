@@ -27,6 +27,10 @@ class InventarioView(BaseView):
 
     ITEMS_PER_PAGE = 15
 
+    # Alto reservado al pie de la tabla para que el cluster flotante de
+    # navegación vertical no se dibuje encima de la última fila.
+    _HOLGURA_NAV_FLOTANTE = 44
+
     def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
                  username: str | None = None, rol_usuario: str | None = None):
         self.on_back_callback = on_back_callback
@@ -496,6 +500,14 @@ class InventarioView(BaseView):
             getattr(self, "_body_scroll_col", None) or self._tabla_scroll_col,
             accent,
         )
+        # El cluster vertical flota sobre la esquina inferior derecha del
+        # `Stack`, así que sin esta holgura se dibujaba encima del texto de la
+        # última fila de la tabla. Reservarla al pie deja al cluster sobre
+        # espacio vacío sin alterar el scroll (el eje sigue siendo del cuerpo).
+        self._tabla_con_holgura = ft.Container(
+            content=self._tabla_scroll_col,
+            padding=ft.Padding.only(bottom=self._HOLGURA_NAV_FLOTANTE),
+        )
         self._vista_container = ft.Container()
         self._lbl_pag = ft.Text("", color=subtext, size=12)
 
@@ -688,7 +700,7 @@ class InventarioView(BaseView):
             # herramientas y ya no se solapa con los encabezados de columna.
             self._vista_container.content = ft.Stack(
                 controls=[
-                    self._tabla_scroll_col,
+                    self._tabla_con_holgura,
                     self._nav_v,
                 ],
             )
@@ -782,7 +794,7 @@ class InventarioView(BaseView):
             # herramientas y ya no se solapa con los encabezados de columna.
             self._vista_container.content = ft.Stack(
                 controls=[
-                    self._tabla_scroll_col,
+                    self._tabla_con_holgura,
                     self._nav_v,
                 ],
             )
