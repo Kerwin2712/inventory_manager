@@ -32,6 +32,7 @@ CRITERIOS_BUSQUEDA: dict[str, tuple[str, ...]] = {
         "descripcion_general",
         "nombre_referencia_corto",
         "departamento",
+        "sub_departamento",
         "marca",
     ),
     "Código": ("codigo", "codigo_barras"),
@@ -39,8 +40,7 @@ CRITERIOS_BUSQUEDA: dict[str, tuple[str, ...]] = {
     "Referencia": ("referencia",),
     "Departamento": ("departamento",),
     "Marca": ("marca",),
-    # Pendiente: "Sub-Departamento": ("sub_departamento",) — una sola línea en
-    # cuanto la columna `sub_departamento` esté disponible en todas las bases.
+    "Sub-Departamento": ("sub_departamento",),
 }
 
 CRITERIO_POR_DEFECTO = "Todos"
@@ -53,6 +53,7 @@ COLUMNAS_RESULTADO: tuple[str, ...] = (
     "descripcion_general",
     "nombre_referencia_corto",
     "departamento",
+    "sub_departamento",
     "marca",
     "codigo_barras",
     "precio_dolares",

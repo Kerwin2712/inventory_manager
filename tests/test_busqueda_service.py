@@ -153,7 +153,7 @@ def test_termino_vacio_devuelve_lista_vacia_no_la_tabla_entera(catalogo, termino
 
 def test_criterio_inexistente_lanza_value_error(catalogo):
     with pytest.raises(ValueError) as exc:
-        buscar_productos("laptop", criterio="Sub-Departamento")
+        buscar_productos("laptop", criterio="Proveedor")
     assert "ERR_BUSQ_CRITERIO" in str(exc.value)
 
 
@@ -197,7 +197,8 @@ def test_monto_en_bolivares_se_calcula_en_vivo_con_la_tasa_vigente(catalogo):
 
 def test_el_mapa_de_criterios_expone_las_etiquetas_esperadas(catalogo):
     assert list(CRITERIOS_BUSQUEDA) == [
-        "Todos", "Código", "Descripción", "Referencia", "Departamento", "Marca",
+        "Todos", "Código", "Descripción", "Referencia",
+        "Departamento", "Marca", "Sub-Departamento",
     ]
     assert CRITERIOS_BUSQUEDA["Código"] == ("codigo", "codigo_barras")
     assert CRITERIOS_BUSQUEDA["Departamento"] == ("departamento",)
