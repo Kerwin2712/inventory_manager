@@ -8,6 +8,88 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def _agregar_columna_si_falta(cursor, tabla: str, columna: str, tipo_sql: str) -> bool:
+    """Migración incremental idempotente: agrega `columna` a `tabla` solo si no
+    existe, consultando `PRAGMA table_info` en vez de confiar en el error del
+    ALTER TABLE. Devuelve True si la columna se creó en esta llamada."""
+    cursor.execute(f"PRAGMA table_info({tabla})")
+    existentes = {fila[1] for fila in cursor.fetchall()}
+    if columna in existentes:
+        return False
+    cursor.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo_sql}")
+    return True
+
+
+def _sincronizar_catalogo_departamentos(cursor) -> None:
+    """Backfill del catálogo Departamento → Sub-Departamento a partir de los
+    valores de texto que ya viven en `productos`. Idempotente: usa INSERT OR
+    IGNORE contra los UNIQUE del catálogo.
+
+    Trabaja sobre un cursor recibido para poder ejecutarse dentro de la misma
+    transacción de `init_db()` (evita abrir una segunda conexión al archivo).
+    """
+    cursor.execute(
+        "SELECT DISTINCT TRIM(departamento) AS nombre FROM productos "
+        "WHERE departamento IS NOT NULL AND TRIM(departamento) <> ''"
+    )
+    for fila in cursor.fetchall():
+        cursor.execute(
+            "INSERT OR IGNORE INTO departamentos (nombre) VALUES (?)", (fila["nombre"],)
+        )
+
+    cursor.execute(
+        "SELECT DISTINCT TRIM(departamento) AS padre, TRIM(sub_departamento) AS hijo "
+        "FROM productos "
+        "WHERE departamento IS NOT NULL AND TRIM(departamento) <> '' "
+        "AND sub_departamento IS NOT NULL AND TRIM(sub_departamento) <> ''"
+    )
+    for fila in cursor.fetchall():
+        cursor.execute(
+            "SELECT id FROM departamentos WHERE nombre = ? COLLATE NOCASE", (fila["padre"],)
+        )
+        padre = cursor.fetchone()
+        if not padre:
+            continue
+        cursor.execute(
+            "INSERT OR IGNORE INTO sub_departamentos (departamento_id, nombre) VALUES (?, ?)",
+            (padre["id"], fila["hijo"]),
+        )
+
+
+_CLAVE_MIGRACION_CREATED_AT = "migracion_created_at_local_productos"
+
+
+def _normalizar_created_at_productos(cursor) -> bool:
+    """Pasa a hora LOCAL los `created_at` de productos guardados en UTC.
+
+    El DEFAULT `CURRENT_TIMESTAMP` de SQLite escribe UTC, mientras que
+    `fecha_ultima_modificacion` se escribe con la hora local del equipo. Un
+    mismo producto quedaba así con una fecha de ingreso adelantada respecto de
+    su última modificación, y los filtros por fecha de ingreso comparaban la
+    fecha local que escribe el usuario contra timestamps en UTC.
+
+    Los productos nuevos ya se insertan con hora local (ver
+    `services.inventario_service.crear_producto`); esta migración arregla los
+    registros anteriores y corre UNA sola vez, marcada en `app_settings`.
+    Devuelve True si hizo la conversión.
+    """
+    cursor.execute(
+        "SELECT value FROM app_settings WHERE key = ?", (_CLAVE_MIGRACION_CREATED_AT,)
+    )
+    if cursor.fetchone():
+        return False
+
+    cursor.execute(
+        "UPDATE productos SET created_at = datetime(created_at, 'localtime') "
+        "WHERE created_at IS NOT NULL AND TRIM(created_at) <> ''"
+    )
+    cursor.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, 'done')",
+        (_CLAVE_MIGRACION_CREATED_AT,),
+    )
+    return True
+
+
 def init_db():
     """Inicializa las tablas de la base de datos y los datos por defecto."""
     with get_connection() as conn:
@@ -89,6 +171,39 @@ def init_db():
             )
         """)
 
+        # Migración incremental de productos: COSTOS del negocio (distintos de
+        # los PRECIOS de venta `precio_dolares`/`precio_bcv`), jerarquía de
+        # sub-departamento y umbral de alerta propio del producto.
+        # Nullable en el esquema; la obligatoriedad del costo efectivo es una
+        # regla de negocio validada en `services/inventario_service.py`.
+        for _columna, _tipo in (
+            ("costo_usd_efectivo", "REAL"),
+            ("costo_usd_bcv", "REAL"),
+            ("sub_departamento", "TEXT"),
+            ("alerta_stock_minimo", "INTEGER"),
+        ):
+            _agregar_columna_si_falta(cursor, "productos", _columna, _tipo)
+
+        _normalizar_created_at_productos(cursor)
+
+        # Catálogo jerárquico Departamento → Sub-Departamento. `productos`
+        # sigue guardando TEXT (compatibilidad con filtros y consultas
+        # existentes); estas tablas son la fuente de verdad de los selectores.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS departamentos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL UNIQUE COLLATE NOCASE
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sub_departamentos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                departamento_id INTEGER NOT NULL REFERENCES departamentos(id) ON DELETE CASCADE,
+                nombre TEXT NOT NULL,
+                UNIQUE(departamento_id, nombre)
+            )
+        """)
+
         # Crear tabla de ventas (Cabecera - ERS 3.4 / 3.5)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS ventas (
@@ -141,7 +256,11 @@ def init_db():
         # Insertar preferencias por defecto si no existen
         cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('theme_mode', 'dark')")
         cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('seed_color', '#2196F3')")
-            
+
+        # Backfill del catálogo: las instalaciones ya existentes arrancan con
+        # sus departamentos/sub-departamentos poblados desde `productos`.
+        _sincronizar_catalogo_departamentos(cursor)
+
         conn.commit()
 
 def get_setting(key: str, default: str = "") -> str:

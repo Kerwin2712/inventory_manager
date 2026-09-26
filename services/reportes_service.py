@@ -25,51 +25,92 @@ def actualizar_stock_minimo(valor: float) -> float:
     return valor
 
 
+# Consulta base de la auditoría preventiva. El JOIN con proveedores aísla el
+# contacto de reposición (ERS 3.6); el WHERE lo inyecta cada criterio.
+_SQL_ALERTAS = """
+    SELECT
+        p.codigo,
+        p.nombre_referencia_corto,
+        p.existencia,
+        p.descripcion_general,
+        p.departamento,
+        p.alerta_stock_minimo,
+        prov.empresa AS proveedor_nombre,
+        prov.telefono AS proveedor_telefono,
+        prov.contacto AS proveedor_contacto
+    FROM productos p
+    LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
+    WHERE {condicion}
+"""
+
+
+def _fila_a_alerta(r, minimo: float, origen: str) -> dict:
+    """Arma el diccionario de alerta con las claves que consume el Dashboard
+    (`ui/views/dashboard_view.py`), más `alerta_stock_minimo` y `origen`."""
+    propio = r["alerta_stock_minimo"]
+    return {
+        "codigo": r["codigo"],
+        "nombre_corto": r["nombre_referencia_corto"] or r["codigo"],
+        "existencia": float(r["existencia"] or 0.0),
+        "minimo": float(minimo),
+        "departamento": r["departamento"] or "General",
+        "proveedor_nombre": r["proveedor_nombre"] or "Sin Proveedor Asignado",
+        "proveedor_telefono": r["proveedor_telefono"] or "N/A",
+        "proveedor_contacto": r["proveedor_contacto"] or "N/A",
+        "alerta_stock_minimo": int(propio) if propio is not None else None,
+        "origen": origen,
+    }
+
+
+def obtener_alertas_stock_por_producto() -> list[dict]:
+    """Alertas generadas por el umbral PROPIO de cada producto: se dispara
+    cuando `alerta_stock_minimo >= existencia` (el comparador acordado con el
+    cliente, la igualdad SÍ alerta). `minimo` es el umbral propio y `origen`
+    vale `"producto"`."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        _SQL_ALERTAS.format(
+            condicion="p.alerta_stock_minimo IS NOT NULL AND p.alerta_stock_minimo >= p.existencia"
+        )
+        + " ORDER BY p.existencia ASC"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_fila_a_alerta(r, float(r["alerta_stock_minimo"]), "producto") for r in rows]
+
+
 def obtener_alertas_stock(minimo: float | None = None) -> list[dict]:
     """
-    Consulta la tabla productos y retorna los ítems donde existencia < minimo,
-    haciendo un JOIN con proveedores para aislar y devolver el contacto del proveedor (ERS 3.6).
+    Auditoría preventiva (ERS 3.6): une los dos criterios de alerta sin
+    duplicar productos.
+
+    - Umbral GLOBAL parametrizado en `app_settings`: `existencia < minimo`
+      → `origen == "global"` y `minimo` es ese umbral global.
+    - Umbral PROPIO del producto: `alerta_stock_minimo >= existencia`
+      → `origen == "producto"` y `minimo` es el umbral propio.
+
+    Si un producto califica por ambos criterios prevalece `origen == "producto"`.
     Si `minimo` no se especifica, usa el valor parametrizado en app_settings.
     """
     if minimo is None:
         minimo = obtener_stock_minimo()
 
+    # El umbral propio tiene precedencia: se indexa primero por código.
+    alertas: dict[str, dict] = {a["codigo"]: a for a in obtener_alertas_stock_por_producto()}
+
     conn = get_connection()
     cursor = conn.cursor()
-    
-    query = """
-        SELECT 
-            p.codigo,
-            p.nombre_referencia_corto,
-            p.existencia,
-            p.descripcion_general,
-            p.departamento,
-            prov.empresa AS proveedor_nombre,
-            prov.telefono AS proveedor_telefono,
-            prov.contacto AS proveedor_contacto
-        FROM productos p
-        LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
-        WHERE p.existencia < ?
-        ORDER BY p.existencia ASC
-    """
-    
-    cursor.execute(query, (minimo,))
+    cursor.execute(_SQL_ALERTAS.format(condicion="p.existencia < ?"), (minimo,))
     rows = cursor.fetchall()
     conn.close()
 
-    alertas = []
     for r in rows:
-        alertas.append({
-            "codigo": r["codigo"],
-            "nombre_corto": r["nombre_referencia_corto"] or r["codigo"],
-            "existencia": float(r["existencia"] or 0.0),
-            "minimo": float(minimo),
-            "departamento": r["departamento"] or "General",
-            "proveedor_nombre": r["proveedor_nombre"] or "Sin Proveedor Asignado",
-            "proveedor_telefono": r["proveedor_telefono"] or "N/A",
-            "proveedor_contacto": r["proveedor_contacto"] or "N/A"
-        })
-    return alertas
+        if r["codigo"] in alertas:
+            continue
+        alertas[r["codigo"]] = _fila_a_alerta(r, float(minimo), "global")
+
+    return sorted(alertas.values(), key=lambda a: (a["existencia"], a["codigo"]))
 
 
 def obtener_top_ventas(rango_temporal: str = "Hoy", limite: int = 10) -> list[dict]:
@@ -173,12 +214,15 @@ def obtener_metricas_dashboard() -> dict:
     total_unidades = float(row_stock["total_unidades"] or 0.0)
     total_categorias = int(row_stock["total_categorias"] or 0)
 
-    # 3. Alertas de Stock Bajo (usa el stock mínimo parametrizado — ERS 3.6)
+    # 3. Alertas de Stock Bajo: mismo criterio combinado que
+    #    `obtener_alertas_stock` (umbral global parametrizado + umbral propio
+    #    del producto), para que la tarjeta y la tabla nunca discrepen.
     stock_minimo = obtener_stock_minimo()
     cursor.execute("""
         SELECT COUNT(*) AS total_criticos
         FROM productos
         WHERE existencia < ?
+           OR (alerta_stock_minimo IS NOT NULL AND alerta_stock_minimo >= existencia)
     """, (stock_minimo,))
     total_criticos = int(cursor.fetchone()["total_criticos"] or 0)
 

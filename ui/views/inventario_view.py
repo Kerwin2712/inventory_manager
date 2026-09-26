@@ -1,7 +1,9 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
-from ui.components.scroll_nav import build_floating_corner_nav
+from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
+from ui.components.selector_departamentos import SelectorDepartamentos
+from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
@@ -10,6 +12,13 @@ from services.inventario_service import (
 )
 from services.cartera_service import listar_proveedores
 from services.reportes_service import obtener_historial_producto
+from services.departamentos_service import (
+    listar_departamentos, listar_sub_departamentos,
+    crear_departamento, crear_sub_departamento,
+)
+from services.preferencias_service import (
+    obtener_vista_inventario, guardar_vista_inventario,
+)
 
 
 class InventarioView(BaseView):
@@ -18,21 +27,36 @@ class InventarioView(BaseView):
 
     ITEMS_PER_PAGE = 15
 
-    def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False):
+    # Alto reservado al pie de la tabla para que el cluster flotante de
+    # navegación vertical no se dibuje encima de la última fila.
+    _HOLGURA_NAV_FLOTANTE = 44
+
+    def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
+                 username: str | None = None, rol_usuario: str | None = None):
         self.on_back_callback = on_back_callback
         # Callback (ERS 3.3 — Flujo Directo Inventario→Ventas): recibe el
         # producto seleccionado y navega automáticamente a Ventas cargándolo.
         self.on_procesar_venta = on_procesar_venta
         # ERS 3.6: el historial clínico de producto es exclusivo admin/gerencia.
         self.es_admin = es_admin
+        # `username` namespacea las preferencias de interfaz (modo de vista) y
+        # `rol_usuario` es el rol nombrado que exigen los servicios para los
+        # campos de costo. Ambos llegan desde `DashboardView`.
+        self.username = username
+        self._rol_usuario = rol_usuario
         self._page_num = 1
 
         # ── Estado del formulario de ingreso ────────────────────────────────
         self._form_codigo_verificado = False
         self._editing_codigo: str | None = None
 
-        # ── Dialogo activo (referencia para cerrarlo) ────────────────────────
-        self._dialog: ft.AlertDialog | None = None
+        # ── Pila de diálogos abiertos (el tope es el activo) ─────────────────
+        # Es una PILA y no una única referencia porque un diálogo puede abrir
+        # otro encima (p. ej. el aviso de código duplicado sobre el paso 1): al
+        # cerrar el de arriba hay que volver a apuntar al de abajo, no perderlo
+        # (con una sola referencia, "Cancelar" del paso 1 cerraba el aviso ya
+        # cerrado y dejaba al usuario atrapado en el paso 1).
+        self._dialog_stack: list[ft.AlertDialog] = []
 
         # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
         # "acciones" es estructural (íconos de edición/venta) y no se puede ocultar.
@@ -53,7 +77,9 @@ class InventarioView(BaseView):
             "acciones": "Acciones",
         }
         self._columnas_visibles = {k: True for k in self._columnas_ocultables}
-        self._modo_vista = "separado"  # "separado", "agrupado", "tarjetas"
+        # Última vista elegida por este usuario ("separado", "agrupado" o
+        # "tarjetas"); cae al modo por defecto si no hay preferencia guardada.
+        self._modo_vista = obtener_vista_inventario(self.username)
 
         super().__init__(route="/inventario", title="Módulo de Inventario")
 
@@ -83,19 +109,68 @@ class InventarioView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
 
-    def _close_dialog(self, e=None):
+    @property
+    def _dialog(self) -> "ft.AlertDialog | None":
+        """Diálogo activo (tope de la pila) o `None` si no hay ninguno."""
+        return self._dialog_stack[-1] if self._dialog_stack else None
+
+    def _close_dialog(self, e=None, dialog: ft.AlertDialog = None):
+        """Descarta el diálogo del tope y deja activo el que estaba debajo.
+
+        El renderizado se delega en `page.pop_dialog()`, la API de pila de
+        diálogos de Flet 0.86. El patrón heredado (meter el control en
+        `page.overlay` y alternar `open`) no llega a dibujar el cierre: el
+        diálogo se quedaba pegado en pantalla —el aviso de código duplicado
+        no se podía descartar— o seguía activo pero invisible, recibiendo
+        clics sobre botones que el usuario ya no veía.
+        """
+        if dialog is None:
+            dialog = self._dialog
+        if dialog is None:
+            return
+        if dialog in self._dialog_stack:
+            self._dialog_stack.remove(dialog)
+
         p = self._get_page(e)
-        if p and self._dialog:
-            self._dialog.open = False
-            p.update()
+        if p is not None and hasattr(p, "pop_dialog"):
+            # `pop_dialog()` cierra el diálogo más alto que siga abierto, así
+            # que se llama ANTES de bajar la bandera: si se baja primero, el
+            # que Flet encuentra como tope es el de ABAJO y se cierra el
+            # equivocado (el aviso quedaba visible y el paso 1 desaparecía).
+            p.pop_dialog()
+            dialog.open = False
+            return
+
+        dialog.open = False
+        if p is None:
+            return
+        # Respaldo para páginas que no exponen la API de diálogos.
+        if dialog in getattr(p, "overlay", []):
+            p.overlay.remove(dialog)
+        p.update()
+
+    def _cerrar_todos_los_dialogos(self, e=None):
+        """Vacía la pila cerrando de arriba hacia abajo (cancelación total)."""
+        while self._dialog_stack:
+            self._close_dialog(e, dialog=self._dialog_stack[-1])
 
     def _open_dialog(self, dialog: ft.AlertDialog, e=None):
-        self._dialog = dialog
+        """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
+        if dialog not in self._dialog_stack:
+            self._dialog_stack.append(dialog)
+        dialog.open = True
+
         p = self._get_page(e)
-        if p:
+        if p is None:
+            return
+        if hasattr(p, "show_dialog"):
+            try:
+                p.show_dialog(dialog)
+            except RuntimeError:
+                pass  # ya estaba montado en la pila de la página
+        else:  # respaldo para páginas que no exponen la API de diálogos
             if dialog not in p.overlay:
                 p.overlay.append(dialog)
-            dialog.open = True
             p.update()
 
     def _snack(self, msg: str, color: str, e=None):
@@ -119,18 +194,28 @@ class InventarioView(BaseView):
         subtext = self.get_subtext_color()
         border = self.get_border_color()
 
-        return ft.Column(
-            controls=[
-                self._build_bcv_panel(accent, card_bg, text_color, subtext, border),
-                ft.Divider(height=6, color=border),
-                self._build_filtros_panel(accent, card_bg, text_color, border),
-                ft.Divider(height=6, color=border),
-                self._build_tabla_panel(accent, card_bg, text_color, subtext, border),
-            ],
+        # ── Dueño único del scroll VERTICAL de la página ─────────────────────
+        # Antes coexistían dos scrolls verticales anidados (este Column con
+        # AUTO y el contenedor de la tabla con ALWAYS + altura fija): sobre la
+        # tabla, la rueda no propagaba al padre y el desplazamiento se
+        # bloqueaba. Ahora el eje vertical es de este Column y el eje
+        # HORIZONTAL es exclusivo de `_tabla_scroll_row` (tabla ancha).
+        # Se crea antes de construir los paneles porque el panel de tabla lo
+        # necesita como destino de los botones flotantes de scroll vertical.
+        self._body_scroll_col = ft.Column(
+            controls=[],
             spacing=10,
             expand=True,
             scroll=ft.ScrollMode.AUTO,
         )
+        self._body_scroll_col.controls = [
+            self._build_bcv_panel(accent, card_bg, text_color, subtext, border),
+            ft.Divider(height=6, color=border),
+            self._build_filtros_panel(accent, card_bg, text_color, border),
+            ft.Divider(height=6, color=border),
+            self._build_tabla_panel(accent, card_bg, text_color, subtext, border),
+        ]
+        return self._body_scroll_col
 
     # ─────────────────────────────────────────────────────────────────────────
     # PANEL BCV
@@ -384,6 +469,12 @@ class InventarioView(BaseView):
     def _handle_cambio_modo_vista(self, e):
         if e.control.selected:
             self._modo_vista = list(e.control.selected)[0]
+            # La elección sobrevive al cierre de la aplicación (por usuario);
+            # un modo desconocido no debe tumbar la interfaz.
+            try:
+                guardar_vista_inventario(self.username, self._modo_vista)
+            except ValueError:
+                pass
             self._cargar_filas()
             self._safe_update(e)
 
@@ -392,10 +483,32 @@ class InventarioView(BaseView):
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
         )
+        # Separación de ejes (ver nota en `get_body`): la Row scrollea en
+        # HORIZONTAL (única dueña de ese eje, la tabla es más ancha que la
+        # pantalla) y la Column contenedora NO scrollea — crece con su
+        # contenido y el desplazamiento vertical lo maneja el cuerpo de la
+        # página. Ambos atributos conservan su nombre porque son los targets
+        # de los botones de navegación rápida (`ui.components.scroll_nav`).
         self._tabla_scroll_row = ft.Row(controls=[self._dt], scroll=ft.ScrollMode.ALWAYS)
-        self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=460)
-        self._nav_h, self._nav_v = build_floating_corner_nav(self._tabla_scroll_row, self._tabla_scroll_col, accent)
-        self._vista_container = ft.Container(height=460)
+        self._tabla_scroll_col = ft.Column(controls=[self._tabla_scroll_row], tight=True)
+        # El cluster HORIZONTAL va en la barra de herramientas de la tarjeta:
+        # flotando en la esquina superior derecha del `Stack` tapaba la fila de
+        # encabezados de columna. El VERTICAL sí sigue flotando abajo a la
+        # derecha, donde no cubre nada.
+        self._nav_h = build_inline_h_nav(self._tabla_scroll_row, accent)
+        self._nav_v = build_floating_v_nav(
+            getattr(self, "_body_scroll_col", None) or self._tabla_scroll_col,
+            accent,
+        )
+        # El cluster vertical flota sobre la esquina inferior derecha del
+        # `Stack`, así que sin esta holgura se dibujaba encima del texto de la
+        # última fila de la tabla. Reservarla al pie deja al cluster sobre
+        # espacio vacío sin alterar el scroll (el eje sigue siendo del cuerpo).
+        self._tabla_con_holgura = ft.Container(
+            content=self._tabla_scroll_col,
+            padding=ft.Padding.only(bottom=self._HOLGURA_NAV_FLOTANTE),
+        )
+        self._vista_container = ft.Container()
         self._lbl_pag = ft.Text("", color=subtext, size=12)
 
         self._btn_modo_vista = ft.SegmentedButton(
@@ -425,7 +538,7 @@ class InventarioView(BaseView):
         btn_prev = ft.IconButton(ft.Icons.CHEVRON_LEFT, on_click=self._pagina_anterior)
         btn_next = ft.IconButton(ft.Icons.CHEVRON_RIGHT, on_click=self._pagina_siguiente)
 
-        return self.create_card(
+        self._tabla_panel = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -435,6 +548,7 @@ class InventarioView(BaseView):
                                 ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
                             ], spacing=8),
                             ft.Row([
+                                self._nav_h,
                                 self._btn_modo_vista,
                                 self._build_selector_columnas(accent, text_color),
                             ], spacing=8),
@@ -464,6 +578,7 @@ class InventarioView(BaseView):
                 spacing=10,
             ),
         )
+        return self._tabla_panel
 
     def _cargar_filas(self, text_color=None, accent=None):
         if text_color is None:
@@ -510,6 +625,11 @@ class InventarioView(BaseView):
         def celda_acciones_lineal(p):
             return ft.Row([
                 ft.IconButton(
+                    ft.Icons.INFO_OUTLINE_ROUNDED, icon_color=accent,
+                    tooltip="Ver detalle del ítem",
+                    on_click=lambda ev, prod=p: self._abrir_modal_detalle(prod, ev),
+                ),
+                ft.IconButton(
                     ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
                     tooltip="Procesar Venta",
                     on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
@@ -537,6 +657,7 @@ class InventarioView(BaseView):
 
         def celda_acciones_grid(p):
             fila1 = [
+                ft.IconButton(ft.Icons.INFO_OUTLINE_ROUNDED, icon_color=accent, icon_size=18, tooltip="Ver detalle del ítem", on_click=lambda ev, prod=p: self._abrir_modal_detalle(prod, ev)),
                 ft.IconButton(ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400, icon_size=18, tooltip="Procesar Venta", on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev)),
                 ft.IconButton(ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400, icon_size=18, tooltip="Añadir al Carrito", on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev)),
             ]
@@ -573,13 +694,15 @@ class InventarioView(BaseView):
             ]
             self._nav_h.visible = True
             self._nav_v.visible = True
+            # Sin altura fija: el Stack se ajusta a la tabla y el scroll
+            # vertical lo aporta el cuerpo de la página (un solo dueño del eje).
+            # Solo flota el cluster VERTICAL: el horizontal vive en la barra de
+            # herramientas y ya no se solapa con los encabezados de columna.
             self._vista_container.content = ft.Stack(
                 controls=[
-                    self._tabla_scroll_col,
-                    self._nav_h,
+                    self._tabla_con_holgura,
                     self._nav_v,
                 ],
-                height=460,
             )
 
         elif self._modo_vista == "agrupado":
@@ -665,13 +788,15 @@ class InventarioView(BaseView):
             self._dt.rows = rows
             self._nav_h.visible = True
             self._nav_v.visible = True
+            # Sin altura fija: el Stack se ajusta a la tabla y el scroll
+            # vertical lo aporta el cuerpo de la página (un solo dueño del eje).
+            # Solo flota el cluster VERTICAL: el horizontal vive en la barra de
+            # herramientas y ya no se solapa con los encabezados de columna.
             self._vista_container.content = ft.Stack(
                 controls=[
-                    self._tabla_scroll_col,
-                    self._nav_h,
+                    self._tabla_con_holgura,
                     self._nav_v,
                 ],
-                height=460,
             )
 
         elif self._modo_vista == "tarjetas":
@@ -723,14 +848,50 @@ class InventarioView(BaseView):
             if not tarjetas:
                 self._vista_container.content = ft.Container(
                     content=ft.Text("No se encontraron productos.", color=subtext),
-                    alignment=ft.alignment.center, height=460,
+                    alignment=ft.Alignment.CENTER, height=180,
                 )
             else:
+                # Sin scroll propio ni altura fija: las tarjetas envuelven y el
+                # eje vertical sigue siendo del cuerpo de la página.
                 self._vista_container.content = ft.Column(
                     controls=[ft.Row(controls=tarjetas, wrap=True, spacing=10)],
-                    scroll=ft.ScrollMode.ALWAYS,
-                    height=460,
+                    tight=True,
                 )
+
+    def _rol_para_costos(self) -> str | None:
+        """Rol nombrado que exigen los servicios para devolver los costos. La
+        vista recibe `es_admin` como bandera, así que cuando no llega un rol
+        explícito se traduce a un rol administrativo equivalente."""
+        return self._rol_usuario or ("administrador" if self.es_admin else None)
+
+    def _abrir_modal_detalle(self, prod: dict, e=None):
+        """Resumen completo del ítem en el modal reutilizable. Se relee el
+        producto con el rol para que los COSTOS lleguen solo si corresponde
+        (las filas de la tabla se cargan sin ellos)."""
+        codigo = (prod or {}).get("codigo", "")
+        completo = obtener_producto(codigo, rol_usuario=self._rol_para_costos()) or dict(prod or {})
+
+        def _cerrar(ev):
+            self._close_dialog(ev, dialog=dlg)
+
+        def _editar(ev):
+            self._close_dialog(ev, dialog=dlg)
+            self._abrir_flujo_edicion(codigo, ev)
+
+        dlg = construir_modal_detalle_producto(
+            completo,
+            es_admin=self.es_admin,
+            paleta={
+                "texto": self.get_text_color(),
+                "subtexto": self.get_subtext_color(),
+                "acento": self.get_accent_color(),
+                "fondo": self.get_card_bg(),
+                "borde": self.get_border_color(),
+            },
+            on_cerrar=_cerrar,
+            on_editar=_editar,
+        )
+        self._open_dialog(dlg, e)
 
     def _abrir_modal_historial(self, codigo: str, e=None):
         """Historial Clínico de Producto (ERS 3.6): movimientos cronológicos
@@ -769,8 +930,7 @@ class InventarioView(BaseView):
             filas_mov.append(ft.Text("Sin movimientos de venta registrados.", color=self.get_subtext_color()))
 
         def cerrar(ev):
-            dlg.open = False
-            self._safe_update(ev)
+            self._close_dialog(ev, dialog=dlg)
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -1045,18 +1205,35 @@ class InventarioView(BaseView):
     # =========================================================================
     # FLUJO DE INGRESO DE PRODUCTO — 3 PASOS (ERS 3.1)
     # =========================================================================
-    def _abrir_flujo_ingreso(self, e):
-        """Paso 1: Mostrar campo de código para verificar existencia."""
+    def _resetear_estado_formulario(self):
+        """Deja el flujo de ingreso/edición en su estado inicial. Se invoca
+        desde TODOS los puntos de salida (cancelar, guardar, reabrir) para que
+        ningún registro herede el código verificado ni el modo edición del
+        anterior."""
         self._form_codigo_verificado = False
         self._editing_codigo = None
+
+    def _cancelar_flujo_formulario(self, e=None):
+        """Cancelación desde cualquier paso: cierra los diálogos del flujo que
+        queden abiertos (incluido un aviso superpuesto) y limpia el estado."""
+        self._cerrar_todos_los_dialogos(e)
+        self._resetear_estado_formulario()
+
+    def _abrir_flujo_ingreso(self, e):
+        """Paso 1: Mostrar campo de código para verificar existencia."""
+        self._cerrar_todos_los_dialogos(e)
+        self._resetear_estado_formulario()
         self._mostrar_paso1_dialogo(e, codigo_inicial="")
 
     def _abrir_flujo_edicion(self, codigo: str, e=None):
-        """Abre el formulario en modo edición para un producto existente."""
-        prod = obtener_producto(codigo)
+        """Abre el formulario en modo edición para un producto existente. Se
+        lee con el rol para que un administrador vea los costos ya registrados
+        (un vendedor los recibe filtrados y no puede alterarlos)."""
+        prod = obtener_producto(codigo, rol_usuario=self._rol_para_costos())
         if not prod:
             self._snack(f"Producto '{codigo}' no encontrado.", ft.Colors.RED_700, e)
             return
+        self._cerrar_todos_los_dialogos(e)
         self._editing_codigo = codigo
         self._form_codigo_verificado = True
         self._mostrar_paso2_dialogo(e, codigo=codigo, datos_iniciales=prod)
@@ -1100,6 +1277,23 @@ class InventarioView(BaseView):
                 self._mostrar_paso2_dialogo(ev, codigo=codigo)
 
         def _confirmar_duplicado(ev, codigo, existente):
+            """Aviso superpuesto al paso 1 (queda encima en la pila): al
+            descartarlo, el paso 1 sigue abierto y operativo."""
+
+            async def _limpiar_codigo(ev2):
+                """Botón "No — Limpiar Código": cierra SOLO el aviso y devuelve
+                el paso 1 usable, con el campo vacío y el foco dentro. Es `async`
+                porque `Control.focus()` es una coroutine en Flet 0.86 (un
+                handler sync la descartaría sin ejecutarla)."""
+                _close_dup(ev2)
+                inp_cod.value = ""
+                lbl_status.value = ""
+                self._safe_update(ev2)
+                try:
+                    await inp_cod.focus()
+                except Exception:
+                    pass  # sin page viva (o control desmontado) no hay foco que dar.
+
             dlg_dup = ft.AlertDialog(
                 modal=True,
                 title=ft.Row([
@@ -1113,12 +1307,7 @@ class InventarioView(BaseView):
                     color=text_color,
                 ),
                 actions=[
-                    ft.TextButton("No — Limpiar Código", on_click=lambda ev2: (
-                        _close_dup(ev2),
-                        setattr(inp_cod, "value", ""),
-                        setattr(lbl_status, "value", ""),
-                        self._safe_update(ev2),
-                    )),
+                    ft.TextButton("No — Limpiar Código", on_click=_limpiar_codigo),
                     ft.Button(
                         "Sí — Ver Producto",
                         style=ft.ButtonStyle(
@@ -1127,7 +1316,6 @@ class InventarioView(BaseView):
                         ),
                         on_click=lambda ev2: (
                             _close_dup(ev2),
-                            self._close_dialog(ev2),
                             self._abrir_flujo_edicion(codigo, ev2),
                         ),
                     ),
@@ -1136,8 +1324,8 @@ class InventarioView(BaseView):
             )
 
             def _close_dup(ev2):
-                dlg_dup.open = False
-                self._safe_update(ev2)
+                """Cierra SOLO el aviso; el paso 1 vuelve a ser el tope."""
+                self._close_dialog(ev2, dialog=dlg_dup)
 
             self._open_dialog(dlg_dup, ev)
 
@@ -1154,7 +1342,7 @@ class InventarioView(BaseView):
                 tight=True,
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
+                ft.TextButton("Cancelar", on_click=self._cancelar_flujo_formulario),
                 ft.Button(
                     "Verificar",
                     icon=ft.Icons.SEARCH,
@@ -1195,7 +1383,20 @@ class InventarioView(BaseView):
         )
         f_ref = tf("Referencia *", "referencia")
         f_desc = tf("Descripción General *", "descripcion_general", width=520)
-        f_depto = tf("Departamento *", "departamento", width=200)
+        # El departamento ya no es texto libre: dos dropdowns jerárquicos
+        # alimentados por el catálogo, con la opción de registrar valores
+        # nuevos al final de cada lista. La lógica vive en el componente.
+        selector_depto = SelectorDepartamentos(
+            obtener_departamentos=listar_departamentos,
+            obtener_sub_departamentos=listar_sub_departamentos,
+            on_crear_departamento=crear_departamento,
+            on_crear_sub_departamento=crear_sub_departamento,
+            on_cambio=self._safe_update,
+            ancho=230,
+            color_texto=text_color, color_borde=border, color_acento=accent,
+        )
+        selector_depto.set_valores(d.get("departamento", ""), d.get("sub_departamento", ""))
+        self._selector_depto = selector_depto
         f_marca = tf("Marca", "marca", width=200)
         f_barras = tf("Código de Barras", "codigo_barras", width=200)
         f_nombre_corto = tf("Nombre Corto (máx 30 car.)", "nombre_referencia_corto", width=260)
@@ -1232,6 +1433,30 @@ class InventarioView(BaseView):
         f_existencia = tf("Existencia", "existencia",
                           value=str(d.get("existencia", "0")),
                           width=120, kb=ft.KeyboardType.NUMBER)
+
+        def _numero_o_vacio(valor) -> str:
+            """Texto para un campo numérico opcional (`None` → vacío)."""
+            return "" if valor is None else str(valor)
+
+        # Umbral de alerta propio del producto (no es un dato restringido).
+        f_alerta_stock = tf("Alerta de Stock Mínimo", "alerta_stock_minimo",
+                            value=_numero_o_vacio(d.get("alerta_stock_minimo")),
+                            width=200, kb=ft.KeyboardType.NUMBER,
+                            hint="Entero; vacío = sin alerta")
+
+        # ── COSTOS del negocio (solo administración) ─────────────────────────
+        # Distintos de los precios de venta: es lo que cuesta adquirir el
+        # producto. Con existencia >= 1 el Costo USD Efectivo es obligatorio
+        # (ERR_PROD_COSTO), así que sin estos campos el formulario no podía
+        # guardar ningún producto con stock.
+        f_costo_usd = tf("Costo USD (Efectivo)" + (" *" if self.es_admin else ""), "costo_usd_efectivo",
+                         value=_numero_o_vacio(d.get("costo_usd_efectivo")),
+                         width=190, kb=ft.KeyboardType.NUMBER)
+        f_costo_bcv = tf("Costo USD (BCV)", "costo_usd_bcv",
+                         value=_numero_o_vacio(d.get("costo_usd_bcv")),
+                         width=190, kb=ft.KeyboardType.NUMBER)
+        fila_costos = ft.Row([f_costo_usd, f_costo_bcv], spacing=12, wrap=True,
+                             visible=self.es_admin)
 
         # Fila de precios (se oculta si existencia == 0)
         fila_precios = ft.Row([f_precio_usd, f_precio_bcv, lbl_monto_bs], spacing=12, visible=float(d.get("existencia", 1) or 1) != 0)
@@ -1274,8 +1499,9 @@ class InventarioView(BaseView):
         titulo_paso = "Editar Producto" if self._editing_codigo else "Datos del Producto"
 
         def _limpiar_errores():
-            for campo in (f_ref, f_desc, f_depto, f_precio_usd, f_precio_bcv):
+            for campo in (f_ref, f_desc, f_precio_usd, f_precio_bcv, f_costo_usd, f_alerta_stock):
                 campo.error_text = None
+            selector_depto.limpiar_errores()
 
         def _guardar(ev):
             # ── Requisito de guardado mínimo (ERS 3.1 paso 4) ────────────────
@@ -1291,8 +1517,8 @@ class InventarioView(BaseView):
             if not (f_desc.value or "").strip():
                 f_desc.error_text = "Campo obligatorio"
                 hay_error = True
-            if not (f_depto.value or "").strip():
-                f_depto.error_text = "Campo obligatorio"
+            if not selector_depto.valor_departamento():
+                selector_depto.marcar_error()
                 hay_error = True
 
             try:
@@ -1315,6 +1541,13 @@ class InventarioView(BaseView):
                 f_precio_bcv.error_text = "Requerido (Efectivo o BCV) si Existencia > 0"
                 hay_error = True
 
+            # Con stock, el Costo USD Efectivo es obligatorio (ERR_PROD_COSTO).
+            # Se avisa aquí, junto al campo, en vez de dejar que el servicio
+            # rechace el guardado con un snack genérico al final del flujo.
+            if self.es_admin and existencia_val >= 1 and not (f_costo_usd.value or "").strip():
+                f_costo_usd.error_text = "Requerido si Existencia >= 1"
+                hay_error = True
+
             if hay_error:
                 self._snack("Complete los campos obligatorios resaltados en rojo.", ft.Colors.RED_700, ev)
                 self._safe_update(ev)
@@ -1325,15 +1558,23 @@ class InventarioView(BaseView):
                 "codigo": codigo,
                 "referencia": f_ref.value,
                 "descripcion_general": f_desc.value,
-                "departamento": f_depto.value,
+                "departamento": selector_depto.valor_departamento(),
+                "sub_departamento": selector_depto.valor_sub_departamento(),
                 "marca": f_marca.value,
                 "codigo_barras": f_barras.value,
                 "nombre_referencia_corto": f_nombre_corto.value,
                 "precio_dolares": f_precio_usd.value,
                 "precio_bcv": f_precio_bcv.value,
                 "existencia": f_existencia.value,
+                "alerta_stock_minimo": f_alerta_stock.value,
                 "proveedor_id": dd_proveedor.value or None,
             }
+            # Las claves de costo solo viajan si el rol puede editarlas: el
+            # servicio rechaza (PermissionError) que un no-admin las envíe,
+            # incluso vacías.
+            if self.es_admin:
+                datos["costo_usd_efectivo"] = f_costo_usd.value
+                datos["costo_usd_bcv"] = f_costo_bcv.value
             self._mostrar_paso3_confirmacion(ev, datos)
 
         dlg = ft.AlertDialog(
@@ -1342,10 +1583,12 @@ class InventarioView(BaseView):
             content=ft.Container(
                 content=ft.Column(
                     controls=[
-                        ft.Row([cod_display, f_ref, f_depto, f_marca], spacing=12, wrap=True),
+                        ft.Row([cod_display, f_ref, f_marca], spacing=12, wrap=True),
                         f_desc,
-                        ft.Row([f_existencia, dd_proveedor, f_barras], spacing=12, wrap=True),
+                        selector_depto.construir_fila(),
+                        ft.Row([f_existencia, f_alerta_stock, dd_proveedor, f_barras], spacing=12, wrap=True),
                         fila_precios,
+                        fila_costos,
                         f_nombre_corto,
                     ],
                     spacing=14,
@@ -1355,7 +1598,7 @@ class InventarioView(BaseView):
                 height=420,
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
+                ft.TextButton("Cancelar", on_click=self._cancelar_flujo_formulario),
                 ft.Button(
                     "Revisar y Guardar",
                     icon=ft.Icons.FACT_CHECK_OUTLINED,
@@ -1381,25 +1624,46 @@ class InventarioView(BaseView):
             ("Referencia", "referencia"),
             ("Descripción General", "descripcion_general"),
             ("Departamento", "departamento"),
+            ("Sub-Departamento", "sub_departamento"),
             ("Marca", "marca"),
             ("Existencia", "existencia"),
+            ("Alerta de Stock Mínimo", "alerta_stock_minimo"),
             ("Precio USD (Efectivo)", "precio_dolares"),
             ("Precio USD (BCV)", "precio_bcv"),
+            # Las claves de costo solo están en `datos` si el rol es
+            # administrativo, y las filas se arman solo con las presentes.
+            ("Costo USD (Efectivo)", "costo_usd_efectivo"),
+            ("Costo USD (BCV)", "costo_usd_bcv"),
             ("Proveedor ID", "proveedor_id"),
             ("Código de Barras", "codigo_barras"),
             ("Nombre Corto", "nombre_referencia_corto"),
         ]
 
+        # El valor va SIEMPRE dentro de un contenedor de ancho acotado
+        # (`expand=True` sobre el ancho restante del diálogo) y con envoltura
+        # multilínea: una descripción larga debe cortar en varias líneas y
+        # elidir, nunca desbordarse hacia la derecha del diálogo.
         filas_resumen = []
         for etiqueta, key in campos_orden:
+            # Solo se resumen los campos que el formulario realmente envió: un
+            # rol sin acceso a los costos no debe ver ni sus etiquetas.
+            if key not in datos:
+                continue
             val = str(datos.get(key) or "").strip()
             mostrar = val if val and val not in ("0", "0.0", "None") else "— no llenado —"
             color_val = text_color if mostrar != "— no llenado —" else self.get_subtext_color()
             filas_resumen.append(
                 ft.Row([
                     ft.Text(f"{etiqueta}:", width=200, color=self.get_subtext_color(), size=13),
-                    ft.Text(mostrar, color=color_val, size=13, weight=ft.FontWeight.W_600),
-                ], spacing=8)
+                    ft.Container(
+                        content=ft.Text(
+                            mostrar, color=color_val, size=13, weight=ft.FontWeight.W_600,
+                            no_wrap=False, max_lines=4, overflow=ft.TextOverflow.ELLIPSIS,
+                            selectable=True,
+                        ),
+                        expand=True,
+                    ),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
             )
 
         def _confirmar(ev):
@@ -1408,14 +1672,15 @@ class InventarioView(BaseView):
 
         def _editar(ev):
             self._close_dialog(ev)
-            prod_actual = obtener_producto(datos["codigo"]) if self._editing_codigo else None
+            prod_actual = (
+                obtener_producto(datos["codigo"], rol_usuario=self._rol_para_costos())
+                if self._editing_codigo else None
+            )
             self._mostrar_paso2_dialogo(ev, codigo=datos["codigo"], datos_iniciales=prod_actual or datos)
 
         def _cancelar_todo(ev):
             """Cancelar en el paso 3 descarta todo y vuelve al paso 1 (ERS 3.1 paso 5)."""
-            self._close_dialog(ev)
-            self._form_codigo_verificado = False
-            self._editing_codigo = None
+            self._cancelar_flujo_formulario(ev)
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -1472,6 +1737,10 @@ class InventarioView(BaseView):
                 referencia=datos.get("referencia", ""),
                 descripcion_general=datos.get("descripcion_general", ""),
                 departamento=datos.get("departamento", ""),
+                # El servicio registra el par en el catálogo jerárquico
+                # (`registrar_desde_producto`), así que guardar el producto es
+                # el único punto de escritura del catálogo.
+                sub_departamento=datos.get("sub_departamento", ""),
                 marca=datos.get("marca", ""),
                 precio_dolares=_to_float(datos.get("precio_dolares", 0)),
                 precio_bcv=_to_float(datos.get("precio_bcv", 0)),
@@ -1479,6 +1748,13 @@ class InventarioView(BaseView):
                 existencia=_to_float(datos.get("existencia", 0)),
                 codigo_barras=datos.get("codigo_barras", ""),
                 nombre_referencia_corto=datos.get("nombre_referencia_corto", ""),
+                alerta_stock_minimo=datos.get("alerta_stock_minimo") or None,
+                # Los costos solo viajan si el formulario los recogió (rol
+                # administrativo); `None` significa "no modificar", con lo que
+                # un vendedor nunca pisa el costo ya almacenado.
+                costo_usd_efectivo=datos.get("costo_usd_efectivo") or None,
+                costo_usd_bcv=datos.get("costo_usd_bcv") or None,
+                rol_usuario=self._rol_para_costos(),
             )
 
             if self._editing_codigo:
@@ -1488,7 +1764,7 @@ class InventarioView(BaseView):
                 crear_producto(**kwargs)
                 self._snack(f"Producto '{datos['codigo']}' registrado exitosamente.", ft.Colors.GREEN_700, e)
 
-            self._editing_codigo = None
+            self._resetear_estado_formulario()
             self._refrescar_tabla(e)
         except ValueError as ex:
             self._snack(str(ex), ft.Colors.RED_700, e)

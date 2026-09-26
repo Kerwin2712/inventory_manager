@@ -3,11 +3,18 @@ from core.database import get_setting, set_setting
 
 class BaseView(ft.View):
     """Clase base con persistencia automática de temas en SQLite."""
-    
+
     # Estado estático global sincronizado con SQLite
     current_seed_color = "#2196F3"
     current_theme_mode = ft.ThemeMode.DARK
     _settings_loaded = False
+
+    # Punto de extensión del encabezado: con `True` (comportamiento histórico)
+    # `setup_layout()` pinta el título de la vista en una PRIMERA franja propia
+    # más un divisor. Una vista que ya dibuja su propia barra superior lo pone
+    # en `False` y absorbe el título ahí (lo hace `DashboardView`), para no
+    # gastar dos franjas horizontales ni duplicar el título.
+    mostrar_titulo_por_defecto = True
     
     def __init__(self, route: str, title: str):
         super().__init__(
@@ -101,20 +108,28 @@ class BaseView(ft.View):
             **kwargs
         )
 
-    def setup_layout(self):
-        """Estructura por defecto para las vistas que heredan."""
-        try:
-            header = ft.Text(
+    def build_encabezado(self) -> list[ft.Control]:
+        """Controles que preceden al cuerpo de la vista. Sobreescribible: una
+        vista con barra superior propia devuelve `[]` (o su propia franja) para
+        que el título no ocupe una línea extra."""
+        if not self.mostrar_titulo_por_defecto:
+            return []
+        return [
+            ft.Text(
                 self.view_title,
                 size=26,
                 weight=ft.FontWeight.BOLD,
                 color=self.get_accent_color(),
-            )
-            
+            ),
+            ft.Divider(height=10, color=self.get_border_color()),
+        ]
+
+    def setup_layout(self):
+        """Estructura por defecto para las vistas que heredan."""
+        try:
             self.bgcolor = self.get_bg_color()
             self.controls = [
-                header,
-                ft.Divider(height=10, color=self.get_border_color()),
+                *self.build_encabezado(),
                 self.get_body()
             ]
         except Exception as e:
