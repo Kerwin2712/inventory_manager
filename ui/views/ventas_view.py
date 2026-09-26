@@ -947,6 +947,15 @@ class VentasView(BaseView):
         else:
             self.safe_update(e)
 
+    # Reparto proporcional de la fila de resultados. Los pesos se distribuyen
+    # el ancho que queda tras reservar el del botón "Agregar", que es fijo.
+    _PESO_COL_CODIGO = 2
+    _PESO_COL_NOMBRE = 5
+    _PESO_COL_DEPARTAMENTO = 2
+    _PESO_COL_PRECIOS = 2
+    _PESO_COL_EXISTENCIA = 2
+    _ANCHO_COL_AGREGAR = 120
+
     def build_panel_resultados(self, termino: str, resultados: list[dict], exacto: dict | None = None) -> ft.Control:
         """Lista de coincidencias con un botón "Agregar" por fila. Incluye
         estado vacío y avisa cuando se alcanzó el límite de resultados."""
@@ -987,7 +996,7 @@ class VentasView(BaseView):
                             ft.Text(pr["codigo"], size=11, weight=ft.FontWeight.BOLD, color=text_color,
                                     no_wrap=False, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                         ], tight=True, spacing=4),
-                        width=110,
+                        expand=self._PESO_COL_CODIGO,
                     ),
                     # Nombre corto + descripción larga acotada (sin desbordes).
                     ft.Container(
@@ -997,12 +1006,12 @@ class VentasView(BaseView):
                             ft.Text(descripcion, size=10, color=subtext,
                                     no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
                         ], spacing=1, tight=True),
-                        expand=True,
+                        expand=self._PESO_COL_NOMBRE,
                     ),
                     ft.Container(
                         content=ft.Text(pr.get("departamento") or "—", size=10, color=subtext,
                                         no_wrap=False, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
-                        width=110,
+                        expand=self._PESO_COL_DEPARTAMENTO,
                     ),
                     ft.Container(
                         content=ft.Column([
@@ -1011,7 +1020,7 @@ class VentasView(BaseView):
                             ft.Text(f"Bs. {float(pr.get('monto_bcv_bolivares') or 0):,.2f}", size=10,
                                     color=ft.Colors.AMBER_700),
                         ], spacing=1, tight=True),
-                        width=110,
+                        expand=self._PESO_COL_PRECIOS,
                     ),
                     ft.Container(
                         content=ft.Text(
@@ -1020,13 +1029,20 @@ class VentasView(BaseView):
                             color=ft.Colors.RED_400 if sin_stock else subtext,
                             no_wrap=False, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
                         ),
-                        width=95,
+                        expand=self._PESO_COL_EXISTENCIA,
                     ),
-                    ft.TextButton(
-                        content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART, size=14), ft.Text("Agregar", size=11, weight=ft.FontWeight.BOLD)], tight=True, spacing=4),
-                        disabled=sin_stock,
-                        tooltip="Sin existencia disponible" if sin_stock else f"Agregar {nombre} al carrito activo",
-                        on_click=lambda ev, p=pr: self.handle_agregar_desde_resultado(ev, p),
+                    # Único elemento de ancho fijo de la fila: así el botón
+                    # nunca se recorta contra el borde en ventanas angostas y
+                    # son las columnas de texto las que ceden espacio (con
+                    # elipsis) al repartirse el ancho restante.
+                    ft.Container(
+                        content=ft.TextButton(
+                            content=ft.Row([ft.Icon(ft.Icons.ADD_SHOPPING_CART, size=14), ft.Text("Agregar", size=11, weight=ft.FontWeight.BOLD)], tight=True, spacing=4),
+                            disabled=sin_stock,
+                            tooltip="Sin existencia disponible" if sin_stock else f"Agregar {nombre} al carrito activo",
+                            on_click=lambda ev, p=pr: self.handle_agregar_desde_resultado(ev, p),
+                        ),
+                        width=self._ANCHO_COL_AGREGAR,
                     ),
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
                 padding=ft.Padding.symmetric(horizontal=8, vertical=6),
