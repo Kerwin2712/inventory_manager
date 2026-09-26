@@ -111,20 +111,39 @@ class InventarioView(BaseView):
         return self._dialog_stack[-1] if self._dialog_stack else None
 
     def _close_dialog(self, e=None, dialog: ft.AlertDialog = None):
-        """Cierra el diálogo indicado (por defecto el del tope), lo saca de la
-        pila y del `overlay`, y deja como activo el que estaba debajo."""
+        """Descarta el diálogo del tope y deja activo el que estaba debajo.
+
+        El renderizado se delega en `page.pop_dialog()`, la API de pila de
+        diálogos de Flet 0.86. El patrón heredado (meter el control en
+        `page.overlay` y alternar `open`) no llega a dibujar el cierre: el
+        diálogo se quedaba pegado en pantalla —el aviso de código duplicado
+        no se podía descartar— o seguía activo pero invisible, recibiendo
+        clics sobre botones que el usuario ya no veía.
+        """
         if dialog is None:
             dialog = self._dialog
         if dialog is None:
             return
         if dialog in self._dialog_stack:
             self._dialog_stack.remove(dialog)
-        dialog.open = False
+
         p = self._get_page(e)
-        if p:
-            if dialog in p.overlay:
-                p.overlay.remove(dialog)
-            p.update()
+        if p is not None and hasattr(p, "pop_dialog"):
+            # `pop_dialog()` cierra el diálogo más alto que siga abierto, así
+            # que se llama ANTES de bajar la bandera: si se baja primero, el
+            # que Flet encuentra como tope es el de ABAJO y se cierra el
+            # equivocado (el aviso quedaba visible y el paso 1 desaparecía).
+            p.pop_dialog()
+            dialog.open = False
+            return
+
+        dialog.open = False
+        if p is None:
+            return
+        # Respaldo para páginas que no exponen la API de diálogos.
+        if dialog in getattr(p, "overlay", []):
+            p.overlay.remove(dialog)
+        p.update()
 
     def _cerrar_todos_los_dialogos(self, e=None):
         """Vacía la pila cerrando de arriba hacia abajo (cancelación total)."""
@@ -132,18 +151,22 @@ class InventarioView(BaseView):
             self._close_dialog(e, dialog=self._dialog_stack[-1])
 
     def _open_dialog(self, dialog: ft.AlertDialog, e=None):
-        """Apila un diálogo y lo muestra; el anterior queda debajo intacto."""
+        """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
         if dialog not in self._dialog_stack:
             self._dialog_stack.append(dialog)
-        p = self._get_page(e)
-        if p and dialog not in p.overlay:
-            p.overlay.append(dialog)
-        # `open` se fija SIEMPRE, incluso si todavía no hay una `page`
-        # resoluble: así el estado del diálogo no depende del momento en que
-        # se resuelve la página, y `open is False` significa únicamente
-        # "lo cerró `_close_dialog`" (invariante en el que se apoya la pila).
         dialog.open = True
-        if p:
+
+        p = self._get_page(e)
+        if p is None:
+            return
+        if hasattr(p, "show_dialog"):
+            try:
+                p.show_dialog(dialog)
+            except RuntimeError:
+                pass  # ya estaba montado en la pila de la página
+        else:  # respaldo para páginas que no exponen la API de diálogos
+            if dialog not in p.overlay:
+                p.overlay.append(dialog)
             p.update()
 
     def _snack(self, msg: str, color: str, e=None):
