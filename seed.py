@@ -18,6 +18,7 @@ def run_seed():
     prov_data = [
         {
             "empresa": "Distribuidora Central C.A.",
+            "rif": "J-301234567",
             "contacto": "Carlos Pérez",
             "telefono": "0414-1234567",
             "correo": "ventas@distribuidoracentral.com",
@@ -25,6 +26,7 @@ def run_seed():
         },
         {
             "empresa": "Importadora Electrónica Oriente",
+            "rif": "J-309876543",
             "contacto": "Ana Gómez",
             "telefono": "0424-9876543",
             "correo": "contacto@ieoriente.com",
@@ -32,6 +34,7 @@ def run_seed():
         },
         {
             "empresa": "Suministros Industriales del Sur",
+            "rif": "J-305551234",
             "contacto": "Roberto Mendoza",
             "telefono": "0412-5551234",
             "correo": "info@suministrossur.com",
@@ -47,7 +50,8 @@ def run_seed():
                 contacto=p["contacto"],
                 telefono=p["telefono"],
                 correo=p["correo"],
-                descripcion=p["descripcion"]
+                descripcion=p["descripcion"],
+                rif=p["rif"],
             )
             proveedores.append(prov)
             print(f"  + Proveedor creado: ID {prov['id']} - {prov['empresa']}")
@@ -55,7 +59,10 @@ def run_seed():
             print(f"  - Aviso Proveedor {p['empresa']}: {e}")
 
     # Recuperar IDs de proveedores creados
-    p_ids = [p["id"] for p in proveedores] if proveedores else [1, 2, 3]
+    # Sin este cuidado, un fallo al crear proveedores degeneraba en IDs
+    # inventados [1, 2, 3] que no existen: cada producto moria despues con
+    # "FOREIGN KEY constraint failed" y la base quedaba sin inventario.
+    p_ids = [p["id"] for p in proveedores] if proveedores else [None, None, None]
 
     # 3. Registrar Clientes (RNO-CLI-01)
     print("[INFO] Registrando clientes de prueba...")
