@@ -376,15 +376,21 @@ def listar_productos(
         params.append(departamento.strip())
 
     if busqueda:
-        # Búsqueda por palabras independientes (AND de ORs)
+        # Búsqueda por palabras independientes (AND de ORs).
+        # Cada columna va envuelta en IFNULL porque `marca`, `codigo_barras` y
+        # `nombre_referencia_corto` son nullables: en SQL `NULL LIKE ?` evalúa
+        # a NULL (no a falso), así que una sola columna nula bastaba para que
+        # el OR dejara de encontrar coincidencias válidas en las demás.
+        columnas_texto = (
+            "codigo", "referencia", "descripcion_general",
+            "marca", "codigo_barras", "nombre_referencia_corto",
+        )
+        condicion = " OR ".join(f"IFNULL({c}, '') LIKE ?" for c in columnas_texto)
         palabras = busqueda.strip().split()
         for pal in palabras:
             termino = f"%{pal}%"
-            query += (
-                " AND (codigo LIKE ? OR referencia LIKE ? OR descripcion_general LIKE ?"
-                " OR marca LIKE ? OR codigo_barras LIKE ? OR nombre_referencia_corto LIKE ?)"
-            )
-            params.extend([termino] * 6)
+            query += f" AND ({condicion})"
+            params.extend([termino] * len(columnas_texto))
 
     if proveedor_id is not None:
         query += " AND proveedor_id = ?"
