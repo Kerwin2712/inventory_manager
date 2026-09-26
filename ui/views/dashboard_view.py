@@ -81,7 +81,15 @@ class DashboardView(BaseView):
     def get_body(self) -> ft.Control:
         # Selección del contenido principal según la sección activa
         if self.current_section == "Ventas":
-            ventas_view = VentasView(page=self.page, user_data=self.user_info, on_update_callback=self.rebuild_ui)
+            # `get_current_page()` en lugar de `self.page`: este último lanza
+            # RuntimeError mientras la vista no está montada en la página, y al
+            # ocurrir dentro de `setup_layout()` el módulo caía al panel de
+            # "Error al Cargar Módulo" en vez de renderizar Ventas.
+            ventas_view = VentasView(
+                page=self.get_current_page(),
+                user_data=self.user_info,
+                on_update_callback=self.rebuild_ui,
+            )
             try:
                 if self.page:
                     ventas_view.page = self.page
