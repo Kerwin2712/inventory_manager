@@ -29,6 +29,7 @@ DisableProgramGroupPage=yes
 OutputDir=Output
 OutputBaseFilename=SistemaInventario_Setup_{#MyAppVersion}
 SetupIconFile=assets\icon.ico
+LicenseFile=LICENCIA.txt
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes

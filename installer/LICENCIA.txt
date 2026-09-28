@@ -1,0 +1,57 @@
+ACUERDO DE LICENCIA DE SOFTWARE, TÉRMINOS Y CONDICIONES Y POLÍTICA DE PRIVACIDAD
+================================================================================
+SISTEMA INTEGRADO DE INVENTARIO Y VENTAS
+Versión: 1.0.1
+Titular y Desarrollador: Kerwin Quintero
+Todos los Derechos Reservados.
+
+POR FAVOR LEA ATENTAMENTE ESTE ACUERDO ANTES DE INSTALAR O UTILIZAR EL SOFTWARE.
+AL INSTALAR, COPIAR O UTILIZAR ESTE SOFTWARE, USTED ACEPTA QUEDAR OBLIGADO POR
+LOS TÉRMINOS Y CONDICIONES DE ESTE ACUERDO.
+
+1. CONCESIÓN DE LICENCIA
+El Desarrollador le otorga una licencia de uso personal, comercial interno, no
+exclusiva, intransferible y revocable para utilizar el "Sistema Integrado de
+Inventario y Ventas" (en adelante, el "Software") en los equipos autorizados.
+Este acuerdo no transfiere la propiedad intelectual ni los derechos de autor
+del Software, los cuales pertenecen exclusivamente a Kerwin Quintero.
+
+2. RESTRICCIONES DE USO
+Queda expresamente prohibido:
+a) Modificar, descompilar, realizar ingeniería inversa o desensamblar el Software.
+b) Vender, revender, sublicenciar, alquilar o redistribuir el Software a terceros
+   sin autorización previa y por escrito del Desarrollador.
+c) Eliminar o alterar avisos de derechos de autor o marcas registradas.
+
+3. PRIVACIDAD Y PROCESAMIENTO LOCAL DE DATOS (OFFLINE-FIRST)
+El Software opera bajo una estricta política de privacidad local:
+a) Todos los datos de inventario, costos, precios, ventas, clientes, proveedores
+   y usuarios se almacenan exclusivamente de forma local en su equipo de cómputo
+   (%APPDATA%\SistemaInventario\inventory.db).
+b) El Software NO recolecta, no transmite a la nube, no comparte ni vende ningún
+   tipo de información comercial ni personal a servidores externos ni a terceros.
+c) Usted es el único y exclusivo propietario y custodio de la información registrada.
+
+4. SEGURIDAD Y RESPALDOS (BACKUPS)
+a) La integridad, custodia y seguridad de la base de datos es responsabilidad
+   exclusiva del Cliente.
+b) El Software incluye funciones de respaldo en el módulo de Gestión de Datos.
+   Se recomienda encarecidamente realizar copias de seguridad periódicas en medios
+   externos para evitar pérdidas en caso de fallos de hardware o caídas eléctricas.
+c) Las contraseñas de los usuarios se almacenan con algoritmos criptográficos
+   seguros (PBKDF2-HMAC-SHA256). El Cliente es responsable de resguardar sus claves.
+
+5. GARANTÍA LIMITADA Y EXENCIÓN DE RESPONSABILIDAD
+El Software se entrega "TAL CUAL" ("AS IS"), sin garantías adicionales de ninguna
+clase. En ningún caso el Desarrollador será responsable por lucro cesante,
+pérdida de información derivada de fallas de hardware del usuario, interrupción
+de actividades comerciales ni daños indirectos o incidentales.
+
+6. ACTUALIZACIONES
+Las actualizaciones del Software están diseñadas para preservar la base de datos
+local intacta. Sin embargo, se aconseja siempre generar un respaldo previo antes
+de aplicar actualizaciones del sistema.
+
+Para consultas sobre licencias o soporte técnico, contacte al desarrollador oficial:
+Kerwin Quintero (https://github.com/Kerwin2712/inventory_manager)
+================================================================================
