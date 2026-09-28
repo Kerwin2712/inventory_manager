@@ -96,3 +96,7 @@ Windows con asistente gráfico (PyInstaller + Inno Setup 6), incluyendo el
 > Este proyecto, su código fuente, arquitectura, diseño de interfaz y elementos asociados son propiedad intelectual exclusiva de su autor (**Kerwin Quintero / Kerwin2712**). 
 > 
 > Queda estrictamente prohibida la reproducción, distribución, modificación, comercialización o uso no autorizado de este software o cualquiera de sus componentes sin la autorización previa y por escrito del titular de los derechos de autor.
+>
+> Para mayor información legal, consulte:
+> - 📜 [Términos y Condiciones de Uso (EULA)](docs/legal/TERMINOS_Y_CONDICIONES.md)
+> - 🔒 [Política de Privacidad y Protección de Datos](docs/legal/POLITICA_DE_PRIVACIDAD.md)
