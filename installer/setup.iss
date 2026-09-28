@@ -10,7 +10,7 @@
 ; El instalador queda en installer\Output\SistemaInventario_Setup_<version>.exe
 
 #define MyAppName "Sistema Integrado de Inventario y Ventas"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Kerwin Quintero"
 #define MyAppExeName "SistemaInventario.exe"
 #define MyAppId "{{7C6E8B6E-6C2C-4B2E-9E9C-6E0E2C1D9A31}"
