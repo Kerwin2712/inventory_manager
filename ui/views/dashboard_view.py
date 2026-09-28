@@ -18,8 +18,8 @@ class DashboardView(BaseView):
     # ERS 3.6: módulo exclusivo de uso administrativo/gerencial.
     ROLES_CON_ACCESO_AUDITORIA = ("administrador", "superadmin", "gerencia")
 
-    # El título global ("General") viaja DENTRO de `build_header()`: una sola
-    # franja horizontal con título + módulo + usuario + opciones + salir.
+    # El título de la vista activa viaja DENTRO de `build_header()`: una sola
+    # franja horizontal con título de la vista + usuario + opciones + salir.
     mostrar_titulo_por_defecto = False
 
     def __init__(self, user_info: dict = None, on_logout_callback=None):
@@ -29,7 +29,7 @@ class DashboardView(BaseView):
         self.rango_top_ventas = "Hoy"
         self.limite_top_ventas = 10
         self.sidebar_collapsed = True
-        super().__init__(route="/dashboard", title="General")
+        super().__init__(route="/dashboard", title="Inicio")
 
     @property
     def es_admin(self) -> bool:
@@ -44,6 +44,7 @@ class DashboardView(BaseView):
     def handle_nav_change(self, section_name: str):
         """Cambia la sección activa de la vista principal."""
         self.current_section = section_name
+        self.view_title = section_name
         self.rebuild_ui()
 
     def procesar_venta_desde_inventario(self, producto: dict, e=None):
@@ -54,6 +55,7 @@ class DashboardView(BaseView):
         crear_nuevo_carrito(sid)
         agregar_o_actualizar_producto(sid, producto, cantidad=1.0)
         self.current_section = "Ventas"
+        self.view_title = "Ventas"
         self.rebuild_ui()
 
     def iniciar_venta_desde_cartera(self, cliente: dict, e=None):
@@ -76,6 +78,7 @@ class DashboardView(BaseView):
             crear_nuevo_carrito(sid)
             vincular_cliente_a_carrito(sid, cliente)
         self.current_section = "Ventas"
+        self.view_title = "Ventas"
         self.rebuild_ui()
 
     def get_body(self) -> ft.Control:
@@ -314,14 +317,12 @@ class DashboardView(BaseView):
             self.show_alert_success("Sin alertas de stock activas.", e)
 
     def build_header(self) -> ft.Control:
-        """Franja superior ÚNICA: título global · módulo actual · usuario ·
-        opciones de interfaz · cerrar sesión.
+        """Franja superior ÚNICA: título de la vista · usuario · opciones de
+        interfaz · cerrar sesión.
 
-        El título global ya no se pinta arriba en una línea aparte (ver
-        `mostrar_titulo_por_defecto`): se absorbe aquí para recuperar ese alto
-        para el contenido. El bloque de título toma el ancho sobrante y elide
-        con puntos suspensivos, mientras la zona de acciones va `tight` para
-        que en ventanas angostas los botones nunca salgan de pantalla."""
+        El bloque de título toma el ancho sobrante y elide con puntos
+        suspensivos, mientras la zona de acciones va `tight` para que en
+        ventanas angostas los botones nunca salgan de pantalla."""
         accent = self.get_accent_color()
         role_label = self.user_info.get('role', 'usuario').capitalize()
 
@@ -389,27 +390,24 @@ class DashboardView(BaseView):
             on_click=lambda e: self.on_logout_callback() if self.on_logout_callback else None,
         )
 
-        header_title = f"{self.current_section}" if self.current_section != "Inicio" else "Principal"
+        header_title = self.current_section
 
-        # Título global + módulo actual en un solo bloque jerárquico
-        # ("General · Inventario"): el global en acento y el módulo en el color
-        # de texto, separados por un punto medio. El módulo lleva `expand` para
-        # que sea él (y no los botones) el que ceda ancho y elida.
+        # Título de la vista actual en un solo bloque. El texto lleva `expand` para
+        # que sea él (y no los botones) el que ceda ancho y elida si la ventana es angosta.
         bloque_titulo = ft.Container(
             content=ft.Row(
                 controls=[
                     ft.Text(
-                        self.view_title, size=20, weight=ft.FontWeight.BOLD, color=accent,
-                        no_wrap=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-                    ),
-                    ft.Text("·", size=20, weight=ft.FontWeight.BOLD, color=self.get_subtext_color()),
-                    ft.Text(
-                        header_title, size=18, weight=ft.FontWeight.W_600, color=self.get_text_color(),
-                        no_wrap=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                        header_title,
+                        size=20,
+                        weight=ft.FontWeight.BOLD,
+                        color=accent,
+                        no_wrap=True,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
                         expand=True,
                     ),
                 ],
-                spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             expand=True,

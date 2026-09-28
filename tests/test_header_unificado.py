@@ -1,10 +1,9 @@
 """Pruebas del encabezado unificado en una sola franja horizontal.
 
 Antes existían DOS franjas: la que `BaseView.setup_layout()` pintaba con el
-título global ("General") y la barra propia del dashboard (módulo actual +
-usuario + opciones de interfaz + cerrar sesión). El punto de extensión
-`mostrar_titulo_por_defecto` / `build_encabezado()` permite que el dashboard
-absorba el título dentro de su propia fila sin afectar a las demás vistas.
+título global y la barra propia del dashboard (módulo actual + usuario + opciones
+de interfaz + cerrar sesión). El encabezado unificado muestra solo el nombre de la
+vista activa ("Inicio", "Ventas", etc.) junto con el usuario y opciones sin franjas extra.
 
 Las vistas se instancian headless (sin `page`): los accesos a `self.page`
 lanzan `RuntimeError`, que los helpers de `BaseView` ya capturan.
@@ -59,7 +58,7 @@ def test_el_header_reune_titulo_modulo_usuario_opciones_y_salir_en_una_fila(dash
     textos = _textos(header)
     tooltips = " | ".join(_tooltips(header))
 
-    assert "General" in textos, "falta el título global"
+    assert "General" not in textos, "no debe incluir 'General' en los títulos de las vistas"
     assert "Inventario" in textos, "falta el módulo actual"
     assert any("u" in t and "Administrador" in t for t in textos), "falta el badge de usuario"
     assert "Alternar Modo Claro / Oscuro" in tooltips
@@ -68,22 +67,23 @@ def test_el_header_reune_titulo_modulo_usuario_opciones_y_salir_en_una_fila(dash
     assert "Cerrar Sesión" in tooltips
 
 
-def test_el_modulo_inicio_se_rotula_como_principal(dashboard):
+def test_el_modulo_inicio_muestra_su_nombre(dashboard):
     dashboard.current_section = "Inicio"
 
-    assert "Principal" in _textos(dashboard.build_header())
+    assert "Inicio" in _textos(dashboard.build_header())
+    assert "General" not in _textos(dashboard.build_header())
 
 
 def test_la_vista_no_pinta_un_titulo_duplicado_en_una_linea_aparte(dashboard):
-    """El título global ya no encabeza la vista por separado: `controls` tiene
-    solo el cuerpo, y "General" aparece UNA sola vez en todo el árbol."""
+    """El encabezado no se duplica en una franja extra: `controls` tiene
+    solo el cuerpo, y 'General' no aparece en el árbol."""
     assert dashboard.mostrar_titulo_por_defecto is False
     assert dashboard.build_encabezado() == []
     assert len(dashboard.controls) == 1, "sobrevive una franja extra de título"
     assert not any(isinstance(c, ft.Text) for c in dashboard.controls)
     assert not any(isinstance(c, ft.Divider) for c in dashboard.controls)
 
-    assert _textos(dashboard).count("General") == 1
+    assert "General" not in _textos(dashboard)
 
 
 def test_el_bloque_de_titulo_cede_ancho_y_elide_sin_empujar_las_acciones(dashboard):
@@ -95,14 +95,12 @@ def test_el_bloque_de_titulo_cede_ancho_y_elide_sin_empujar_las_acciones(dashboa
 
     assert isinstance(bloque_titulo, ft.Container) and bloque_titulo.expand
     for texto in bloque_titulo.content.controls:
-        if texto.value == "·":
-            continue
         assert texto.max_lines == 1
         assert texto.overflow == ft.TextOverflow.ELLIPSIS
 
     modulo = bloque_titulo.content.controls[-1]
     assert modulo.value == "Gestión de Datos"
-    assert modulo.expand, "el módulo debe ser el que cede ancho al elidir"
+    assert modulo.expand, "el título debe ceder ancho al elidir"
 
     assert isinstance(acciones, ft.Row) and acciones.tight is True
     assert acciones.expand in (None, False, 0)
