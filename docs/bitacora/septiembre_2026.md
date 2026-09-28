@@ -68,3 +68,15 @@
   - **Fecha de ingreso en UTC (`core/database.py`, `services/inventario_service.py`):** el `DEFAULT CURRENT_TIMESTAMP` de SQLite escribe UTC mientras que `fecha_ultima_modificacion` se escribe en hora local. Además del desfase visible en el modal de detalle, el problema real era de datos: los filtros por fecha de ingreso comparaban la fecha local que escribe el usuario contra timestamps en UTC, así que **un producto creado de noche en Venezuela ya figuraba con la fecha del día siguiente y el filtro de "hoy" no lo encontraba**. `crear_producto` pasa ahora `created_at` explícito en hora local, y una migración idempotente —marcada en `app_settings` para no aplicarse dos veces y volver a desplazar las fechas— convierte los registros anteriores.
 - **Verificaciones realizadas:** Suite completa en **300 passed**. En la aplicación corriendo (ventana de 763 px de ancho, el caso que provocaba el recorte): el botón "Agregar" se ve completo en las 15 filas de resultados y son las columnas de texto las que se comprimen; el cluster de navegación vertical queda debajo de la última fila, sobre la holgura reservada, sin tapar texto; y en la base de prueba, tras la migración, la fecha de ingreso de los productos sembrados coincide exactamente con su fecha de última modificación (antes iba cuatro horas por delante). Los nuevos tests cubren la coherencia de husos al crear, el filtro por fecha de ingreso del día, la conversión de los registros heredados y la idempotencia de la migración.
 - **Estado del proyecto:** 25 commits atómicos en la rama `refactor/orquestacion-subagentes`, suite en 300 passed, árbol de trabajo limpio. Sin fusionar a `main` ni enviar al remoto.
+
+## Títulos de Vistas Limpios y Generación del Instalador de Actualización v1.0.1 - 28/09/2026
+- **Responsable:** Antigravity (IA Coding Assistant)
+- **Actividades realizadas:**
+  - **Encabezado del Dashboard (`ui/views/dashboard_view.py`):** Se eliminó el prefijo "General ·" de los títulos de las vistas en el encabezado unificado. Ahora muestra directamente el nombre de la vista activa (`Inicio`, `Ventas`, `Inventario`, `Cartera`, `Gestión de Datos`) con tipografía destacada y color de acento, respetando la elipsis en pantallas angostas.
+  - **Pruebas (`tests/test_header_unificado.py`):** Se actualizaron las aserciones para verificar que "General" ya no aparece en los títulos y que se renderiza el nombre exacto de la vista activa. Suite completa en **300 passed**.
+  - **Instalador de actualización v1.0.1 (`installer/setup.iss`):** Se incrementó la versión a 1.0.1 y se recompiló la distribución completa con PyInstaller (`onedir`) e Inno Setup 6, generando el instalador final `installer/Output/SistemaInventario_Setup_1.0.1.exe` (83.2 MB) con el cliente de escritorio de Flet embebido offline para enviar al cliente.
+- **Verificaciones realizadas:**
+  - Ejecución de la suite completa de pruebas: **300 passed**.
+  - Verificación del ejecutable compilado `SistemaInventario.exe` asegurando inicialización offline sin peticiones externas.
+  - Compilación exitosa del instalador con Inno Setup (`ISCC.exe`).
+- **Estado del proyecto:** Instalador generado listo para entrega.
