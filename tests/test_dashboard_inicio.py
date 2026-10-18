@@ -107,3 +107,45 @@ def test_auditoria_muestra_la_informacion_completa_del_item(vista, producto_crit
     assert any("Tornillo AP 1/4" in t for t in textos)
     assert any(t == "Ferretería" for t in textos)
     assert any(t == "Acme" for t in textos)
+
+
+# ─── Cambio 4: tarjeta de Tasa BCV en el Inicio ──────────────────────────────
+
+def test_la_tarjeta_de_tasa_bcv_es_la_primera_de_la_fila(vista):
+    """El cliente la pidió a la izquierda de las demás: es el primer dato que
+    corrige cada mañana al abrir el programa."""
+    fila = vista.build_metrics_cards()
+
+    # Tasa de cambio + Ventas del Día + Productos en Stock + Alertas.
+    assert len(fila.controls) == 4
+    assert any("Tasa de Cambio BCV" in t for t in _textos(fila.controls[0]))
+
+
+def test_la_tarjeta_de_tasa_abre_el_modal_global_de_actualizacion(vista):
+    """Reutiliza `BaseView.mostrar_modal_tasa_bcv` en lugar de duplicar la caja
+    de texto del panel de Inventario (la tarjeta debe ser pequeña)."""
+    botones = [
+        c for c in _controles(vista.build_tarjeta_tasa_bcv())
+        if isinstance(c, ft.Button)
+    ]
+
+    assert len(botones) == 1
+    assert botones[0].on_click == vista.mostrar_modal_tasa_bcv
+    assert any("Actualizar Tasa" in t for t in _textos(botones[0]))
+
+
+def test_la_tarjeta_de_tasa_refleja_el_estado_del_servicio_bcv(vista):
+    """Misma vista que el panel de Inventario: la tasa vigente y su antigüedad."""
+    from services.bcv_service import actualizar_tasa
+
+    actualizar_tasa(732.48)
+    textos = _textos(vista.build_tarjeta_tasa_bcv())
+
+    assert any("732.48 Bs/$" in t for t in textos)
+    assert any("Actualizado hace" in t for t in textos)
+
+
+def test_sin_tasa_configurada_la_tarjeta_no_miente_con_un_cero(vista):
+    textos = _textos(vista.build_tarjeta_tasa_bcv())
+
+    assert any("Sin tasa" in t for t in textos)

@@ -4,6 +4,7 @@ from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
+from services.bcv_service import obtener_estado_tasa
 from services.reportes_service import (
     obtener_metricas_dashboard,
     obtener_top_ventas,
@@ -432,6 +433,102 @@ class DashboardView(BaseView):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+    # Ancho común de las tarjetas de la fila superior del Inicio. Cuatro de
+    # ellas más el espaciado entran en ~1120 px, el mismo ancho útil que usan
+    # las tablas de Auditoría y Ventas Diarias de más abajo.
+    ANCHO_TARJETA_METRICA = 265
+
+    def build_tarjeta_tasa_bcv(self) -> ft.Control:
+        """Tarjeta pequeña para ver y actualizar la Tasa BCV del día desde el
+        Inicio (cambio 4 de la especificación 17/10/2026).
+
+        El Inicio es la primera ventana que se ve al abrir el programa y la
+        tasa es el primer dato que el usuario corrige cada mañana, así que la
+        tarjeta va a la izquierda de las demás.
+
+        Replica la VISTA del panel BCV de Inventario —indicador verde/ámbar,
+        la tasa con su antigüedad y el botón "Actualizar Tasa"— pero delega la
+        edición al modal global `BaseView.mostrar_modal_tasa_bcv` en vez de
+        repetir la caja de texto del panel: la tarjeta debe ser pequeña y el
+        modal ya valida el valor, avisa y reconstruye la vista al guardar."""
+        estado = obtener_estado_tasa()
+        tasa = estado["tasa"]
+        descripcion = estado["descripcion"]
+
+        # Mismo criterio que el panel de Inventario: si la antigüedad se mide
+        # en días (no en horas) la tasa está vencida y el indicador pasa a
+        # ámbar. Se compara sobre el texto porque es lo que expone el servicio.
+        vencida = "día" in descripcion or "días" in descripcion
+        color_estado = ft.Colors.AMBER_400 if vencida else ft.Colors.GREEN_400
+        icono_estado = (
+            ft.Icons.WARNING_AMBER_ROUNDED if vencida
+            else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED
+        )
+
+        accent = self.get_accent_color()
+        valor = f"{tasa:,.2f} Bs/$" if tasa > 0 else "Sin tasa"
+
+        return self.create_card(
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color=accent, size=32),
+                            ft.Column(
+                                controls=[
+                                    ft.Text(
+                                        "Tasa de Cambio BCV", size=11,
+                                        color=self.get_subtext_color(), weight=ft.FontWeight.W_600,
+                                    ),
+                                    ft.Text(
+                                        valor, size=20, weight=ft.FontWeight.BOLD,
+                                        color=self.get_text_color(),
+                                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                ],
+                                spacing=2, tight=True, expand=True,
+                            ),
+                        ],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        controls=[
+                            ft.Icon(icono_estado, color=color_estado, size=16),
+                            ft.Text(
+                                descripcion, size=11, color=color_estado,
+                                weight=ft.FontWeight.W_600, max_lines=2,
+                                overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                            ),
+                        ],
+                        spacing=6,
+                    ),
+                    ft.Button(
+                        content=ft.Row(
+                            controls=[
+                                ft.Icon(ft.Icons.CURRENCY_EXCHANGE, size=16, color=ft.Colors.WHITE),
+                                ft.Text("Actualizar Tasa", weight=ft.FontWeight.BOLD, size=13),
+                            ],
+                            spacing=6, tight=True,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        style=ft.ButtonStyle(
+                            bgcolor=accent,
+                            color=ft.Colors.WHITE,
+                            shape=ft.RoundedRectangleBorder(radius=12),
+                        ),
+                        tooltip="Actualizar la tasa BCV del día",
+                        on_click=self.mostrar_modal_tasa_bcv,
+                    ),
+                ],
+                spacing=10,
+                tight=True,
+            ),
+            padding=18,
+            border_radius=18,
+            width=self.ANCHO_TARJETA_METRICA,
+        )
+
     def build_metrics_cards(self) -> ft.Control:
         """Construye las tarjetas de métricas con datos reales de la base de datos."""
         metricas = obtener_metricas_dashboard()
@@ -481,7 +578,7 @@ class DashboardView(BaseView):
                     vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
                 padding=18,
-                width=265,
+                width=self.ANCHO_TARJETA_METRICA,
                 bgcolor=self.get_card_bg(),
                 border_radius=18,
                 border=ft.Border.all(1, self.get_border_color()),
@@ -489,7 +586,13 @@ class DashboardView(BaseView):
             )
             card_widgets.append(c)
 
-        return ft.Row(controls=card_widgets, spacing=20, wrap=True)
+        # La tarjeta de Tasa BCV encabeza la fila (sugerencia explícita del
+        # cliente: "es más cómodo que esté a la izquierda de las demás").
+        return ft.Row(
+            controls=[self.build_tarjeta_tasa_bcv(), *card_widgets],
+            spacing=20,
+            wrap=True,
+        )
 
     def build_data_sections(self) -> ft.Control:
         """Auditoría Preventiva e Inteligencia de Negocio, ambas a ANCHO COMPLETO
