@@ -241,6 +241,88 @@ def init_db():
             )
         """)
 
+        # ─── Actualización Octubre 2026 ───────────────────────────────────
+        # Cobro de la venta: referencia del pago (obligatoria para los métodos
+        # distintos de Efectivo, con omisión confirmada), descuento aplicado
+        # sobre el precio de lista y la cuenta de usuario que cobró.
+        for _columna, _tipo in (
+            ("referencia_pago", "TEXT"),
+            ("referencia_omitida", "INTEGER NOT NULL DEFAULT 0"),
+            # Monto realmente cobrado tras el descuento, en la moneda del
+            # método de pago (USD para Efectivo/Binance/Crédito, Bs para los
+            # métodos BCV). `total_usd`/`total_bcv` siguen siendo la suma a
+            # precio de lista, para no perder el precio predeterminado.
+            ("monto_cobrado", "REAL"),
+            # Porcentaje de descuento con signo: negativo = OFF (se cobró por
+            # debajo del precio de lista), positivo = ON (por encima).
+            ("porcentaje_descuento", "REAL NOT NULL DEFAULT 0"),
+            ("usuario_nombre", "TEXT"),
+        ):
+            _agregar_columna_si_falta(cursor, "ventas", _columna, _tipo)
+
+        # Contacto secundario del cliente: lo pide la ventana del método de
+        # pago "Crédito" y no era un campo del registro original de la cartera.
+        _agregar_columna_si_falta(cursor, "clientes", "contacto_secundario", "TEXT")
+
+        # Deudas por Cobrar (método de pago "Crédito", solo Venta Formal).
+        # `saldo_usd` arranca igual a `monto_total_usd` y baja con cada abono;
+        # la deuda se cierra cuando llega a cero.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deudas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                venta_id INTEGER,
+                cliente_id TEXT,
+                monto_total_usd REAL NOT NULL DEFAULT 0,
+                monto_total_bcv REAL NOT NULL DEFAULT 0,
+                saldo_usd REAL NOT NULL DEFAULT 0,
+                fecha_creacion TEXT NOT NULL,
+                fecha_limite_pago TEXT NOT NULL,
+                usuario_nombre TEXT,
+                estado TEXT NOT NULL DEFAULT 'abierta',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+                FOREIGN KEY (cliente_id) REFERENCES clientes(cedula_rif)
+                    ON UPDATE CASCADE ON DELETE SET NULL
+            )
+        """)
+
+        # Abonos parciales contra una deuda. El saldo vivo de `deudas` se
+        # recalcula desde esta tabla, que es la fuente de verdad del historial.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deuda_abonos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deuda_id INTEGER NOT NULL,
+                monto_usd REAL NOT NULL,
+                monto_bcv REAL NOT NULL DEFAULT 0,
+                metodo_pago TEXT NOT NULL DEFAULT 'Efectivo',
+                referencia_pago TEXT,
+                fecha TEXT NOT NULL,
+                usuario_nombre TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (deuda_id) REFERENCES deudas(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Renglones acreditados de la deuda: el "ítem fiado" que la lista de
+        # Deudas por Cobrar muestra junto a los datos del cliente.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deuda_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deuda_id INTEGER NOT NULL,
+                producto_codigo TEXT,
+                descripcion_corta TEXT,
+                cantidad REAL NOT NULL DEFAULT 0,
+                subtotal_usd REAL NOT NULL DEFAULT 0,
+                FOREIGN KEY (deuda_id) REFERENCES deudas(id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_deudas_estado ON deudas(estado)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_deuda_abonos_deuda ON deuda_abonos(deuda_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_deuda_items_deuda ON deuda_items(deuda_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON ventas(fecha)")
+
         conn.commit()
         cursor.execute("SELECT id FROM users WHERE username = ?", ("admin",))
         admin_user = cursor.fetchone()
