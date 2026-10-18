@@ -492,7 +492,13 @@ class DashboardView(BaseView):
         return ft.Row(controls=card_widgets, spacing=20, wrap=True)
 
     def build_data_sections(self) -> ft.Control:
-        """Construye las tablas de métricas en contenedores adaptativos con datos reales."""
+        """Auditoría Preventiva e Inteligencia de Negocio, ambas a ANCHO COMPLETO
+        y en ese orden (especificación 17/10/2026, cambios 1 y 2).
+
+        Antes convivían a `lg: 6` (media pantalla cada una) y la Auditoría solo
+        alcanzaba a mostrar el nombre corto del producto, que es justo lo que el
+        cliente pedía ampliar. Con `lg: 12` las dos tarjetas ocupan el ancho
+        completo y se apilan dentro del mismo `ResponsiveRow`."""
         text_color = self.get_text_color()
         accent = self.get_accent_color()
 
@@ -570,7 +576,7 @@ class DashboardView(BaseView):
                 padding=30
             )
 
-        left_section = self.create_card(
+        seccion_inteligencia = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -591,7 +597,7 @@ class DashboardView(BaseView):
             ),
             padding=15,
             border_radius=18,
-            col={"sm": 12, "lg": 6},
+            col={"sm": 12, "lg": 12},
         )
 
         # ── 2. Auditoría Preventiva (Stock Crítico + Contacto Proveedor - ERS 3.6) ──
@@ -623,28 +629,21 @@ class DashboardView(BaseView):
         )
 
         if alertas_stock:
-            stock_rows = []
-            for item in alertas_stock:
-                contacto_str = f"{item['proveedor_nombre']} ({item['proveedor_telefono']})"
-                stock_rows.append(
-                    ft.DataRow(
-                        cells=[
-                            ft.DataCell(ft.Text(item["nombre_corto"], color=text_color, weight=ft.FontWeight.BOLD)),
-                            ft.DataCell(ft.Text(f"{item['existencia']:.0f}", color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD)),
-                            ft.DataCell(ft.Text(f"{item['minimo']:.0f}", color=text_color)),
-                            ft.DataCell(ft.Text(contacto_str, color=self.get_subtext_color())),
-                        ]
-                    )
-                )
+            stock_rows = [self._fila_auditoria(item, accent, text_color) for item in alertas_stock]
 
             stock_content = ft.DataTable(
                 columns=[
-                    ft.DataColumn(ft.Text("Producto", color=text_color)),
-                    ft.DataColumn(ft.Text("Stock Actual", color=text_color)),
-                    ft.DataColumn(ft.Text("Mínimo", color=text_color)),
-                    ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color)),
+                    ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Stock Actual", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Mínimo", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color, weight=ft.FontWeight.BOLD)),
                 ],
                 rows=stock_rows,
+                # Dos líneas de descripción necesitan alto de fila variable: los
+                # mismos valores que usa la vista "agrupado" del Inventario.
+                data_row_min_height=72,
+                data_row_max_height=95,
             )
         else:
             stock_content = ft.Container(
@@ -655,7 +654,7 @@ class DashboardView(BaseView):
                 padding=30
             )
 
-        right_section = self.create_card(
+        seccion_auditoria = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -670,19 +669,129 @@ class DashboardView(BaseView):
                         wrap=True,
                     ),
                     ft.Divider(height=10, color=self.get_border_color()),
-                    stock_content,
+                    self._tabla_a_ancho_completo(stock_content),
                 ],
                 spacing=10,
             ),
             padding=15,
             border_radius=18,
-            col={"sm": 12, "lg": 6},
+            col={"sm": 12, "lg": 12},
         )
 
+        # La Auditoría va primero: es la ventana que el cliente consulta al
+        # abrir el programa (qué reponer hoy). La Inteligencia de Negocio queda
+        # debajo, también a ancho completo (cambio 2 de la especificación).
         return ft.ResponsiveRow(
             controls=[
-                left_section,
-                right_section,
+                seccion_auditoria,
+                seccion_inteligencia,
             ],
             spacing=20,
         )
+
+    def _tabla_a_ancho_completo(self, tabla: ft.Control) -> ft.Control:
+        """Envuelve una tabla ancha en su propio eje HORIZONTAL.
+
+        Los anchos de las tablas del Inicio están calculados para entrar
+        completas en una pantalla normal (sin deslizable horizontal, como pide
+        la especificación), pero en una ventana angosta la tabla se recortaría
+        contra el borde de la tarjeta. Este `Row` con scroll AUTO solo aparece
+        cuando hace falta. No rompe la regla de "un solo dueño por eje": el
+        cuerpo del Inicio es dueño del eje VERTICAL y este Row del HORIZONTAL."""
+        return ft.Row(controls=[tabla], scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def _fila_auditoria(self, item: dict, accent: str, text_color: str) -> ft.DataRow:
+        """Fila de la Auditoría Preventiva al estilo "agrupado" del Inventario.
+
+        El ancho ganado al pasar la tarjeta a pantalla completa se gasta en la
+        información que antes no cabía: la descripción general completa (hasta
+        DOS líneas, con elipsis al final, igual que el modo agrupado), el
+        código, la referencia, el nombre corto y el departamento/marca; todo
+        junto al stock actual, el mínimo que disparó la alerta y el contacto
+        del proveedor que ya se mostraban.
+
+        Los anchos son fijos (y suman ~1120 px) para que la tabla entre en una
+        pantalla normal sin deslizable horizontal, que es la condición que pide
+        la especificación."""
+        subtext = self.get_subtext_color()
+
+        def chip(texto: str, color: str) -> ft.Container:
+            return ft.Container(
+                content=ft.Text(texto, size=11, weight=ft.FontWeight.W_600, color=color),
+                bgcolor=ft.Colors.with_opacity(0.12, color),
+                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                border_radius=6,
+            )
+
+        celda_producto = ft.Container(
+            content=ft.Column([
+                ft.Text(
+                    item.get("descripcion_general") or item["nombre_corto"],
+                    size=13, weight=ft.FontWeight.BOLD, color=text_color,
+                    # El par `max_lines=2` + elipsis es lo que permite la
+                    # segunda línea cuando la descripción es larga: sin el
+                    # overflow explícito el texto se recortaría en seco.
+                    max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+                ft.Row([
+                    chip(f"Cód: {item['codigo']}", accent),
+                    chip(f"Ref: {item.get('referencia') or '-'}", subtext),
+                    chip(f"Corto: {item['nombre_corto']}", subtext),
+                ], spacing=6, wrap=True),
+            ], spacing=4, tight=True),
+            width=470,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        celda_clasificacion = ft.Container(
+            content=ft.Column([
+                ft.Text(item.get("departamento") or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
+                ft.Text(item.get("marca") or "-", size=11, color=subtext),
+            ], spacing=2, tight=True),
+            width=180,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        celda_stock = ft.Container(
+            content=ft.Text(f"{item['existencia']:.0f}", size=16, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
+            width=110,
+            alignment=ft.Alignment.CENTER_LEFT,
+        )
+
+        # `origen` dice qué umbral disparó la alerta ("producto" = el umbral
+        # propio del ítem, "global" = el parametrizado): sin ese dato un mínimo
+        # distinto al de la caja de texto parece un error de cálculo.
+        celda_minimo = ft.Container(
+            content=ft.Column([
+                ft.Text(f"{item['minimo']:.0f}", size=13, color=text_color, weight=ft.FontWeight.W_600),
+                ft.Text(
+                    "umbral propio" if item.get("origen") == "producto" else "umbral global",
+                    size=10, color=subtext,
+                ),
+            ], spacing=2, tight=True),
+            width=110,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        celda_proveedor = ft.Container(
+            content=ft.Column([
+                ft.Text(
+                    item["proveedor_nombre"], size=12, weight=ft.FontWeight.W_600, color=text_color,
+                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+                ft.Text(
+                    f"{item['proveedor_contacto']} · {item['proveedor_telefono']}",
+                    size=11, color=subtext, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+            ], spacing=2, tight=True),
+            width=250,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        return ft.DataRow(cells=[
+            ft.DataCell(celda_producto),
+            ft.DataCell(celda_clasificacion),
+            ft.DataCell(celda_stock),
+            ft.DataCell(celda_minimo),
+            ft.DataCell(celda_proveedor),
+        ])

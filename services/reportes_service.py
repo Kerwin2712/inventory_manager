@@ -37,10 +37,12 @@ def actualizar_stock_minimo(valor: float) -> float:
 _SQL_ALERTAS = """
     SELECT
         p.codigo,
+        p.referencia,
         p.nombre_referencia_corto,
         p.existencia,
         p.descripcion_general,
         p.departamento,
+        p.marca,
         p.alerta_stock_minimo,
         prov.empresa AS proveedor_nombre,
         prov.telefono AS proveedor_telefono,
@@ -53,14 +55,22 @@ _SQL_ALERTAS = """
 
 def _fila_a_alerta(r, minimo: float, origen: str) -> dict:
     """Arma el diccionario de alerta con las claves que consume el Dashboard
-    (`ui/views/dashboard_view.py`), más `alerta_stock_minimo` y `origen`."""
+    (`ui/views/dashboard_view.py`), más `alerta_stock_minimo` y `origen`.
+
+    `referencia`, `descripcion_general` y `marca` se agregaron para la
+    Auditoría Preventiva a ancho completo (especificación 17/10/2026): con la
+    tarjeta ocupando media pantalla solo cabía el nombre corto, y el cliente
+    pedía "la información completa del item"."""
     propio = r["alerta_stock_minimo"]
     return {
         "codigo": r["codigo"],
+        "referencia": r["referencia"] or "",
         "nombre_corto": r["nombre_referencia_corto"] or r["codigo"],
+        "descripcion_general": r["descripcion_general"] or "",
         "existencia": float(r["existencia"] or 0.0),
         "minimo": float(minimo),
         "departamento": r["departamento"] or "General",
+        "marca": r["marca"] or "",
         "proveedor_nombre": r["proveedor_nombre"] or "Sin Proveedor Asignado",
         "proveedor_telefono": r["proveedor_telefono"] or "N/A",
         "proveedor_contacto": r["proveedor_contacto"] or "N/A",
