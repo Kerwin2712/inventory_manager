@@ -31,6 +31,15 @@ class InventarioView(BaseView):
     # navegación vertical no se dibuje encima de la última fila.
     _HOLGURA_NAV_FLOTANTE = 44
 
+    # ── Resumen del paso 3 (previsualización antes de guardar) ───────────────
+    # "Descripción General" es la ÚNICA casilla del resumen con espacio
+    # reservado: admite textos largos (unos 300 caracteres como mínimo) y debe
+    # envolverse dentro del ancho del diálogo. Con 640 px de ancho de ventana y
+    # tamaño 12, entran ~65 caracteres por línea, así que seis líneas cubren los
+    # 300 caracteres con margen; el alto es ese mismo cálculo en píxeles.
+    _LINEAS_DESCRIPCION_RESUMEN = 6
+    _ALTO_DESCRIPCION_RESUMEN = 104
+
     def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
                  username: str | None = None, rol_usuario: str | None = None):
         self.on_back_callback = on_back_callback
@@ -1643,6 +1652,15 @@ class InventarioView(BaseView):
         # (`expand=True` sobre el ancho restante del diálogo) y con envoltura
         # multilínea: una descripción larga debe cortar en varias líneas y
         # elidir, nunca desbordarse hacia la derecha del diálogo.
+        #
+        # ── Densidad del resumen (Cambio 3 de octubre 2026) ──────────────────
+        # Las casillas van PEGADAS (la Column no agrega separación y cada fila
+        # ocupa solo el alto de una línea), como en la primera versión: la
+        # separación generosa que había desperdiciaba la ventana y obligaba a
+        # desplazarse para ver el resumen completo. Lo que NO se revierte es el
+        # acotado del valor: el espaciado grande se había introducido para
+        # arreglar el desborde de la descripción, y ese arreglo sigue vivo en el
+        # contenedor de ancho acotado + envoltura multilínea de abajo.
         filas_resumen = []
         for etiqueta, key in campos_orden:
             # Solo se resumen los campos que el formulario realmente envió: un
@@ -1652,16 +1670,28 @@ class InventarioView(BaseView):
             val = str(datos.get(key) or "").strip()
             mostrar = val if val and val not in ("0", "0.0", "None") else "— no llenado —"
             color_val = text_color if mostrar != "— no llenado —" else self.get_subtext_color()
+
+            # EXCEPCIÓN ÚNICA — "Descripción General": es el único campo que
+            # alberga textos largos (unos 300 caracteres como mínimo), así que
+            # es el único al que se le reserva alto para varias líneas. Si se
+            # compactara como los demás, el texto se cortaría en una sola línea
+            # y el usuario confirmaría un registro cuya descripción no puede
+            # leer. El resto de las casillas son valores de una línea y no
+            # necesitan ni un píxel extra.
+            es_descripcion = key == "descripcion_general"
             filas_resumen.append(
                 ft.Row([
-                    ft.Text(f"{etiqueta}:", width=200, color=self.get_subtext_color(), size=13),
+                    ft.Text(f"{etiqueta}:", width=190, color=self.get_subtext_color(), size=12),
                     ft.Container(
                         content=ft.Text(
-                            mostrar, color=color_val, size=13, weight=ft.FontWeight.W_600,
-                            no_wrap=False, max_lines=4, overflow=ft.TextOverflow.ELLIPSIS,
+                            mostrar, color=color_val, size=12, weight=ft.FontWeight.W_600,
+                            no_wrap=False,
+                            max_lines=self._LINEAS_DESCRIPCION_RESUMEN if es_descripcion else 1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
                             selectable=True,
                         ),
                         expand=True,
+                        height=self._ALTO_DESCRIPCION_RESUMEN if es_descripcion else None,
                     ),
                 ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
             )
@@ -1689,14 +1719,18 @@ class InventarioView(BaseView):
                 ft.Text("¿ESTÁS SEGURO DE REGISTRAR EL SIGUIENTE ÍTEM?", color=text_color, size=15),
             ], spacing=10),
             content=ft.Container(
+                # Sin `scroll` y sin `height` fija: el criterio de aceptación
+                # del Cambio 3 es que TODA la información se vea en una sola
+                # ventana sin deslizable, así que la ventana se ajusta al
+                # resumen (filas de una línea + el bloque de descripción) en
+                # vez de recortarlo a un alto fijo con barra.
                 content=ft.Column(
                     controls=filas_resumen,
-                    spacing=6,
-                    scroll=ft.ScrollMode.AUTO,
+                    spacing=0,
+                    tight=True,
                 ),
                 width=640,
-                height=350,
-                padding=10,
+                padding=8,
             ),
             actions=[
                 ft.TextButton("Cancelar", on_click=_cancelar_todo),
