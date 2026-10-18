@@ -5,6 +5,7 @@ from services.cartera_service import (
     crear_proveedor, obtener_proveedor, buscar_proveedores, actualizar_proveedor, eliminar_proveedor, listar_proveedores,
     parse_documento, format_documento,
 )
+from services import deudas_service
 
 
 class CarteraView(BaseView):
@@ -12,23 +13,58 @@ class CarteraView(BaseView):
 
     ITEMS_PER_PAGE = 10
 
-    def __init__(self, on_back_callback=None, on_iniciar_venta=None):
+    # Orden de columnas del boceto del PDF del 17/10/2026 (Nueva Función 2):
+    # Fecha Límite | Monto a Cobrar | Cédula/Rif | Nombre Razón Social |
+    # Teléfono | Etc. Los datos del cliente van AGRUPADOS de dos en dos por
+    # celda, no una columna por campo: con una columna por dato la lista
+    # obligaba a deslizar horizontalmente, que es justo lo que el PDF pide
+    # evitar en las listas nuevas.
+    COLUMNAS_DEUDAS = (
+        "Fecha Límite",
+        "Monto a Cobrar",
+        "Cédula/RIF / Nombre o Razón Social",
+        "Teléfono / Correo",
+        "Dirección / Contacto Secundario",
+        "Ítem Acreditado",
+        "Creada / Usuario",
+    )
+
+    def __init__(self, on_back_callback=None, on_iniciar_venta=None, user_data=None):
         self.on_back_callback = on_back_callback
         # Callback (ERS 3.3): recibe el cliente seleccionado y navega
         # automáticamente a Ventas con ese cliente ya vinculado al carrito.
         self.on_iniciar_venta = on_iniciar_venta
+        # Usuario de la sesión, igual que en Ventas y el Dashboard: su nombre
+        # viaja a cada abono (`deuda_abonos.usuario_nombre`) para que quede
+        # constancia de quién cobró. Si la vista se instancia sin él, el abono
+        # se registra sin firma antes que impedir el cobro.
+        self.user_data = user_data or {}
         self.adjuntos_temp = []
         self.current_tab = "clientes"
-        
+
         # Estado de paginación
         self.cli_page = 1
         self.prov_page = 1
-        
+        self.deu_page = 1
+
         # Estado de edición
         self.cli_editing_cedula = None
         self.prov_editing_id = None
-        
+
+        # Pila de diálogos de la pestaña de Deudas. En Flet 0.86 los diálogos
+        # se manejan con `page.show_dialog()` / `page.pop_dialog()`: el patrón
+        # heredado (`page.overlay` + bandera `open`) no llega a dibujar el
+        # cierre y el diálogo queda pegado —o activo pero invisible—.
+        self._dialog_stack: list[ft.AlertDialog] = []
+
         super().__init__(route="/cartera", title="Cartera de Clientes y Proveedores")
+
+    @property
+    def usuario_nombre(self):
+        """Nombre de usuario de la sesión, o `None` si la vista se construyó
+        sin `user_data` (p. ej. instanciada de forma aislada en pruebas)."""
+        datos = self.user_data or {}
+        return datos.get("username") or datos.get("nombre") or None
 
     def get_current_page(self, e=None):
         """Obtiene de manera segura la instancia de page activa desde el evento o el control."""
@@ -60,9 +96,9 @@ class CarteraView(BaseView):
             selected_list = list(e.control.selected)
             if selected_list:
                 self.current_tab = selected_list[0]
-                es_cli = self.current_tab == "clientes"
-                self._clientes_area.visible = es_cli
-                self._proveedores_area.visible = not es_cli
+                self._clientes_area.visible = self.current_tab == "clientes"
+                self._proveedores_area.visible = self.current_tab == "proveedores"
+                self._deudas_area.visible = self.current_tab == "deudas"
                 self.safe_update(e)
 
     def get_body(self) -> ft.Control:
@@ -86,16 +122,23 @@ class CarteraView(BaseView):
                     label=ft.Text("Proveedores", color=text_color, weight=ft.FontWeight.BOLD),
                     icon=ft.Icon(ft.Icons.BUSINESS_OUTLINED, color=accent),
                 ),
+                ft.Segment(
+                    value="deudas",
+                    label=ft.Text("Deudas por Cobrar", color=text_color, weight=ft.FontWeight.BOLD),
+                    icon=ft.Icon(ft.Icons.REQUEST_QUOTE_OUTLINED, color=accent),
+                ),
             ],
             on_change=self.handle_tab_change,
         )
 
-        # Construir ambas areas al inicio; alternar con visible
+        # Construir las tres areas al inicio; alternar con visible
         clientes_content = self.build_clientes_tab(accent, card_bg, text_color, subtext_color, border_color)
         proveedores_content = self.build_proveedores_tab(accent, card_bg, text_color, subtext_color, border_color)
+        deudas_content = self.build_deudas_tab(accent, card_bg, text_color, subtext_color, border_color)
 
         self._clientes_area = ft.Container(content=clientes_content, expand=True, visible=self.current_tab == "clientes")
         self._proveedores_area = ft.Container(content=proveedores_content, expand=True, visible=self.current_tab == "proveedores")
+        self._deudas_area = ft.Container(content=deudas_content, expand=True, visible=self.current_tab == "deudas")
 
         return ft.Column(
             controls=[
@@ -103,6 +146,7 @@ class CarteraView(BaseView):
                 ft.Divider(height=10, color=border_color),
                 self._clientes_area,
                 self._proveedores_area,
+                self._deudas_area,
             ],
             spacing=15,
             expand=True,
@@ -488,6 +532,358 @@ class CarteraView(BaseView):
         )
 
     # ==========================================
+    # PESTAÑA DEUDAS POR COBRAR
+    # ==========================================
+    def build_deudas_tab(self, accent, card_bg, text_color, subtext_color, border_color) -> ft.Control:
+        """Lista de Deudas por Cobrar (PDF del 17/10/2026, Nueva Función 2).
+
+        Muestra la misma información del Directorio General de Clientes más el
+        ítem acreditado, la fecha de creación de la deuda, la fecha límite de
+        pago y el usuario que la creó. El orden de filas es el que entrega
+        `listar_deudas()` —fecha límite ascendente, las más urgentes primero,
+        que es el orden en que hay que salir a cobrar— y no se reordena aquí.
+        """
+        # 1. Barra de búsqueda y filtro. La búsqueda la resuelve el servicio
+        # (cédula, nombre o ítem acreditado en una sola consulta), de modo que
+        # la vista nunca filtra listas en memoria.
+        self.deu_search = ft.TextField(
+            label="Buscar por Cédula/RIF, nombre o ítem acreditado",
+            hint_text="Ej: 12345678, Fulano o Filtro de aceite",
+            width=340,
+            color=text_color,
+            border_color=border_color,
+            focused_border_color=accent,
+            border_radius=12,
+            on_submit=self.handle_buscar_deudas,
+        )
+        btn_buscar_deu = ft.Button(
+            content="Buscar",
+            icon=ft.Icons.SEARCH,
+            style=ft.ButtonStyle(
+                bgcolor=accent,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12)
+            ),
+            on_click=self.handle_buscar_deudas,
+        )
+        btn_limpiar_deu = ft.OutlinedButton(
+            content="Limpiar",
+            icon=ft.Icons.CLEAR,
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+            on_click=self.handle_limpiar_busqueda_deudas,
+        )
+        # Arranca encendido: la ventana se llama "Deudas por Cobrar", y lo ya
+        # cobrado solo interesa como consulta puntual.
+        self.deu_solo_abiertas = ft.Switch(
+            label="Solo deudas abiertas",
+            value=True,
+            active_color=accent,
+            on_change=self.handle_filtro_deudas,
+        )
+
+        search_bar = self.create_card(
+            content=ft.Row([
+                self.deu_search,
+                btn_buscar_deu,
+                btn_limpiar_deu,
+                self.deu_solo_abiertas,
+            ], spacing=15, wrap=True, alignment=ft.MainAxisAlignment.START),
+            padding=10,
+            border_radius=16,
+        )
+
+        # 2. Total por cobrar: la cifra que el dueño quiere ver de un golpe.
+        self.txt_deu_total = ft.Text("", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
+        self.txt_deu_vencidas = ft.Text("", size=13, color=ft.Colors.RED_400, weight=ft.FontWeight.W_600)
+        total_card = self.create_card(
+            content=ft.Row([
+                ft.Row([
+                    ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, color=ft.Colors.GREEN_400, size=28),
+                    ft.Column([
+                        ft.Text("Total por Cobrar (saldos abiertos)", size=12, color=subtext_color),
+                        self.txt_deu_total,
+                    ], spacing=0, tight=True),
+                ], spacing=12),
+                self.txt_deu_vencidas,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            padding=15,
+            border_radius=16,
+        )
+
+        # 3. Tabla agrupada con paginación.
+        self.dt_deudas = ft.DataTable(
+            columns=self._columnas_deudas(accent, text_color),
+            rows=[],
+            data_row_min_height=72,
+            data_row_max_height=110,
+        )
+        self.txt_deu_pagination = ft.Text("", color=subtext_color, size=13)
+        self.cargar_tabla_deudas(text_color, accent, subtext_color)
+
+        btn_deu_prev = ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, on_click=self.deu_pagina_anterior)
+        btn_deu_next = ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, on_click=self.deu_pagina_siguiente)
+
+        pagination_bar = ft.Row(
+            controls=[
+                self.txt_deu_pagination,
+                ft.Row([btn_deu_prev, btn_deu_next], spacing=5),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+
+        return ft.Column(
+            controls=[
+                search_bar,
+                total_card,
+                ft.Container(height=5),
+                ft.Text("Deudas por Cobrar", size=18, weight=ft.FontWeight.BOLD, color=text_color),
+                self.create_card(
+                    content=ft.Column(
+                        controls=[
+                            # La tabla ya agrupa los datos por celda para que
+                            # entre a lo ancho; el `ScrollMode.AUTO` queda como
+                            # red de seguridad para pantallas muy angostas.
+                            ft.Row(controls=[self.dt_deudas], scroll=ft.ScrollMode.AUTO),
+                            pagination_bar,
+                        ],
+                    ),
+                    padding=10,
+                    border_radius=18,
+                ),
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
+            expand=True,
+        )
+
+    def _columnas_deudas(self, accent, text_color) -> list[ft.DataColumn]:
+        """Encabezados en el orden exacto del boceto del PDF."""
+        return [
+            ft.DataColumn(label=ft.Text(titulo, weight=ft.FontWeight.BOLD, color=text_color))
+            for titulo in self.COLUMNAS_DEUDAS
+        ]
+
+    @staticmethod
+    def _fecha_legible(iso: str) -> str:
+        """Convierte el ISO que ordena en SQLite al Día/Mes/Año que lee el
+        usuario venezolano."""
+        crudo = (iso or "").strip()[:10]
+        partes = crudo.split("-")
+        if len(partes) == 3 and len(partes[0]) == 4:
+            return f"{partes[2]}/{partes[1]}/{partes[0]}"
+        return crudo or "-"
+
+    def _celda_fecha_limite(self, deuda: dict, text_color, subtext_color) -> ft.Control:
+        """Fecha límite con el signo de exclamación (!) de la nota del PDF.
+
+        La marca de vencimiento se toma del campo `vencida` que ya calcula
+        `deudas_service`: la vista no vuelve a comparar fechas, para que no
+        existan dos reglas de vencimiento que puedan discrepar.
+        """
+        vencida = bool(deuda.get("vencida"))
+        pagada = (deuda.get("estado") or "") == deudas_service.ESTADO_PAGADA
+
+        encabezado = []
+        if vencida:
+            encabezado = [
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.RED_500, size=20),
+                ft.Text("!", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_500),
+            ]
+        encabezado.append(
+            ft.Text(
+                self._fecha_legible(deuda.get("fecha_limite_pago")),
+                size=13,
+                weight=ft.FontWeight.BOLD,
+                color=ft.Colors.RED_500 if vencida else text_color,
+            )
+        )
+
+        if vencida:
+            leyenda, color_leyenda = "VENCIDA", ft.Colors.RED_400
+        elif pagada:
+            leyenda, color_leyenda = "Pagada", ft.Colors.GREEN_400
+        else:
+            leyenda, color_leyenda = "Al día", subtext_color
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Row(encabezado, spacing=4),
+                ft.Text(leyenda, size=11, weight=ft.FontWeight.W_600, color=color_leyenda),
+            ], spacing=2, tight=True),
+            width=150,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+    def cargar_tabla_deudas(self, text_color, accent, subtext_color=None):
+        """Recarga las filas de la lista de Deudas por Cobrar.
+
+        "Monto a Cobrar" es el **saldo vivo** (`saldo_usd`), no el monto
+        original: lo que hay que cobrarle hoy al cliente es lo que queda
+        después de los abonos.
+        """
+        subtext_color = subtext_color or self.get_subtext_color()
+        todas = deudas_service.listar_deudas(
+            solo_abiertas=bool(getattr(self.deu_solo_abiertas, "value", True)),
+            busqueda=(getattr(self.deu_search, "value", "") or ""),
+        )
+
+        total_items = len(todas)
+        total_paginas = max(1, (total_items + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
+        if self.deu_page > total_paginas:
+            self.deu_page = total_paginas
+        if self.deu_page < 1:
+            self.deu_page = 1
+
+        start_idx = (self.deu_page - 1) * self.ITEMS_PER_PAGE
+        pagina_items = todas[start_idx:start_idx + self.ITEMS_PER_PAGE]
+
+        rows = []
+        for d in pagina_items:
+            celda_monto = ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"${float(d.get('saldo_usd') or 0):,.2f}",
+                        size=15, weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.RED_400 if d.get("vencida") else ft.Colors.GREEN_400,
+                    ),
+                    ft.Text(
+                        f"de ${float(d.get('monto_total_usd') or 0):,.2f} | abonado "
+                        f"${float(d.get('total_abonado_usd') or 0):,.2f}",
+                        size=11, color=subtext_color,
+                    ),
+                ], spacing=2, tight=True),
+                width=165,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_cliente = ft.Container(
+                content=ft.Column([
+                    ft.Container(
+                        content=ft.Text(d.get("cliente_id") or "-", size=11, weight=ft.FontWeight.W_600, color=accent),
+                        bgcolor=ft.Colors.with_opacity(0.12, accent),
+                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                        border_radius=6,
+                    ),
+                    ft.Text(
+                        d.get("cliente_nombre") or "-",
+                        size=13, weight=ft.FontWeight.BOLD, color=text_color,
+                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ], spacing=4, tight=True),
+                width=230,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_contacto = ft.Container(
+                content=ft.Column([
+                    ft.Text(d.get("cliente_telefono") or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
+                    ft.Text(
+                        d.get("cliente_correo") or "-",
+                        size=11, color=subtext_color,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ], spacing=2, tight=True),
+                width=170,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_ubicacion = ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        d.get("cliente_direccion") or "-",
+                        size=12, color=text_color,
+                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Text(
+                        d.get("cliente_contacto_secundario") or "-",
+                        size=11, color=subtext_color,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ], spacing=2, tight=True),
+                width=200,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_item = ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        d.get("items_descripcion") or "(sin detalle)",
+                        size=12, weight=ft.FontWeight.W_600, color=text_color,
+                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Text(f"{d.get('cantidad_items') or 0} renglón(es)", size=11, color=subtext_color),
+                ], spacing=2, tight=True),
+                width=200,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_origen = ft.Container(
+                content=ft.Column([
+                    ft.Text(self._fecha_legible(d.get("fecha_creacion")), size=12, color=text_color),
+                    ft.Text(d.get("usuario_nombre") or "-", size=11, weight=ft.FontWeight.W_600, color=subtext_color),
+                ], spacing=2, tight=True),
+                width=140,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            rows.append(
+                ft.DataRow(cells=[
+                    ft.DataCell(self._celda_fecha_limite(d, text_color, subtext_color)),
+                    ft.DataCell(celda_monto),
+                    ft.DataCell(celda_cliente),
+                    ft.DataCell(celda_contacto),
+                    ft.DataCell(celda_ubicacion),
+                    ft.DataCell(celda_item),
+                    ft.DataCell(celda_origen),
+                ])
+            )
+
+        self.dt_deudas.rows = rows
+        self.txt_deu_pagination.value = (
+            f"Página {self.deu_page} de {total_paginas} (Total: {total_items} deudas)"
+        )
+        self.txt_deu_total.value = f"${deudas_service.total_por_cobrar():,.2f}"
+        vencidas = sum(1 for d in todas if d.get("vencida"))
+        self.txt_deu_vencidas.value = (
+            f"! {vencidas} deuda(s) pasada(s) de su fecha límite" if vencidas else ""
+        )
+
+    def handle_buscar_deudas(self, e):
+        """Cualquier búsqueda nueva vuelve a la página 1: el usuario espera ver
+        el primer resultado, no la página en la que quedó."""
+        self.deu_page = 1
+        self.refrescar_deudas(e)
+
+    def handle_limpiar_busqueda_deudas(self, e):
+        self.deu_search.value = ""
+        self.deu_page = 1
+        self.refrescar_deudas(e)
+
+    def handle_filtro_deudas(self, e):
+        self.deu_page = 1
+        self.refrescar_deudas(e)
+
+    def refrescar_deudas(self, e=None):
+        """Recarga solo la lista de deudas, sin reconstruir ningún control."""
+        self.cargar_tabla_deudas(self.get_text_color(), self.get_accent_color(), self.get_subtext_color())
+        self.safe_update(e)
+
+    def deu_pagina_anterior(self, e):
+        if self.deu_page > 1:
+            self.deu_page -= 1
+            self.refrescar_deudas(e)
+
+    def deu_pagina_siguiente(self, e):
+        total = len(deudas_service.listar_deudas(
+            solo_abiertas=bool(self.deu_solo_abiertas.value),
+            busqueda=(self.deu_search.value or ""),
+        ))
+        total_paginas = max(1, (total + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
+        if self.deu_page < total_paginas:
+            self.deu_page += 1
+            self.refrescar_deudas(e)
+
+    # ==========================================
     # MANEJO DE EVENTOS BÚSQUEDA Y ACCIONES CLIENTES
     # ==========================================
     def handle_buscar_cliente(self, e):
@@ -821,6 +1217,10 @@ class CarteraView(BaseView):
             pass
         try:
             self.cargar_tabla_proveedores(text_color, accent)
+        except AttributeError:
+            pass
+        try:
+            self.cargar_tabla_deudas(text_color, accent, self.get_subtext_color())
         except AttributeError:
             pass
         self.safe_update(e)
