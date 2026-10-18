@@ -10,12 +10,19 @@ La vista se ejerce headless: se construye `CarteraView` contra la base
 temporal y se recorre el árbol de controles. `BaseView.setup_layout()` envuelve
 la construcción en un try/except que ante cualquier excepción pinta "Error al
 Cargar Módulo", así que un fallo de construcción no se nota si no se busca.
+
+La `PageFalsa` emula la API de pila de diálogos de Flet 0.86 (`show_dialog` /
+`pop_dialog`) para que los diálogos de Cobrar, Editar y Borrar recorran el
+mismo camino que en la aplicación: con el patrón heredado (`page.overlay` más
+la bandera `open`) Flet no llega a dibujar el cierre.
 """
+import asyncio
+
 import flet as ft
 import pytest
 
 from services.cartera_service import crear_cliente
-from services.deudas_service import crear_deuda, registrar_abono
+from services.deudas_service import crear_deuda, obtener_deuda, registrar_abono
 
 HOY = "2026-10-18"
 PASADO = "10/10/2026"
@@ -65,6 +72,96 @@ def _textos_celda(fila, columna: int) -> list[str]:
     return _textos(fila.cells[columna].content)
 
 
+def _boton_fila(fila, fragmento_tooltip: str):
+    """Localiza un botón de la columna de acciones por su tooltip."""
+    for control in _aplanar(fila.cells[-1].content):
+        tooltip = getattr(control, "tooltip", None)
+        if isinstance(tooltip, str) and fragmento_tooltip.lower() in tooltip.lower():
+            return control
+    raise AssertionError(f"No se encontró el botón '{fragmento_tooltip}' en la fila")
+
+
+def _campos_con_etiqueta(dialogo) -> dict:
+    """Campos de entrada del diálogo indexados por su etiqueta. En Flet 0.86
+    solo los controles de formulario tienen `label` de tipo texto."""
+    campos = {}
+    for control in _aplanar(dialogo.content):
+        etiqueta = getattr(control, "label", None)
+        if isinstance(etiqueta, str) and etiqueta:
+            campos[etiqueta] = control
+    return campos
+
+
+def _campo(dialogo, fragmento: str):
+    for etiqueta, control in _campos_con_etiqueta(dialogo).items():
+        if fragmento.lower() in etiqueta.lower():
+            return control
+    raise AssertionError(
+        f"No se encontró el campo '{fragmento}'; hay {list(_campos_con_etiqueta(dialogo))}"
+    )
+
+
+def _accion(dialogo, etiqueta: str):
+    """En Flet 0.86 el texto de un botón vive en `content`, no en `text`."""
+    for a in dialogo.actions:
+        texto = getattr(a, "text", None) or getattr(a, "content", None)
+        if isinstance(texto, str) and etiqueta.lower() in texto.lower():
+            return a
+    raise AssertionError(f"No se encontró la acción '{etiqueta}'")
+
+
+def _click(dialogo, etiqueta: str, evento):
+    resultado = _accion(dialogo, etiqueta).on_click(evento)
+    if asyncio.iscoroutine(resultado):
+        asyncio.run(resultado)
+
+
+def _snacks(pagina) -> list[str]:
+    """Mensajes de las notificaciones flotantes que la vista dejó en la página."""
+    mensajes = []
+    for control in pagina.overlay:
+        if isinstance(control, ft.SnackBar):
+            mensajes += _textos(control.content)
+    return mensajes
+
+
+class PageFalsa:
+    """Emula la pila de diálogos de `flet.BasePage`."""
+
+    def __init__(self):
+        self.dialogos = []   # equivale a page._dialogs.controls
+        self.overlay = []
+        self.updates = 0
+
+    def show_dialog(self, dialog):
+        if dialog in self.dialogos:
+            raise RuntimeError("Dialog is already opened")
+        dialog.open = True
+        self.dialogos.append(dialog)
+        self.updates += 1
+
+    def pop_dialog(self):
+        dlg = next((d for d in reversed(self.dialogos) if d.open), None)
+        if dlg is None:
+            return None
+        dlg.open = False
+        self.updates += 1
+        return dlg
+
+    def update(self):
+        self.updates += 1
+
+    @property
+    def visible(self):
+        """El diálogo que Flutter pinta: el último abierto de la pila."""
+        return next((d for d in reversed(self.dialogos) if d.open), None)
+
+
+class EventoFalso:
+    def __init__(self, page):
+        self.page = page
+
+
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -87,6 +184,16 @@ def vista(cliente):
 
         return CarteraView(user_data={"username": "cajera2", "role": "vendedor"})
     return _construir
+
+
+@pytest.fixture
+def pagina():
+    return PageFalsa()
+
+
+@pytest.fixture
+def evento(pagina):
+    return EventoFalso(pagina)
 
 
 # ─── La pestaña existe y se renderiza ────────────────────────────────────────
@@ -272,6 +379,164 @@ def test_el_buscador_filtra_por_cedula_nombre_o_item_acreditado(vista):
         v.deu_search.value = termino
         v.handle_buscar_deudas(None)
         assert len(v.dt_deudas.rows) == esperado, f"búsqueda '{termino}'"
+
+
+def test_la_ultima_columna_es_la_de_acciones(vista):
+    v = vista()
+    assert _etiquetas_columnas(v)[-1] == "Acciones"
+
+
+# ─── Botón Cobrar: abonos parciales ─────────────────────────────────────────
+
+def test_cobrar_abre_el_dialogo_con_el_saldo_pendiente_a_la_vista(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO, items=ITEMS)
+    registrar_abono(deuda["id"], 40.0)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+
+    assert pagina.visible is v._dialog, "el diálogo de cobro debe ser el visible"
+    textos = _textos(v._dialog.content)
+    assert any("Saldo pendiente" in t for t in textos)
+    assert "$60.00" in textos, f"el diálogo debe mostrar el saldo vivo: {textos}"
+
+
+def test_el_dialogo_de_cobro_muestra_el_historial_de_abonos(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    registrar_abono(deuda["id"], 25.0, metodo_pago="Pago Móvil", referencia_pago="0099887766")
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+
+    textos = _textos(v._dialog.content)
+    assert any("Historial de abonos" in t for t in textos)
+    assert any("Pago Móvil" in t and "25.00" in t for t in textos)
+    assert any("0099887766" in t for t in textos)
+
+
+def test_el_dialogo_de_cobro_pide_monto_metodo_y_referencia(vista, pagina, evento):
+    crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    etiquetas = list(_campos_con_etiqueta(v._dialog))
+
+    assert any("Monto a Abonar" in t for t in etiquetas)
+    assert any("Método de Pago" in t for t in etiquetas)
+    assert any("Referencia" in t and "opcional" in t for t in etiquetas)
+
+
+def test_cobrar_registra_el_abono_parcial_y_refresca_la_lista(vista, pagina, evento):
+    """El saldo baja, la deuda sigue abierta y la lista ya muestra el saldo
+    nuevo sin que el usuario tenga que recargar nada."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    _campo(v._dialog, "Monto a Abonar").value = "30"
+    dlg = v._dialog
+    _click(dlg, "Registrar Abono", evento)
+
+    guardada = obtener_deuda(deuda["id"])
+    assert guardada["saldo_usd"] == 70.0
+    assert guardada["estado"] == "abierta"
+    assert dlg.open is False, "el diálogo debe cerrarse tras un abono exitoso"
+    assert pagina.visible is None
+    assert "$70.00" in _textos_celda(_fila(v, 0), 1), "la lista debe mostrar el saldo nuevo"
+
+
+def test_el_abono_queda_firmado_con_el_usuario_de_la_sesion(vista, pagina, evento):
+    """"Desde qué cuenta de usuario se cobró" es lo que vuelve auditable la
+    caja chica de los fiados."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    _campo(v._dialog, "Monto a Abonar").value = "30"
+    _click(v._dialog, "Registrar Abono", evento)
+
+    assert obtener_deuda(deuda["id"])["abonos"][0]["usuario_nombre"] == "cajera2"
+
+
+def test_el_abono_final_cierra_la_deuda_y_deshabilita_el_boton_cobrar(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+    v.deu_solo_abiertas.value = False
+    v.refrescar_deudas(evento)
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    _campo(v._dialog, "Monto a Abonar").value = "100"
+    _click(v._dialog, "Registrar Abono", evento)
+
+    assert obtener_deuda(deuda["id"])["estado"] == "pagada"
+    assert _boton_fila(_fila(v, 0), "pagada").disabled is True
+    assert any("PAGADA" in m for m in _snacks(pagina))
+
+
+def test_un_abono_superior_al_saldo_muestra_el_error_y_no_rompe_la_vista(vista, pagina, evento):
+    """Un cobro de más es un error de tipeo: el servicio lo rechaza con
+    ERR_DEUDA_ABONO y la vista lo muestra dejando el diálogo abierto, con lo
+    que el usuario escribió, en vez de reventar."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    dlg = v._dialog
+    _campo(dlg, "Monto a Abonar").value = "150"
+    _click(dlg, "Registrar Abono", evento)
+
+    assert obtener_deuda(deuda["id"])["saldo_usd"] == 100.0, "no debe registrarse nada"
+    assert dlg.open is True, "el diálogo debe seguir abierto para corregir el monto"
+    assert pagina.visible is dlg
+    assert any("ERR_DEUDA_ABONO" in m for m in _snacks(pagina))
+    assert "$100.00" in _textos_celda(_fila(v, 0), 1)
+
+
+def test_un_monto_ilegible_muestra_el_error_del_servicio(vista, pagina, evento):
+    crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    _campo(v._dialog, "Monto a Abonar").value = "diez dólares"
+    _click(v._dialog, "Registrar Abono", evento)
+
+    assert any("ERR_DEUDA_MONTO" in m for m in _snacks(pagina))
+    assert v._dialog.open is True
+
+
+def test_cancelar_el_cobro_no_registra_nada_y_vacia_la_pila(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    dlg = v._dialog
+    _campo(dlg, "Monto a Abonar").value = "30"
+    _click(dlg, "Cancelar", evento)
+
+    assert obtener_deuda(deuda["id"])["saldo_usd"] == 100.0
+    assert pagina.visible is None, "no debe quedar ningún diálogo dibujado"
+    assert v._dialog_stack == []
+
+
+def test_abonar_todo_el_saldo_precarga_el_monto_pendiente(vista, pagina, evento):
+    """El campo nace vacío a propósito (un campo pre-cargado invita a cerrar de
+    un clic una deuda que solo se abonó en parte); cobrar el total es una
+    acción explícita."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    registrar_abono(deuda["id"], 40.0)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Cobrar").on_click(evento)
+    campo = _campo(v._dialog, "Monto a Abonar")
+    assert (campo.value or "") == ""
+
+    botones = [
+        c for c in _aplanar(v._dialog.content)
+        if isinstance(getattr(c, "content", None), str) and "todo el saldo" in c.content
+    ]
+    assert botones, "debe haber un botón para abonar todo el saldo"
+    botones[0].on_click(evento)
+    assert campo.value == "60.00"
 
 
 def test_buscar_vuelve_a_la_primera_pagina(vista):
