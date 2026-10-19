@@ -431,3 +431,57 @@ def test_las_acciones_sin_equivalente_devuelven_falso(vista, evento, accion):
     _marcar(vista, "TEC-001", evento)
 
     assert vista.ejecutar_accion_sobre_seleccionado(accion, evento) is False
+
+
+# ─── 6. Las etiquetas de los atajos, a la vista ──────────────────────────────
+# "Que los nombres de los atajos sean visibles en la pantalla para siempre ser
+# consciente de ellos": la etiqueta tiene que estar DIBUJADA junto al ícono y
+# no solo en el tooltip, que hay que ir a buscar con el mouse.
+
+def _boton_accion(vista, codigo, indice):
+    from tests.test_ventas_marcador_carrito import _botones_accion
+
+    return _botones_accion(_fila(vista, codigo))[indice]
+
+
+def _etiquetas_visibles(boton) -> list[str]:
+    return [c.value for c in boton.content.controls if isinstance(c, ft.Text)]
+
+
+@pytest.mark.parametrize("indice,tecla", [(0, "F5"), (1, "F6")])
+def test_los_botones_de_editar_y_quitar_muestran_su_tecla_en_pantalla(vista, indice, tecla):
+    assert _etiquetas_visibles(_boton_accion(vista, "TEC-001", indice)) == [tecla]
+
+
+@pytest.mark.parametrize("indice,tecla", [(0, "F5"), (1, "F6")])
+def test_el_tooltip_tambien_nombra_la_tecla(vista, indice, tecla):
+    assert f"({tecla})" in (_boton_accion(vista, "TEC-001", indice).tooltip or "")
+
+
+def test_las_etiquetas_salen_del_mapeo_canonico_y_no_de_un_literal(vista):
+    """Si mañana se corriera la numeración en `teclado_nav`, la pantalla tiene
+    que seguirla sola: un "F5" escrito a mano aquí se quedaría mintiendo."""
+    from ui.components.teclado_nav import etiqueta_atajo
+
+    assert _etiquetas_visibles(_boton_accion(vista, "TEC-001", 0)) == [etiqueta_atajo("editar")]
+    assert _etiquetas_visibles(_boton_accion(vista, "TEC-001", 1)) == [etiqueta_atajo("borrar")]
+
+
+def test_la_etiqueta_se_pinta_del_mismo_color_que_su_icono(vista):
+    """Así se lee en modo claro y en modo oscuro sin un color propio que haya
+    que quedarse corrigiendo en dos sitios."""
+    for indice in (0, 1):
+        boton = _boton_accion(vista, "TEC-001", indice)
+        icono = next(c for c in boton.content.controls if isinstance(c, ft.Icon))
+        texto = next(c for c in boton.content.controls if isinstance(c, ft.Text))
+        assert texto.color == icono.color
+
+
+def test_la_etiqueta_sigue_estando_en_un_boton_deshabilitado(vista, evento):
+    """El atajo no deja de existir porque el renglón no sea el marcado: lo que
+    cambia es el color, no la información."""
+    _marcar(vista, "TEC-002", evento)
+
+    boton = _boton_accion(vista, "TEC-001", 0)
+    assert boton.disabled is True
+    assert _etiquetas_visibles(boton) == ["F5"]

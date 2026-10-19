@@ -9,6 +9,8 @@ from ui.components.teclado_nav import (
     ATAJOS_ITEM,
     ControlTeclado,
     RegistroFoco,
+    etiqueta_atajo,
+    tooltip_con_atajo,
 )
 from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
@@ -2006,31 +2008,55 @@ class VentasView(BaseView):
         border = self.get_border_color()
         card_bg = self.get_card_bg()
 
-        def boton_accion(accion: str, item: dict, icono, color, descripcion: str):
-            """Botón del renglón, cableado al punto de entrada único
-            (`ejecutar_accion_item`) para que la tecla y el mouse recorran
-            exactamente el mismo camino.
+        # El rojo del botón de quitar se elige por tema: RED_400 se lee bien
+        # sobre el fondo oscuro pero pierde contraste sobre el blanco del modo
+        # claro, y la etiqueta "F6" va escrita en ese mismo color.
+        rojo_accion = ft.Colors.RED_400 if self.is_dark else ft.Colors.RED_700
 
-            `disabled` es la mitad VISIBLE de la regla del marcador: con otro
-            renglón marcado el botón se ve apagado y el tooltip dice por qué,
-            en vez de aceptar el clic y no hacer nada (un botón que ignora en
-            silencio se lee como un cuelgue de la aplicación).
+        def boton_accion(accion: str, item: dict, icono, color, descripcion: str):
+            """Botón del renglón, con su atajo A LA VISTA y cableado al punto
+            de entrada único (`ejecutar_accion_item`) para que la tecla y el
+            mouse recorran exactamente el mismo camino.
+
+            Dos cosas que no son adorno:
+            - La etiqueta de la tecla se dibuja junto al ícono y no solo en el
+              tooltip. El requisito es que los nombres de los atajos estén en
+              pantalla para "siempre ser consciente de ellos", y un tooltip
+              hay que ir a buscarlo con el mouse: un atajo que solo vive ahí
+              no se aprende nunca. Va en 9pt, con el color del ícono, para que
+              la fila siga entrando a lo ancho y el texto se lea en los dos
+              temas.
+            - `disabled` es la mitad VISIBLE de la regla del marcador: con otro
+              renglón marcado el botón se ve apagado y el tooltip dice por qué,
+              en vez de aceptar el clic y no hacer nada (un botón que ignora en
+              silencio se lee como un cuelgue de la aplicación).
             """
             cod = item["codigo"]
             habilitado = self._seleccion.puede_accionar(cod)
-            return ft.IconButton(
-                icon=icono,
-                icon_color=color if habilitado else subtext,
+            color_visible = color if habilitado else subtext
+            tooltip = tooltip_con_atajo(descripcion, accion)
+            return ft.TextButton(
+                content=ft.Row(
+                    [
+                        ft.Icon(icono, size=17, color=color_visible),
+                        ft.Text(
+                            etiqueta_atajo(accion), size=9,
+                            weight=ft.FontWeight.BOLD, color=color_visible,
+                        ),
+                    ],
+                    spacing=2, tight=True,
+                ),
                 disabled=not habilitado,
-                tooltip=descripcion if habilitado else f"{descripcion} — {self._AVISO_OTRO_MARCADO}",
+                tooltip=tooltip if habilitado else f"{tooltip} — {self._AVISO_OTRO_MARCADO}",
+                style=ft.ButtonStyle(padding=4),
                 on_click=lambda e, a=accion, c=cod: self.ejecutar_accion_item(a, c, e),
             )
 
         def celda_acciones(item, cod):
             return ft.Row([
                 boton_accion("editar", item, ft.Icons.EDIT_OUTLINED, accent, "Editar cantidad o precio"),
-                boton_accion("borrar", item, ft.Icons.DELETE_OUTLINED, ft.Colors.RED_400, "Remover ítem"),
-            ], spacing=0)
+                boton_accion("borrar", item, ft.Icons.DELETE_OUTLINED, rojo_accion, "Remover ítem"),
+            ], spacing=0, tight=True)
 
         def celda_cantidad(item):
             # Los +/- son parte de lo que el renglón puede accionar, así que

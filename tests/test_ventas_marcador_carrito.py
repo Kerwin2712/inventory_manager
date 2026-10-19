@@ -144,11 +144,13 @@ def _icono_casilla(fila: ft.DataRow) -> ft.Icon:
     return fila.cells[0].content.content
 
 
-def _botones_accion(fila: ft.DataRow) -> list[ft.IconButton]:
+def _botones_accion(fila: ft.DataRow) -> list[ft.TextButton]:
+    """Editar y Quitar, en ese orden. Son `TextButton` y no `IconButton`
+    porque llevan la etiqueta del atajo escrita junto al ícono."""
     contenido = fila.cells[-1].content
     if isinstance(contenido, ft.Container):  # el modo agrupado envuelve la celda
         contenido = contenido.content
-    return [c for c in contenido.controls if isinstance(c, ft.IconButton)]
+    return [c for c in contenido.controls if isinstance(c, ft.TextButton)]
 
 
 def _botones_cantidad(fila: ft.DataRow) -> list[ft.IconButton]:
