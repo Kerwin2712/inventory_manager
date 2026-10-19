@@ -103,7 +103,14 @@ class DashboardView(BaseView):
             main_content = ventas_view.get_body()
 
         elif self.current_section == "Cartera":
-            cartera_view = CarteraView(on_iniciar_venta=self.iniciar_venta_desde_cartera)
+            # `user_data` no es decorativo: su nombre de usuario viaja a cada
+            # abono de una deuda (`deuda_abonos.usuario_nombre`) para que
+            # quede constancia de quién cobró. Sin pasarlo, los cobros se
+            # registran sin firma.
+            cartera_view = CarteraView(
+                on_iniciar_venta=self.iniciar_venta_desde_cartera,
+                user_data=self.user_info,
+            )
             try:
                 if self.page:
                     cartera_view.page = self.page
