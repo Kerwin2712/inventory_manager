@@ -118,6 +118,47 @@ La **Copia de Seguridad incluye ahora los costos y el sub-departamento**, con lo
 
 ---
 
+---
+
+## Verificación en la Aplicación Corriendo: el Teclado Congelaba el Programa - 18/10/2026
+
+- **Responsable:** Claude (IA Coding Assistant).
+- **Motivo:** El usuario probó la entrega en la aplicación real y reportó dos cosas: que el Inventario "no deja seleccionar varios ítems al mismo tiempo", y que en Ventas, al pulsar F5 sobre un renglón marcado, la aplicación quedaba inservible —"se ve como el fondo negro", el botón Cancelar no respondía, y había que cerrar el programa para volver a usarlo—.
+- **Método:** Se levantó la aplicación en modo servidor web contra una **base desechable** en un directorio temporal (`DATABASE_PATH` forzado antes de importar `core.config`, que resuelve la ruta en tiempo de importación); la base real del usuario en `%APPDATA%` no se leyó ni se modificó. El flujo se condujo desde el navegador y se instrumentó el teclado desde el lanzador, sin tocar el código del proyecto.
+
+### El defecto: un ciclo en la cadena de manejadores de teclado
+
+La sonda mostró el problema de inmediato: **una sola pulsación de F5 disparaba 247 invocaciones del manejador y apilaba 120 diálogos**, alternando entre la vista de Ventas y el Dashboard.
+
+La causa está en cómo se encadenan los controles de teclado. Cada vista guarda el manejador anterior de la página para cedérselo, porque comparten la página y nadie puede quedarse con el teclado en exclusiva. El Dashboard, en cambio, es **una sola instancia que vuelve a instalarse al final de cada repintado**, y para entonces el teclado lo tiene la vista que acaba de construir, cuya cadena ya apunta al Dashboard. Resultado: `Dashboard → Ventas → Dashboard → …`, un ciclo.
+
+La guarda de identidad que ya existía no lo evitaba porque solo contemplaba el caso de una vista relevando a **otra instancia de sí misma**, no un ciclo entre vistas distintas. Ese es el punto a recordar: la identidad resolvía el crecimiento lineal de la cadena, no su circularidad.
+
+Se corrigió en dos capas, a propósito:
+
+1. **`instalar()` sale de la cadena vigente antes de ponerse al frente.** Se recorre la cadena y, si este control ya está en ella, se empalma el eslabón de más abajo y queda fuera. El recorrido lleva un conjunto de controles ya vistos: si la cadena venía ciclada, hay que cortar igual y no quedarse dando vueltas al intentar repararla.
+2. **Guarda de reentrada en `manejar()`.** La primera capa ya impide el ciclo, pero el precio de equivocarse aquí no es lentitud: es la ventana congelada y el programa cerrado a la fuerza. Ante la duda, una tecla ignorada.
+
+Verificado en la aplicación: de **247 invocaciones a 2** (la vista y el Dashboard, una vez cada uno), un solo diálogo, y Cancelar cierra. Se comprobó también en Inventario (F1, F6 y las flechas) y en el Dashboard: una invocación por vista y por tecla, sin bucles en ninguna parte.
+
+### Pila de diálogos desincronizada (hallazgo del mismo camino)
+
+Al revisar por qué un F6 falló una vez tras cerrar otro diálogo, apareció que **varios `AlertDialog` no son `modal=True`**, de modo que Flet los descarta cuando el usuario toca fuera, y **ninguna vista escuchaba `on_dismiss`**. La lista de diálogos de la vista quedaba con un fantasma, el tope que creía tener dejaba de ser el que Flet tenía, y el siguiente cierre descartaba el diálogo equivocado: el usuario pulsa Cancelar, no se cierra nada visible y la pantalla parece colgada. Es el mismo síntoma que ya costó una corrección en septiembre, por otro camino.
+
+`ui/components/pila_dialogos.py` sincroniza ambas listas enganchando `on_dismiss`, conservando el que el diálogo ya tuviera. No llama a `pop_dialog()`: para cuando ese manejador corre, Flet ya cerró el diálogo, y llamarlo otra vez cerraría el de abajo — justo el error que el módulo existe para evitar.
+
+### La selección múltiple no era un defecto, era invisible
+
+La función estaba completa y funcionando; lo que faltaba era **encontrarla**. El conmutador era un ícono gris sin texto, pegado a la leyenda "Sin selección", y en esa posición se lee como un indicador de estado y no como algo que se pueda pulsar. Ahora es un botón con borde y etiqueta —"Selección múltiple" / "Salir de selección múltiple"— que dice en qué modo está y qué hace el próximo clic, en vez de limitarse a cambiar de color.
+
+Queda como criterio para lo que venga: **una función que existe pero nadie descubre es una función que no existe**, y por eso la etiqueta visible va cubierta por tests igual que el comportamiento.
+
+### Por qué los tests no lo detectaron
+
+Los dobles de página headless montan **un solo** control de teclado por prueba. El ciclo necesita dos vistas y un repintado del contenedor, que es precisamente lo que la aplicación hace todo el tiempo y el doble no hacía nunca. Los tests nuevos reproducen esa secuencia —vista anidada, contenedor, repintado— y miden lo que importa: **cuántas veces se ejecuta la acción por pulsación**, no cuántos eslabones tiene la cadena.
+
+---
+
 ### Pendientes conocidos
 
 - **`proveedor_id` se pierde en el camino del asistente de mapeo** de la importación: ese camino solo tiene el nombre del proveedor, no su ID. El camino heurístico sí lo preserva, porque el respaldo exporta la columna.
