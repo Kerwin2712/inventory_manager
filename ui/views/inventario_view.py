@@ -68,6 +68,11 @@ class InventarioView(BaseView):
         self._form_codigo_verificado = False
         self._editing_codigo: str | None = None
 
+        # Nombres con los que los campos de cada diálogo quedaron anotados en
+        # el registro de foco, para poder soltarlos al cerrarlo (ver
+        # `_soltar_campos_de_dialogo`).
+        self._campos_por_dialogo: dict[int, tuple[str, ...]] = {}
+
         # ── Pila de diálogos abiertos (el tope es el activo) ─────────────────
         # Es una PILA y no una única referencia porque un diálogo puede abrir
         # otro encima (p. ej. el aviso de código duplicado sobre el paso 1): al
@@ -171,6 +176,77 @@ class InventarioView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
 
+    # =========================================================================
+    # REGISTRO DE FOCO DE LOS CAMPOS DE TEXTO
+    # =========================================================================
+    # Las flechas navegan SOLO cuando ningún campo de texto tiene el foco: con
+    # el cursor dentro de un campo deben mover el cursor, como en cualquier
+    # programa. Flet no expone un "¿quién tiene el foco?" global, así que cada
+    # campo avisa al tomarlo y al soltarlo (`RegistroFoco.enlazar`). Un campo
+    # sin enlazar no es un detalle estético: mientras el usuario escribe en él,
+    # las flechas le mueven la pantalla, que es justo lo que la regla evita.
+    #
+    # Los campos de los DIÁLOGOS se enlazan recorriendo el diálogo al apilarlo
+    # y no uno por uno: casi todos son variables locales de la función que los
+    # construye —incluidos los de los filtros avanzados, que viven en
+    # `ui/components/multi_select_filter.py`, y los del selector de
+    # departamentos—, así que una lista escrita a mano se quedaría corta con el
+    # próximo diálogo que se agregue, y el síntoma (la pantalla moviéndose al
+    # escribir) no apunta al campo olvidado.
+
+    # Atributos por los que se desciende buscando campos. `content`, `title` y
+    # `label` pueden traer un texto plano en vez de un control, y de ahí no se
+    # baja (`str` no tiene hijos).
+    _ATRIBUTOS_CON_HIJOS = ("controls", "actions", "content", "title", "label")
+
+    @classmethod
+    def _campos_de_texto(cls, control, _vistos=None):
+        """Recorre el árbol de `control` y entrega sus `ft.TextField`."""
+        if _vistos is None:
+            _vistos = set()
+        if control is None or isinstance(control, str) or id(control) in _vistos:
+            return
+        _vistos.add(id(control))
+        if isinstance(control, ft.TextField):
+            yield control
+        for attr in cls._ATRIBUTOS_CON_HIJOS:
+            hijo = getattr(control, attr, None)
+            if isinstance(hijo, (list, tuple)):
+                for nieto in hijo:
+                    yield from cls._campos_de_texto(nieto, _vistos)
+            else:
+                yield from cls._campos_de_texto(hijo, _vistos)
+
+    def _enlazar_campos(self, control, etiqueta: str) -> tuple[str, ...]:
+        """Anota en el registro de foco cada campo de texto de `control`.
+
+        El nombre lleva `id()` porque dos campos pueden compartir etiqueta (dos
+        diálogos con un "Mínimo" cada uno) y el registro distingue por nombre:
+        con nombres repetidos, el `on_blur` de uno soltaría el foco del otro.
+        """
+        nombres = []
+        for i, campo in enumerate(self._campos_de_texto(control)):
+            nombre = f"{etiqueta}:{campo.label or i}:{id(campo):x}"
+            self._teclado.foco.enlazar(campo, nombre)
+            nombres.append(nombre)
+        return tuple(nombres)
+
+    def _enlazar_campos_de_dialogo(self, dialog) -> tuple[str, ...]:
+        nombres = self._enlazar_campos(dialog, "dialogo")
+        self._campos_por_dialogo[id(dialog)] = nombres
+        return nombres
+
+    def _soltar_campos_de_dialogo(self, dialog) -> None:
+        """Olvida los campos de un diálogo que se cierra.
+
+        Al cerrarse, el diálogo desaparece sin que sus campos lleguen a emitir
+        `on_blur`: sin soltarlos a mano, el registro se queda creyendo que hay
+        un campo con el foco y las flechas dejan de navegar PARA SIEMPRE, sin
+        nada en pantalla que explique por qué.
+        """
+        for nombre in self._campos_por_dialogo.pop(id(dialog), ()):
+            self._teclado.foco.soltar(nombre)
+
     @property
     def _dialog(self) -> "ft.AlertDialog | None":
         """Diálogo activo (tope de la pila) o `None` si no hay ninguno."""
@@ -192,6 +268,7 @@ class InventarioView(BaseView):
             return
         if dialog in self._dialog_stack:
             self._dialog_stack.remove(dialog)
+        self._soltar_campos_de_dialogo(dialog)
 
         p = self._get_page(e)
         if p is not None and hasattr(p, "pop_dialog"):
@@ -221,6 +298,9 @@ class InventarioView(BaseView):
         if dialog not in self._dialog_stack:
             self._dialog_stack.append(dialog)
         dialog.open = True
+        # Mientras el cursor esté en un campo de este diálogo, las flechas son
+        # del cursor y no de la lista de abajo.
+        self._enlazar_campos_de_dialogo(dialog)
 
         p = self._get_page(e)
         if p is None:
@@ -333,16 +413,21 @@ class InventarioView(BaseView):
         )
         self._lbl_tasa_icon = ft.Icon(ind_icon, color=ind_color, size=18)
 
-        self._inp_nueva_tasa = ft.TextField(
-            label="Nueva tasa (Bs/$)",
-            hint_text="Ej: 50.35",
-            width=180,
-            keyboard_type=ft.KeyboardType.NUMBER,
-            color=text_color,
-            border_color=border,
-            focused_border_color=accent,
-            border_radius=12,
-            on_submit=self._handle_actualizar_tasa,
+        # Enlazado al registro de foco: escribir una tasa no debe desplazar la
+        # lista de abajo (ver "REGISTRO DE FOCO DE LOS CAMPOS DE TEXTO").
+        self._inp_nueva_tasa = self._teclado.foco.enlazar(
+            ft.TextField(
+                label="Nueva tasa (Bs/$)",
+                hint_text="Ej: 50.35",
+                width=180,
+                keyboard_type=ft.KeyboardType.NUMBER,
+                color=text_color,
+                border_color=border,
+                focused_border_color=accent,
+                border_radius=12,
+                on_submit=self._handle_actualizar_tasa,
+            ),
+            "tasa_bcv",
         )
 
         btn_act_tasa = ft.Button(
@@ -397,13 +482,19 @@ class InventarioView(BaseView):
         # Descripción, Marca, Código de Barras y Nombre Corto (búsqueda por
         # palabras independientes con AND), en lugar de seis cajas de texto
         # separadas — minimiza el espacio ocupado sin perder cobertura.
-        self._f_busqueda = ft.TextField(
-            label="Buscar código, referencia, descripción, marca...",
-            hint_text="Escriba cualquier término y los resultados se filtran al instante",
-            expand=True,
-            color=text_color, border_color=border, focused_border_color=accent,
-            border_radius=12, prefix_icon=ft.Icons.SEARCH,
-            on_change=self._handle_filtro_change,
+        # El buscador es EL campo donde más tiempo está el cursor en esta
+        # pantalla: sin enlazarlo al registro de foco, corregir un término de
+        # búsqueda le desplazaría la lista al usuario mientras escribe.
+        self._f_busqueda = self._teclado.foco.enlazar(
+            ft.TextField(
+                label="Buscar código, referencia, descripción, marca...",
+                hint_text="Escriba cualquier término y los resultados se filtran al instante",
+                expand=True,
+                color=text_color, border_color=border, focused_border_color=accent,
+                border_radius=12, prefix_icon=ft.Icons.SEARCH,
+                on_change=self._handle_filtro_change,
+            ),
+            "busqueda",
         )
 
         # Filtros de selección múltiple con buscador (departamento, marca,
@@ -1511,6 +1602,7 @@ class InventarioView(BaseView):
                 from services.cart_manager import cambiar_carrito_activo
                 c_act, _ = agregar_o_actualizar_producto(sid, prod, cantidad=cant, id_carrito=c_carrito["id"])
                 cambiar_carrito_activo(sid, c_carrito["id"])
+                self._soltar_campos_de_dialogo(dlg)
                 dlg.open = False
                 p.update()
 
@@ -1538,6 +1630,7 @@ class InventarioView(BaseView):
                 p.update()
 
         def cerrar(ev_close):
+            self._soltar_campos_de_dialogo(dlg)
             dlg.open = False
             p.update()
 
@@ -1574,6 +1667,11 @@ class InventarioView(BaseView):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN
         )
 
+        # Este diálogo es el único del módulo que todavía se monta a mano en el
+        # `overlay` en vez de pasar por `_open_dialog`, así que sus campos
+        # (cantidad, cédula del cliente, datos del cliente nuevo) hay que
+        # enlazarlos y soltarlos aquí mismo.
+        self._enlazar_campos_de_dialogo(dlg)
         if dlg not in p.overlay:
             p.overlay.append(dlg)
         dlg.open = True

@@ -476,3 +476,124 @@ def test_f6_con_la_clave_correcta_borra_el_item_marcado(vista_con_sesion, pagina
 
     assert _existe("ATA-002") is False
     assert _existe("ATA-001"), "solo se borra el ítem marcado"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# La regla del foco: con el cursor en un campo, las flechas son del cursor
+# ─────────────────────────────────────────────────────────────────────────────
+def _campos_de(control):
+    from ui.views.inventario_view import InventarioView
+
+    return list(InventarioView._campos_de_texto(control))
+
+
+def test_el_buscador_esta_enlazado_al_registro_de_foco(vista):
+    assert vista._f_busqueda.on_focus is not None
+    assert vista._f_busqueda.on_blur is not None
+
+
+def test_el_campo_de_la_tasa_bcv_esta_enlazado(vista):
+    assert vista._inp_nueva_tasa.on_focus is not None
+    assert vista._inp_nueva_tasa.on_blur is not None
+
+
+def test_con_el_buscador_enfocado_las_flechas_no_desplazan(vista, destinos, pagina, evento):
+    """Si el cursor está en el buscador, las flechas mueven el cursor como en
+    cualquier programa: nadie espera que al corregir una palabra se le mueva
+    la pantalla."""
+    vista._f_busqueda.on_focus(evento)
+
+    for tecla in ("Arrow Down", "Arrow Up", "Arrow Left", "Arrow Right"):
+        _pulsar(vista, pagina, tecla)
+
+    assert destinos["vertical"].llamadas == []
+    assert destinos["horizontal"].llamadas == []
+
+
+def test_al_soltar_el_campo_las_flechas_vuelven_a_navegar(vista, destinos, pagina, evento):
+    vista._f_busqueda.on_focus(evento)
+    vista._f_busqueda.on_blur(evento)
+
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert destinos["vertical"].llamadas, "sin campo enfocado las flechas navegan"
+
+
+def test_dos_campos_enfocados_en_desorden_no_liberan_la_navegacion(vista, destinos, pagina, evento):
+    """Flet puede entregar el `on_focus` del campo nuevo antes del `on_blur`
+    del anterior: el registro lleva un conjunto, así que el cruce no deja la
+    navegación suelta con el cursor todavía dentro de un campo."""
+    vista._f_busqueda.on_focus(evento)
+    vista._inp_nueva_tasa.on_focus(evento)
+    vista._f_busqueda.on_blur(evento)
+
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert destinos["vertical"].llamadas == []
+
+
+# ── Los campos de los diálogos del flujo de ingreso / edición ───────────────
+def test_los_campos_del_paso_1_quedan_enlazados(vista, evento):
+    vista._abrir_flujo_ingreso(evento)
+
+    campos = _campos_de(vista._dialog)
+    assert campos, "el paso 1 tiene el campo del código"
+    assert all(c.on_focus is not None and c.on_blur is not None for c in campos)
+
+
+def test_los_campos_del_formulario_completo_quedan_enlazados(vista, evento):
+    """El paso 2 es el diálogo con más campos de la vista, y los del selector
+    de departamentos vienen de otro componente: el recorrido del diálogo los
+    alcanza igual."""
+    vista._abrir_flujo_edicion("ATA-001", evento)
+
+    campos = _campos_de(vista._dialog)
+    assert len(campos) >= 10, f"solo se encontraron {len(campos)} campos"
+    sin_enlazar = [c.label for c in campos if c.on_focus is None or c.on_blur is None]
+    assert sin_enlazar == [], f"campos sin enlazar: {sin_enlazar}"
+
+
+def test_el_campo_de_la_clave_de_borrado_queda_enlazado(vista_con_sesion, evento):
+    """Escribir la clave no puede desplazar la lista de atrás."""
+    vista_con_sesion._confirmar_eliminar("ATA-001", evento)
+
+    campo = _componente_clave(vista_con_sesion).campo
+    assert campo.on_focus is not None and campo.on_blur is not None
+
+
+def test_los_campos_de_un_filtro_avanzado_quedan_enlazados(vista, evento):
+    """Los campos de los filtros de rango son variables locales de
+    `ui/components/multi_select_filter.py`: se alcanzan porque el diálogo pasa
+    por `_open_dialog`, no porque esta vista los enumere."""
+    vista._rf_existencia._abrir(evento)
+
+    campos = _campos_de(vista._dialog)
+    assert len(campos) == 2, "mínimo y máximo"
+    assert all(c.on_focus is not None and c.on_blur is not None for c in campos)
+
+
+def test_cerrar_un_dialogo_suelta_sus_campos(vista, destinos, pagina, evento):
+    """El diálogo se va sin que sus campos emitan `on_blur`: si no se sueltan,
+    el registro queda creyendo que hay un campo con el foco y las flechas no
+    vuelven a navegar nunca."""
+    vista._abrir_flujo_ingreso(evento)
+    campo = _campos_de(vista._dialog)[0]
+    campo.on_focus(evento)
+    assert vista._teclado.foco.hay_campo_con_foco is True
+
+    vista._cancelar_flujo_formulario(evento)
+
+    assert vista._teclado.foco.hay_campo_con_foco is False
+    _pulsar(vista, pagina, "Arrow Down")
+    assert destinos["vertical"].llamadas, "la navegación debe volver al cerrar"
+
+
+def test_las_teclas_de_funcion_si_actuan_con_un_campo_enfocado(vista, espia_acciones, pagina, evento):
+    """Con el foco en un campo, F1..F6 no editan nada, así que sí pueden
+    accionar: lo que no puede faltar es el ítem marcado."""
+    vista.seleccionar_item("ATA-001", evento)
+    vista._f_busqueda.on_focus(evento)
+
+    _pulsar(vista, pagina, "F1")
+
+    assert espia_acciones == [("info", "ATA-001")]
