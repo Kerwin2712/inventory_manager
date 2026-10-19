@@ -539,6 +539,102 @@ def test_abonar_todo_el_saldo_precarga_el_monto_pendiente(vista, pagina, evento)
     assert campo.value == "60.00"
 
 
+# ─── Botón Editar: solo fecha límite y monto total ──────────────────────────
+
+def test_editar_solo_ofrece_fecha_limite_y_monto_total(vista, pagina, evento):
+    """El saldo y el estado los deriva el servicio del historial de abonos: un
+    campo para escribirlos a mano dejaría la lista mintiendo sobre lo cobrado."""
+    crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+    etiquetas = list(_campos_con_etiqueta(v._dialog))
+
+    assert len(etiquetas) == 2, f"el diálogo no debe ofrecer más campos: {etiquetas}"
+    assert any("Fecha Límite" in t for t in etiquetas)
+    assert any("Monto Total" in t for t in etiquetas)
+    assert not any("saldo" in t.lower() for t in etiquetas)
+    assert not any("estado" in t.lower() for t in etiquetas)
+
+
+def test_editar_precarga_la_fecha_en_dia_mes_ano_y_el_monto_actual(vista, pagina, evento):
+    crear_deuda("V-12345678", 100.0, "31/12/2027")
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+
+    assert _campo(v._dialog, "Fecha Límite").value == "31/12/2027"
+    assert _campo(v._dialog, "Monto Total").value == "100.00"
+
+
+def test_editar_prorroga_la_fecha_y_apaga_el_signo_de_exclamacion(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, PASADO)
+    v = vista()
+    assert "!" in _textos_celda(_fila(v, 0), 0)
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+    _campo(v._dialog, "Fecha Límite").value = "30/11/2027"
+    dlg = v._dialog
+    _click(dlg, "Guardar Cambios", evento)
+
+    assert obtener_deuda(deuda["id"])["fecha_limite_pago"] == "2027-11-30"
+    assert dlg.open is False
+    assert "!" not in _textos_celda(_fila(v, 0), 0), "la lista debe reflejar la prórroga"
+
+
+def test_editar_el_monto_total_rederiva_el_saldo_de_la_lista(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    registrar_abono(deuda["id"], 40.0)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+    _campo(v._dialog, "Monto Total").value = "80"
+    _click(v._dialog, "Guardar Cambios", evento)
+
+    assert obtener_deuda(deuda["id"])["saldo_usd"] == 40.0
+    assert "$40.00" in _textos_celda(_fila(v, 0), 1)
+
+
+def test_editar_a_un_monto_menor_que_lo_abonado_muestra_el_error(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    registrar_abono(deuda["id"], 40.0)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+    dlg = v._dialog
+    _campo(dlg, "Monto Total").value = "10"
+    _click(dlg, "Guardar Cambios", evento)
+
+    assert obtener_deuda(deuda["id"])["monto_total_usd"] == 100.0
+    assert dlg.open is True, "el diálogo debe seguir abierto para corregir"
+    assert any("ERR_DEUDA_MONTO" in m for m in _snacks(pagina))
+
+
+def test_editar_con_una_fecha_ilegible_muestra_el_error(vista, pagina, evento):
+    crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+    _campo(v._dialog, "Fecha Límite").value = "el mes que viene"
+    _click(v._dialog, "Guardar Cambios", evento)
+
+    assert any("ERR_DEUDA_FECHA" in m for m in _snacks(pagina))
+    assert v._dialog.open is True
+
+
+def test_cancelar_la_edicion_no_cambia_nada(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Editar").on_click(evento)
+    _campo(v._dialog, "Monto Total").value = "5"
+    _click(v._dialog, "Cancelar", evento)
+
+    assert obtener_deuda(deuda["id"])["monto_total_usd"] == 100.0
+    assert pagina.visible is None
+    assert v._dialog_stack == []
+
+
 def test_buscar_vuelve_a_la_primera_pagina(vista):
     """El usuario que busca espera ver el primer resultado, no la página en la
     que se había quedado."""

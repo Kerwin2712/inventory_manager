@@ -680,6 +680,12 @@ class CarteraView(BaseView):
                     disabled=pagada,
                     on_click=lambda ev, item=deuda: self.handle_abrir_cobro(item, ev),
                 ),
+                ft.IconButton(
+                    ft.Icons.EDIT_OUTLINED,
+                    icon_color=accent,
+                    tooltip="Editar fecha límite y monto total",
+                    on_click=lambda ev, item=deuda: self.handle_abrir_edicion_deuda(item, ev),
+                ),
             ], spacing=0),
             width=160,
             padding=ft.Padding.symmetric(vertical=6),
@@ -907,6 +913,110 @@ class CarteraView(BaseView):
                         shape=ft.RoundedRectangleBorder(radius=12),
                     ),
                     on_click=registrar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._abrir_dialogo(dlg, e)
+        return dlg
+
+    # ─── Botón Editar: solo fecha límite y monto total ───────────────────────
+    def handle_abrir_edicion_deuda(self, deuda: dict, e=None):
+        """Diálogo de corrección de una deuda.
+
+        Lo único editable es la fecha límite de pago (una prórroga) y el monto
+        total (un error de tipeo al acreditar). El saldo y el estado NO se
+        ofrecen: `deudas_service` los deriva del historial de abonos, y un
+        campo para escribirlos a mano dejaría la lista mintiendo sobre lo que
+        de verdad se cobró.
+        """
+        actual = deudas_service.obtener_deuda(deuda.get("id"))
+        if actual is None:
+            self.show_alert_error("Esta deuda ya no existe. Actualice la lista.", e)
+            self.refrescar_deudas(e)
+            return
+
+        accent = self.get_accent_color()
+        text_color = self.get_text_color()
+        subtext_color = self.get_subtext_color()
+
+        campo_fecha = ft.TextField(
+            label="Fecha Límite de Pago *",
+            # Se muestra y se acepta en Día/Mes/Año, que es como la escribe el
+            # usuario; `normalizar_fecha` del servicio la lleva al ISO.
+            value=self._fecha_legible(actual.get("fecha_limite_pago")),
+            hint_text="31/12/2026",
+            width=200,
+            autofocus=True,
+            color=text_color,
+            border_radius=12,
+        )
+        campo_total = ft.TextField(
+            label="Monto Total de la Deuda (USD) *",
+            value=f"{float(actual.get('monto_total_usd') or 0):.2f}",
+            width=230,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            color=text_color,
+            border_radius=12,
+        )
+
+        def guardar(ev):
+            try:
+                resultado = deudas_service.actualizar_deuda(
+                    actual["id"],
+                    fecha_limite_pago=campo_fecha.value,
+                    monto_total_usd=campo_total.value,
+                )
+            except ValueError as ex:
+                self.show_alert_error(str(ex), ev)
+                return
+
+            self._cerrar_dialogo(ev, dialog=dlg)
+            self.show_alert_success(
+                f"Deuda actualizada. Saldo pendiente: "
+                f"${float(resultado.get('saldo_usd') or 0):,.2f}.", ev,
+            )
+            self.refrescar_deudas(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.EDIT_OUTLINED, color=accent),
+                ft.Text("Editar Deuda", weight=ft.FontWeight.BOLD, color=text_color),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"{actual.get('cliente_nombre') or '-'}  ({actual.get('cliente_id') or '-'})",
+                        size=14, weight=ft.FontWeight.BOLD, color=text_color,
+                    ),
+                    ft.Text(
+                        f"Ítem acreditado: {actual.get('items_descripcion') or '(sin detalle)'}",
+                        size=12, color=subtext_color,
+                    ),
+                    ft.Divider(height=10),
+                    ft.Row([campo_fecha, campo_total], spacing=10, wrap=True),
+                    ft.Text(
+                        "El saldo y el estado no se editan: se recalculan a partir de los "
+                        f"abonos ya registrados (${float(actual.get('total_abonado_usd') or 0):,.2f} "
+                        "abonado hasta ahora).",
+                        size=11, color=subtext_color,
+                    ),
+                ], spacing=10, tight=True),
+                width=480,
+                padding=10,
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda ev: self._cerrar_dialogo(ev, dialog=dlg)),
+                ft.Button(
+                    content="Guardar Cambios",
+                    icon=ft.Icons.SAVE_OUTLINED,
+                    style=ft.ButtonStyle(
+                        bgcolor=accent,
+                        color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12),
+                    ),
+                    on_click=guardar,
                 ),
             ],
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
