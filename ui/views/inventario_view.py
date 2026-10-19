@@ -4,7 +4,15 @@ from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
 from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
+from ui.components.seleccion_lista import SeleccionLista
+from ui.components.dialogo_clave import DialogoClave
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
+# La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
+# `authenticate_user` ya la compara con `core.security.verify_password` contra
+# el `password_hash` almacenado, así que se reutiliza en vez de escribir aquí
+# una segunda copia de la verificación (dos copias = dos criterios que se
+# pueden desincronizar).
+from services.user_service import authenticate_user
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
     listar_productos, eliminar_producto,
@@ -30,6 +38,15 @@ class InventarioView(BaseView):
     # Alto reservado al pie de la tabla para que el cluster flotante de
     # navegación vertical no se dibuje encima de la última fila.
     _HOLGURA_NAV_FLOTANTE = 44
+
+    # ── Resumen del paso 3 (previsualización antes de guardar) ───────────────
+    # "Descripción General" es la ÚNICA casilla del resumen con espacio
+    # reservado: admite textos largos (unos 300 caracteres como mínimo) y debe
+    # envolverse dentro del ancho del diálogo. Con 640 px de ancho de ventana y
+    # tamaño 12, entran ~65 caracteres por línea, así que seis líneas cubren los
+    # 300 caracteres con margen; el alto es ese mismo cálculo en píxeles.
+    _LINEAS_DESCRIPCION_RESUMEN = 6
+    _ALTO_DESCRIPCION_RESUMEN = 104
 
     def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
                  username: str | None = None, rol_usuario: str | None = None):
@@ -58,6 +75,19 @@ class InventarioView(BaseView):
         # cerrado y dejaba al usuario atrapado en el paso 1).
         self._dialog_stack: list[ft.AlertDialog] = []
 
+        # ── Marcador de selección de la lista (Nueva Función 3) ─────────────
+        # El modelo vive en `ui.components.seleccion_lista` y no aquí porque
+        # Ventas y Deudas por Cobrar van a reutilizar la misma mecánica. La
+        # vista solo traduce clics y teclas a sus operaciones y repinta.
+        self._seleccion = SeleccionLista(on_cambio=self._al_cambiar_seleccion)
+        # Handler de teclado que había antes de que esta vista capturara [Esc]
+        # (se conserva para seguir invocándolo; ver `_asegurar_captura_escape`).
+        self._keyboard_previo = None
+        # Índice de los productos de la página en pantalla, por código: permite
+        # que las acciones por nombre (y los atajos de teclado que vendrán)
+        # trabajen con un código, sin depender del `dict` capturado en un clic.
+        self._productos_en_pantalla: dict[str, dict] = {}
+
         # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
         # "acciones" es estructural (íconos de edición/venta) y no se puede ocultar.
         self._columnas_ocultables = [
@@ -65,6 +95,9 @@ class InventarioView(BaseView):
             "precio_efectivo", "precio_bcv", "monto_bs", "existencia",
         ]
         self._columnas_labels = {
+            # "marcador" es la casilla izquierda de selección: estructural como
+            # "acciones", por eso no figura entre las ocultables.
+            "marcador": "Sel.",
             "codigo": "Código",
             "referencia": "Referencia",
             "descripcion": "Descripción",
@@ -423,14 +456,21 @@ class InventarioView(BaseView):
     # TABLA PRINCIPAL
     # ─────────────────────────────────────────────────────────────────────────
     def _columnas_orden_visible(self) -> list[str]:
-        """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó."""
+        """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó.
+
+        El "marcador" abre SIEMPRE la lista (y "acciones" la cierra): su razón
+        de ser es que, al desplazarse a la derecha de la tabla, el usuario deje
+        de confundir las filas entre sí, así que tiene que ser la primera
+        columna y no puede ocultarse.
+        """
         return (
-            [k for k in self._columnas_ocultables if self._columnas_visibles.get(k, True)]
+            ["marcador"]
+            + [k for k in self._columnas_ocultables if self._columnas_visibles.get(k, True)]
             + ["acciones"]
         )
 
     def _build_columna_header(self, key: str, accent, text_color) -> ft.DataColumn:
-        color = accent if key == "acciones" else text_color
+        color = accent if key in ("acciones", "marcador") else text_color
         return ft.DataColumn(ft.Text(self._columnas_labels[key], color=color, weight=ft.FontWeight.BOLD))
 
     def _build_selector_columnas(self, accent, text_color) -> ft.PopupMenuButton:
@@ -478,10 +518,251 @@ class InventarioView(BaseView):
             self._cargar_filas()
             self._safe_update(e)
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # MARCADOR Y SOMBREADO DE LA FILA (Nueva Función 3)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Mecánica, tal como la pidió el usuario:
+    #   - Un clic en cualquier parte de la fila (no solo en la casilla) marca
+    #     el ítem: se sombrea y la casilla izquierda queda marcada. El marcado
+    #     sobrevive al desplazamiento horizontal porque es estado del modelo,
+    #     no del control que recibió el clic.
+    #   - Solo hay DOS formas de deseleccionar: volver a la izquierda y hacer
+    #     clic DENTRO de la casilla marcada (`alternar`), o pulsar [Esc]
+    #     (`limpiar`).
+    #   - Con un ítem marcado, solo ese ítem puede accionar sus seis botones;
+    #     los de las demás filas quedan deshabilitados VISIBLEMENTE.
+    #   - Sin nada marcado, todo funciona como en versiones anteriores.
+    def _al_cambiar_seleccion(self):
+        """Repinta la tabla y la barra cuando la selección cambió de verdad.
+
+        Lo llama el modelo (`SeleccionLista.on_cambio`), así que cualquier
+        camino que altere la selección —clic, casilla, Esc, borrado del lote—
+        termina repintando por aquí y no hay que acordarse en cada handler.
+        """
+        if not hasattr(self, "_dt"):
+            return  # vista aún sin construir (p. ej. durante `__init__`)
+        self._actualizar_barra_seleccion()
+        self._cargar_filas()
+        self._safe_update()
+
+    def seleccionar_item(self, codigo: str, e=None):
+        """Clic en cualquier parte de la fila: marca (nunca desmarca)."""
+        self._asegurar_captura_escape(e)
+        self._seleccion.seleccionar(codigo)
+
+    def alternar_item(self, codigo: str, e=None):
+        """Clic DENTRO de la casilla marcadora: marca o desmarca."""
+        self._asegurar_captura_escape(e)
+        self._seleccion.alternar(codigo)
+
+    def limpiar_seleccion(self, e=None):
+        """Quita la selección (tecla [Esc] o botón de la barra)."""
+        self._seleccion.limpiar()
+        self._actualizar_barra_seleccion()
+        self._safe_update(e)
+
+    def alternar_modo_seleccion(self, e=None):
+        """Entra o sale del modo de selección múltiple (borrado por lote)."""
+        self._asegurar_captura_escape(e)
+        self._seleccion.alternar_modo()
+        self._actualizar_barra_seleccion()
+        self._cargar_filas()
+        self._safe_update(e)
+
+    # ── Captura de [Esc] ────────────────────────────────────────────────────
+    def _asegurar_captura_escape(self, e=None):
+        """Engancha el teclado de la página la primera vez que se marca algo.
+
+        No se engancha al construir la vista porque entonces todavía no hay
+        `page` (la vista se instancia headless y se monta después), y porque
+        [Esc] solo tiene sentido cuando hay algo marcado. El handler que
+        estuviera puesto se guarda y se sigue invocando: esta vista comparte la
+        página con el resto del Dashboard y no debe quedarse con el teclado.
+        """
+        p = self._get_page(e)
+        if p is None:
+            return
+        try:
+            actual = getattr(p, "on_keyboard_event", None)
+            if actual is self._handle_tecla:
+                return
+            self._keyboard_previo = actual
+            p.on_keyboard_event = self._handle_tecla
+        except (AttributeError, RuntimeError):
+            pass  # página sin soporte de teclado: el botón de la barra suple a [Esc]
+
+    def _handle_tecla(self, e=None):
+        """[Esc] deselecciona; cualquier otra tecla sigue su curso."""
+        tecla = str(getattr(e, "key", "") or "")
+        if tecla.strip().lower() == "escape":
+            self.limpiar_seleccion(e)
+        previo = self._keyboard_previo
+        if previo is not None and previo is not self._handle_tecla:
+            previo(e)
+
+    # ── Barra de estado de la selección ─────────────────────────────────────
+    def _build_barra_seleccion(self, accent, subtext) -> ft.Row:
+        """Controles para ver y manejar la selección sin adivinar.
+
+        El usuario necesita una forma evidente de entrar y salir del modo de
+        lote y de saber cuántos ítems lleva marcados; si eso no está a la
+        vista, el modo múltiple se vuelve un estado invisible que deshabilita
+        botones sin explicación.
+        """
+        self._lbl_seleccion = ft.Text(
+            self._seleccion.descripcion_estado(), size=11, color=subtext,
+        )
+        self._btn_modo_seleccion = ft.IconButton(
+            ft.Icons.CHECKLIST_ROUNDED,
+            icon_color=subtext,
+            tooltip="Activar selección múltiple (para borrar varios ítems)",
+            on_click=self.alternar_modo_seleccion,
+        )
+        self._btn_limpiar_seleccion = ft.IconButton(
+            ft.Icons.HIGHLIGHT_OFF_ROUNDED,
+            icon_color=subtext,
+            tooltip="Quitar la selección (equivale a pulsar Esc)",
+            visible=False,
+            on_click=self.limpiar_seleccion,
+        )
+        self._btn_borrar_lote = ft.Button(
+            content=ft.Text("Borrar marcados", size=11, weight=ft.FontWeight.BOLD),
+            icon=ft.Icons.DELETE_SWEEP_ROUNDED,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
+            visible=False,
+            on_click=self._confirmar_eliminar_lote,
+        )
+        self._barra_seleccion = ft.Row(
+            controls=[
+                self._btn_modo_seleccion,
+                self._lbl_seleccion,
+                self._btn_limpiar_seleccion,
+                self._btn_borrar_lote,
+            ],
+            spacing=4,
+        )
+        return self._barra_seleccion
+
+    def _actualizar_barra_seleccion(self):
+        """Sincroniza etiqueta, iconos y visibilidad con el estado del modelo."""
+        if not hasattr(self, "_lbl_seleccion"):
+            return
+        accent = self.get_accent_color()
+        subtext = self.get_subtext_color()
+        multiple = self._seleccion.es_multiple
+
+        self._lbl_seleccion.value = self._seleccion.descripcion_estado()
+        self._lbl_seleccion.color = accent if self._seleccion.hay_seleccion else subtext
+        self._btn_modo_seleccion.icon_color = accent if multiple else subtext
+        self._btn_modo_seleccion.tooltip = (
+            "Salir de la selección múltiple"
+            if multiple
+            else "Activar selección múltiple (para borrar varios ítems)"
+        )
+        self._btn_limpiar_seleccion.visible = self._seleccion.hay_seleccion
+        # Borrar en lote solo se ofrece en el modo múltiple: en modo marcador,
+        # el borrado del ítem señalado ya está en su propio botón de la fila.
+        self._btn_borrar_lote.visible = multiple and self._seleccion.hay_seleccion
+        if self._btn_borrar_lote.visible:
+            self._btn_borrar_lote.content = ft.Text(
+                f"Borrar marcados ({self._seleccion.cantidad})",
+                size=11, weight=ft.FontWeight.BOLD,
+            )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ACCIONES DE UN ÍTEM (los seis botones de la fila)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Cada botón entra por aquí, con un nombre estable y un solo argumento (el
+    # código del ítem): así la próxima ola puede enlazar F1..F6 al ítem marcado
+    # sin tener que alcanzar closures anónimas enterradas en `_cargar_filas`.
+    ACCIONES_ITEM = ("info", "cobrar", "carrito", "historial", "editar", "borrar")
+
+    def _producto_en_pantalla(self, codigo: str) -> dict | None:
+        """Producto de la página actual por su código (relee la base si hace
+        falta, para que una acción por teclado funcione aunque la fila ya no
+        esté en el índice)."""
+        codigo = (codigo or "").strip()
+        if not codigo:
+            return None
+        prod = self._productos_en_pantalla.get(codigo)
+        if prod is not None:
+            return prod
+        return obtener_producto(codigo, rol_usuario=self._rol_para_costos())
+
+    def accion_info(self, codigo: str, e=None):
+        prod = self._producto_en_pantalla(codigo)
+        if prod:
+            self._abrir_modal_detalle(prod, e)
+
+    def accion_cobrar(self, codigo: str, e=None):
+        prod = self._producto_en_pantalla(codigo)
+        if prod:
+            self._procesar_venta_directo(prod, e)
+
+    def accion_carrito(self, codigo: str, e=None):
+        prod = self._producto_en_pantalla(codigo)
+        if prod:
+            self._abrir_modal_agregar_carrito(prod, e)
+
+    def accion_historial(self, codigo: str, e=None):
+        self._abrir_modal_historial(codigo, e)
+
+    def accion_editar(self, codigo: str, e=None):
+        self._abrir_flujo_edicion(codigo, e)
+
+    def accion_borrar(self, codigo: str, e=None):
+        self._confirmar_eliminar(codigo, e)
+
+    def _handlers_accion(self) -> dict:
+        return {
+            "info": self.accion_info,
+            "cobrar": self.accion_cobrar,
+            "carrito": self.accion_carrito,
+            "historial": self.accion_historial,
+            "editar": self.accion_editar,
+            "borrar": self.accion_borrar,
+        }
+
+    def ejecutar_accion_item(self, accion: str, codigo: str, e=None) -> bool:
+        """Punto de entrada único de los seis botones (y de los futuros atajos).
+
+        Vuelve a comprobar `puede_accionar` aunque el botón ya venga
+        deshabilitado: la regla tiene que valer también para quien invoque la
+        acción por teclado o por código, no solo para quien hace clic.
+        """
+        handler = self._handlers_accion().get(accion)
+        if handler is None:
+            raise ValueError(f"Acción de ítem desconocida: {accion!r}")
+        if accion == "historial" and not self.es_admin:
+            return False
+        if not self._seleccion.puede_accionar(codigo):
+            self._snack(
+                "Hay otro ítem marcado. Haga clic en su casilla o pulse Esc para liberarlo.",
+                ft.Colors.AMBER_700, e,
+            )
+            return False
+        handler(codigo, e)
+        return True
+
+    def ejecutar_accion_sobre_seleccionado(self, accion: str, e=None) -> bool:
+        """Misma acción, aplicada al ítem marcado (base de los atajos F1..F6)."""
+        codigo = self._seleccion.seleccionado
+        if not codigo:
+            return False
+        return self.ejecutar_accion_item(accion, codigo, e)
+
     def _build_tabla_panel(self, accent, card_bg, text_color, subtext, border) -> ft.Control:
         self._dt = ft.DataTable(
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
+            # Explícito aunque sea el valor por omisión: todas las filas llevan
+            # `on_select_change` (clic en cualquier parte de la fila), y con la
+            # columna de casillas propia de la tabla activada se dibujaría una
+            # SEGUNDA casilla junto a nuestro marcador.
+            show_checkbox_column=False,
         )
         # Separación de ejes (ver nota en `get_body`): la Row scrollea en
         # HORIZONTAL (única dueña de ese eje, la tabla es más ancha que la
@@ -533,6 +814,11 @@ class InventarioView(BaseView):
             on_change=self._handle_cambio_modo_vista,
         )
 
+        # Se construye ANTES de cargar las filas para que el estado de la
+        # selección ya tenga dónde mostrarse en el primer pintado.
+        self._build_barra_seleccion(accent, subtext)
+        self._actualizar_barra_seleccion()
+
         self._cargar_filas(text_color, accent)
 
         btn_prev = ft.IconButton(ft.Icons.CHEVRON_LEFT, on_click=self._pagina_anterior)
@@ -548,6 +834,7 @@ class InventarioView(BaseView):
                                 ft.Text("Catálogo de Productos", size=15, weight=ft.FontWeight.BOLD, color=text_color),
                             ], spacing=8),
                             ft.Row([
+                                self._barra_seleccion,
                                 self._nav_h,
                                 self._btn_modo_vista,
                                 self._build_selector_columnas(accent, text_color),
@@ -618,55 +905,99 @@ class InventarioView(BaseView):
         total_pags = max(1, (total + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
 
+        # Índice por código de lo que hay en pantalla: las acciones por nombre
+        # (y los atajos de teclado que vienen después) reciben un código y
+        # resuelven el producto aquí, sin depender del `dict` de un clic.
+        self._productos_en_pantalla = {p["codigo"]: p for p in todos}
+
         # Selector de columnas visible solo en modo separado
         if hasattr(self, "_btn_columnas"):
             self._btn_columnas.visible = (self._modo_vista == "separado")
 
+        def _boton_accion(accion: str, codigo: str, icono, color, tooltip: str, size=None):
+            """Botón de la fila cableado a `ejecutar_accion_item`.
+
+            `disabled` es la mitad visible de la regla del marcador: con otro
+            ítem seleccionado, el botón se ve apagado en vez de aceptar el clic
+            y no hacer nada (un botón que ignora en silencio se lee como un
+            cuelgue de la aplicación).
+            """
+            habilitado = self._seleccion.puede_accionar(codigo)
+            return ft.IconButton(
+                icono,
+                icon_color=color,
+                icon_size=size,
+                tooltip=tooltip if habilitado else f"{tooltip} (hay otro ítem marcado)",
+                disabled=not habilitado,
+                on_click=lambda ev, a=accion, c=codigo: self.ejecutar_accion_item(a, c, ev),
+            )
+
+        def botones_accion(p, size=None) -> list[ft.Control]:
+            """Los seis botones del ítem, en el orden que usarán F1..F6."""
+            cod = p["codigo"]
+            botones = [
+                _boton_accion("info", cod, ft.Icons.INFO_OUTLINE_ROUNDED, accent, "Ver detalle del ítem", size),
+                _boton_accion("cobrar", cod, ft.Icons.POINT_OF_SALE, ft.Colors.BLUE_400, "Procesar Venta", size),
+                _boton_accion("carrito", cod, ft.Icons.ADD_SHOPPING_CART, ft.Colors.GREEN_400, "Añadir al Carrito", size),
+            ]
+            if self.es_admin:
+                botones.append(
+                    _boton_accion("historial", cod, ft.Icons.HISTORY_ROUNDED, ft.Colors.PURPLE_300, "Historial Clínico", size)
+                )
+            botones.append(_boton_accion("editar", cod, ft.Icons.EDIT_OUTLINED, accent, "Editar", size))
+            botones.append(_boton_accion("borrar", cod, ft.Icons.DELETE_OUTLINED, ft.Colors.RED_400, "Eliminar", size))
+            return botones
+
         def celda_acciones_lineal(p):
-            return ft.Row([
-                ft.IconButton(
-                    ft.Icons.INFO_OUTLINE_ROUNDED, icon_color=accent,
-                    tooltip="Ver detalle del ítem",
-                    on_click=lambda ev, prod=p: self._abrir_modal_detalle(prod, ev),
-                ),
-                ft.IconButton(
-                    ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400,
-                    tooltip="Procesar Venta",
-                    on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev),
-                ),
-                ft.IconButton(
-                    ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400,
-                    tooltip="Añadir al Carrito",
-                    on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev),
-                ),
-                *([ft.IconButton(
-                    ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300,
-                    tooltip="Historial Clínico",
-                    on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev),
-                )] if self.es_admin else []),
-                ft.IconButton(
-                    ft.Icons.EDIT_OUTLINED, icon_color=accent, tooltip="Editar",
-                    on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev),
-                ),
-                ft.IconButton(
-                    ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400,
-                    tooltip="Eliminar",
-                    on_click=lambda ev, cod=p["codigo"]: self._confirmar_eliminar(cod, ev),
-                ),
-            ], spacing=0)
+            return ft.Row(botones_accion(p), spacing=0)
 
         def celda_acciones_grid(p):
-            fila1 = [
-                ft.IconButton(ft.Icons.INFO_OUTLINE_ROUNDED, icon_color=accent, icon_size=18, tooltip="Ver detalle del ítem", on_click=lambda ev, prod=p: self._abrir_modal_detalle(prod, ev)),
-                ft.IconButton(ft.Icons.POINT_OF_SALE, icon_color=ft.Colors.BLUE_400, icon_size=18, tooltip="Procesar Venta", on_click=lambda ev, prod=p: self._procesar_venta_directo(prod, ev)),
-                ft.IconButton(ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_400, icon_size=18, tooltip="Añadir al Carrito", on_click=lambda ev, prod=p: self._abrir_modal_agregar_carrito(prod, ev)),
-            ]
-            fila2 = [
-                *([ft.IconButton(ft.Icons.HISTORY_ROUNDED, icon_color=ft.Colors.PURPLE_300, icon_size=18, tooltip="Historial Clínico", on_click=lambda ev, cod=p["codigo"]: self._abrir_modal_historial(cod, ev))] if self.es_admin else []),
-                ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_color=accent, icon_size=18, tooltip="Editar", on_click=lambda ev, cod=p["codigo"]: self._abrir_flujo_edicion(cod, ev)),
-                ft.IconButton(ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, icon_size=18, tooltip="Eliminar", on_click=lambda ev, cod=p["codigo"]: self._confirmar_eliminar(cod, ev)),
-            ]
-            return ft.Column([ft.Row(fila1, spacing=0, tight=True), ft.Row(fila2, spacing=0, tight=True)], spacing=0, tight=True)
+            botones = botones_accion(p, size=18)
+            corte = 3
+            return ft.Column([
+                ft.Row(botones[:corte], spacing=0, tight=True),
+                ft.Row(botones[corte:], spacing=0, tight=True),
+            ], spacing=0, tight=True)
+
+        # ── Casilla marcadora y sombreado de la fila ─────────────────────────
+        def celda_marcador(p) -> ft.Control:
+            marcado = self._seleccion.esta_seleccionado(p["codigo"])
+            if self._seleccion.es_multiple:
+                icono = ft.Icons.CHECK_BOX_ROUNDED if marcado else ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED
+            else:
+                icono = ft.Icons.RADIO_BUTTON_CHECKED if marcado else ft.Icons.RADIO_BUTTON_UNCHECKED
+            return ft.Container(
+                content=ft.Icon(icono, color=accent if marcado else subtext, size=20),
+                width=34,
+                alignment=ft.Alignment.CENTER,
+                tooltip=(
+                    "Clic para quitar la marca de este ítem"
+                    if marcado else "Clic para marcar este ítem"
+                ),
+            )
+
+        def celda_marcador_dc(p) -> ft.DataCell:
+            """La casilla atiende su propio toque: es la única de la fila que
+            DESMARCA (`alternar`), mientras el resto de la fila solo marca."""
+            return ft.DataCell(
+                celda_marcador(p),
+                on_tap=lambda ev, cod=p["codigo"]: self.alternar_item(cod, ev),
+            )
+
+        def construir_fila(p, celdas: list[ft.DataCell]) -> ft.DataRow:
+            marcado = self._seleccion.esta_seleccionado(p["codigo"])
+            return ft.DataRow(
+                cells=celdas,
+                selected=marcado,
+                # Sombreado persistente: es estado del modelo, así que sobrevive
+                # al desplazamiento horizontal y a los repintados.
+                color=ft.Colors.with_opacity(0.22, accent) if marcado else None,
+                # Hace la fila COMPLETA sensible al clic ("no importa si es
+                # fuera de la casilla"); la celda del marcador tiene su propio
+                # `on_tap` y por eso no cae aquí.
+                on_select_change=lambda ev, cod=p["codigo"]: self.seleccionar_item(cod, ev),
+                data=p["codigo"],
+            )
 
         # Limpiar filas primero para evitar descalce de conteo entre celdas y columnas durante el diff de Flet al alternar modos
         self._dt.rows = []
@@ -676,6 +1007,7 @@ class InventarioView(BaseView):
             self._dt.data_row_max_height = 48
             self._dt.columns = [self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()]
             constructores_celda = {
+                "marcador": celda_marcador,
                 "codigo": lambda p: ft.Text(p["codigo"], color=accent, weight=ft.FontWeight.W_600),
                 "referencia": lambda p: ft.Text(p["referencia"] or "-", color=text_color),
                 "descripcion": lambda p: ft.Text((p["descripcion_general"] or "-")[:40], color=text_color),
@@ -689,7 +1021,11 @@ class InventarioView(BaseView):
             }
             columnas = self._columnas_orden_visible()
             self._dt.rows = [
-                ft.DataRow(cells=[ft.DataCell(constructores_celda[k](p)) for k in columnas])
+                construir_fila(p, [
+                    celda_marcador_dc(p) if k == "marcador"
+                    else ft.DataCell(constructores_celda[k](p))
+                    for k in columnas
+                ])
                 for p in todos
             ]
             self._nav_h.visible = True
@@ -709,6 +1045,9 @@ class InventarioView(BaseView):
             self._dt.data_row_min_height = 72
             self._dt.data_row_max_height = 95
             self._dt.columns = [
+                # El marcador también abre la lista agrupada: la confusión de
+                # filas al moverse a la derecha es la misma en los dos formatos.
+                self._build_columna_header("marcador", accent, text_color),
                 ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Precios (Efvo / BCV / Bs)", color=text_color, weight=ft.FontWeight.BOLD)),
@@ -777,7 +1116,8 @@ class InventarioView(BaseView):
                 )
 
                 rows.append(
-                    ft.DataRow(cells=[
+                    construir_fila(p, [
+                        celda_marcador_dc(p),
                         ft.DataCell(celda_prod),
                         ft.DataCell(celda_clasif),
                         ft.DataCell(celda_precios),
@@ -1643,6 +1983,15 @@ class InventarioView(BaseView):
         # (`expand=True` sobre el ancho restante del diálogo) y con envoltura
         # multilínea: una descripción larga debe cortar en varias líneas y
         # elidir, nunca desbordarse hacia la derecha del diálogo.
+        #
+        # ── Densidad del resumen (Cambio 3 de octubre 2026) ──────────────────
+        # Las casillas van PEGADAS (la Column no agrega separación y cada fila
+        # ocupa solo el alto de una línea), como en la primera versión: la
+        # separación generosa que había desperdiciaba la ventana y obligaba a
+        # desplazarse para ver el resumen completo. Lo que NO se revierte es el
+        # acotado del valor: el espaciado grande se había introducido para
+        # arreglar el desborde de la descripción, y ese arreglo sigue vivo en el
+        # contenedor de ancho acotado + envoltura multilínea de abajo.
         filas_resumen = []
         for etiqueta, key in campos_orden:
             # Solo se resumen los campos que el formulario realmente envió: un
@@ -1652,16 +2001,28 @@ class InventarioView(BaseView):
             val = str(datos.get(key) or "").strip()
             mostrar = val if val and val not in ("0", "0.0", "None") else "— no llenado —"
             color_val = text_color if mostrar != "— no llenado —" else self.get_subtext_color()
+
+            # EXCEPCIÓN ÚNICA — "Descripción General": es el único campo que
+            # alberga textos largos (unos 300 caracteres como mínimo), así que
+            # es el único al que se le reserva alto para varias líneas. Si se
+            # compactara como los demás, el texto se cortaría en una sola línea
+            # y el usuario confirmaría un registro cuya descripción no puede
+            # leer. El resto de las casillas son valores de una línea y no
+            # necesitan ni un píxel extra.
+            es_descripcion = key == "descripcion_general"
             filas_resumen.append(
                 ft.Row([
-                    ft.Text(f"{etiqueta}:", width=200, color=self.get_subtext_color(), size=13),
+                    ft.Text(f"{etiqueta}:", width=190, color=self.get_subtext_color(), size=12),
                     ft.Container(
                         content=ft.Text(
-                            mostrar, color=color_val, size=13, weight=ft.FontWeight.W_600,
-                            no_wrap=False, max_lines=4, overflow=ft.TextOverflow.ELLIPSIS,
+                            mostrar, color=color_val, size=12, weight=ft.FontWeight.W_600,
+                            no_wrap=False,
+                            max_lines=self._LINEAS_DESCRIPCION_RESUMEN if es_descripcion else 1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
                             selectable=True,
                         ),
                         expand=True,
+                        height=self._ALTO_DESCRIPCION_RESUMEN if es_descripcion else None,
                     ),
                 ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
             )
@@ -1689,14 +2050,18 @@ class InventarioView(BaseView):
                 ft.Text("¿ESTÁS SEGURO DE REGISTRAR EL SIGUIENTE ÍTEM?", color=text_color, size=15),
             ], spacing=10),
             content=ft.Container(
+                # Sin `scroll` y sin `height` fija: el criterio de aceptación
+                # del Cambio 3 es que TODA la información se vea en una sola
+                # ventana sin deslizable, así que la ventana se ajusta al
+                # resumen (filas de una línea + el bloque de descripción) en
+                # vez de recortarlo a un alto fijo con barra.
                 content=ft.Column(
                     controls=filas_resumen,
-                    spacing=6,
-                    scroll=ft.ScrollMode.AUTO,
+                    spacing=0,
+                    tight=True,
                 ),
                 width=640,
-                height=350,
-                padding=10,
+                padding=8,
             ),
             actions=[
                 ft.TextButton("Cancelar", on_click=_cancelar_todo),
@@ -1769,43 +2134,108 @@ class InventarioView(BaseView):
         except ValueError as ex:
             self._snack(str(ex), ft.Colors.RED_700, e)
 
-    # ─── Eliminar Producto ────────────────────────────────────────────────────
-    def _confirmar_eliminar(self, codigo: str, e=None):
-        accent = self.get_accent_color()
-        text_color = self.get_text_color()
-        card_bg = self.get_card_bg()
+    # ─── Eliminar Producto (exige la clave del usuario) ───────────────────────
+    # Decisión del usuario del proyecto: borrar inventario es irreversible y la
+    # sesión suele quedar abierta en un mostrador, así que CADA borrado pide la
+    # clave de la cuenta con la que está abierta la sesión. El borrado por lote
+    # la pide UNA SOLA VEZ para todo el lote: encadenar quince diálogos de clave
+    # haría que el usuario termine tecleándola sin leer qué autoriza.
+    def _paleta_dialogo(self) -> dict:
+        return {
+            "texto": self.get_text_color(),
+            "subtexto": self.get_subtext_color(),
+            "acento": self.get_accent_color(),
+            "fondo": self.get_card_bg(),
+            "borde": self.get_border_color(),
+        }
 
-        def _hacer_eliminar(ev):
-            self._close_dialog(ev)
+    def _verificar_clave_sesion(self, clave: str) -> bool:
+        """¿`clave` es la de la cuenta con la sesión abierta?
+
+        Delega en `authenticate_user`, que la compara con
+        `core.security.verify_password` contra el `password_hash` almacenado.
+        Sin usuario en sesión devuelve False (fail-closed): es preferible no
+        poder borrar a borrar sin autorización comprobable.
+        """
+        if not self.username or not clave:
+            return False
+        return authenticate_user(self.username, clave) is not None
+
+    def _pedir_clave_para_borrar(self, codigos: list[str], mensaje: str, e=None):
+        """Apila el diálogo de clave que autoriza el borrado de `codigos`."""
+        comp = DialogoClave(
+            titulo="Confirmar Eliminación",
+            mensaje=mensaje,
+            verificar_clave=self._verificar_clave_sesion,
+            on_exito=lambda ev=None: self._eliminar_codigos(codigos, ev),
+            on_cerrar=lambda ev=None: self._close_dialog(ev, dialog=comp.dialogo),
+            paleta=self._paleta_dialogo(),
+            etiqueta_confirmar="Eliminar",
+            icono=ft.Icons.DELETE_FOREVER_ROUNDED,
+        )
+        self._open_dialog(comp.dialogo, e)
+        return comp
+
+    def _confirmar_eliminar(self, codigo: str, e=None):
+        """Borrado de un ítem: enuncia su código y pide la clave."""
+        return self._pedir_clave_para_borrar(
+            [codigo],
+            f"Se eliminará permanentemente el producto '{codigo}'. "
+            "Esta acción no se puede deshacer.",
+            e,
+        )
+
+    def _confirmar_eliminar_lote(self, e=None):
+        """Borrado masivo: enuncia cuántos ítems y cuáles, y pide la clave una
+        sola vez para todo el lote."""
+        codigos = list(self._seleccion.seleccionados)
+        if not codigos:
+            self._snack("No hay ítems marcados para borrar.", ft.Colors.AMBER_700, e)
+            return None
+        # Se nombran los primeros códigos para que el usuario reconozca el lote
+        # sin convertir el diálogo en una lista interminable.
+        muestra = ", ".join(codigos[:8])
+        resto = len(codigos) - 8
+        if resto > 0:
+            muestra += f" y {resto} más"
+        plural = "ítems" if len(codigos) != 1 else "ítem"
+        return self._pedir_clave_para_borrar(
+            codigos,
+            f"Se eliminarán permanentemente {len(codigos)} {plural} del inventario "
+            f"({muestra}). Esta acción no se puede deshacer.",
+            e,
+        )
+
+    def _eliminar_codigos(self, codigos: list[str], e=None) -> list[str]:
+        """Ejecuta el borrado ya autorizado y deja la selección consistente.
+
+        Los códigos borrados se descartan del modelo de selección: si quedaran
+        marcados, una selección fantasma dejaría inertes los botones de todas
+        las filas vivas.
+        """
+        borrados, fallidos = [], []
+        for codigo in codigos:
             try:
                 eliminar_producto(codigo)
-                self._snack(f"Producto '{codigo}' eliminado.", ft.Colors.GREEN_700, ev)
-                self._refrescar_tabla(ev)
-            except ValueError as ex:
-                self._snack(str(ex), ft.Colors.RED_700, ev)
+                borrados.append(codigo)
+            except ValueError:
+                fallidos.append(codigo)
 
-        dlg = ft.AlertDialog(
-            modal=True,
-            title=ft.Row([
-                ft.Icon(ft.Icons.DELETE_FOREVER_ROUNDED, color=ft.Colors.RED_400),
-                ft.Text("Confirmar Eliminación", color=text_color),
-            ], spacing=10),
-            content=ft.Text(
-                f"¿Está seguro de eliminar permanentemente el producto '{codigo}'?\n"
-                "Esta acción no se puede deshacer.",
-                color=text_color,
-            ),
-            actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
-                ft.Button(
-                    "Eliminar",
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
-                        shape=ft.RoundedRectangleBorder(radius=12)
-                    ),
-                    on_click=_hacer_eliminar,
-                ),
-            ],
-            bgcolor=card_bg,
-        )
-        self._open_dialog(dlg, e)
+        self._seleccion.descartar(borrados)
+        if self._seleccion.es_multiple and not self._seleccion.hay_seleccion:
+            # Lote terminado: salir del modo devuelve la tabla a su
+            # comportamiento normal sin que el usuario tenga que acordarse.
+            self._seleccion.desactivar_modo_multiple()
+        self._actualizar_barra_seleccion()
+
+        if borrados:
+            if len(borrados) == 1:
+                self._snack(f"Producto '{borrados[0]}' eliminado.", ft.Colors.GREEN_700, e)
+            else:
+                self._snack(f"{len(borrados)} productos eliminados.", ft.Colors.GREEN_700, e)
+        if fallidos:
+            self._snack(
+                f"No se pudo eliminar: {', '.join(fallidos)}.", ft.Colors.RED_700, e,
+            )
+        self._refrescar_tabla(e)
+        return borrados
