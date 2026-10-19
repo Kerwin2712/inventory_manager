@@ -149,3 +149,116 @@ def test_sin_tasa_configurada_la_tarjeta_no_miente_con_un_cero(vista):
     textos = _textos(vista.build_tarjeta_tasa_bcv())
 
     assert any("Sin tasa" in t for t in textos)
+
+
+# ─── Nueva función 1: ventana "Ventas Diarias" ───────────────────────────────
+
+def _registrar_venta_de_hoy(codigos_y_cantidades, metodo_pago="Efectivo", referencia=None):
+    """Venta con `fecha` explícita de hoy (hora local, el criterio con el que
+    el reporte recorta el día)."""
+    from datetime import datetime
+
+    from core.database import get_connection
+
+    fecha = datetime.now().replace(hour=12, minute=30, second=0, microsecond=0)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO ventas (
+                tipo_venta, total_usd, total_bcv, metodo_pago, fecha,
+                referencia_pago, monto_cobrado
+            ) VALUES ('Informal', 25.0, 27.5, ?, ?, ?, 25.0)
+            """,
+            (metodo_pago, fecha.strftime("%Y-%m-%d %H:%M:%S"), referencia),
+        )
+        venta_id = cursor.lastrowid
+        for codigo, cantidad in codigos_y_cantidades:
+            cursor.execute(
+                """
+                INSERT INTO ventas_detalle (
+                    venta_id, producto_codigo, cantidad,
+                    precio_unitario_usd, precio_unitario_bcv,
+                    subtotal_usd, subtotal_bcv
+                ) VALUES (?, ?, ?, 10.0, 11.0, ?, ?)
+                """,
+                (venta_id, codigo, cantidad, 10.0 * cantidad, 11.0 * cantidad),
+            )
+    return venta_id
+
+
+def test_ventas_diarias_se_renderiza_entre_las_tarjetas_y_la_auditoria(vista, producto_critico):
+    """Orden exigido: tarjetas · Ventas Diarias · Auditoría · Inteligencia."""
+    vista.current_section = "Inicio"
+    vista.setup_layout()
+
+    titulos_de_seccion = [
+        t for t in _textos(vista.controls[0])
+        if t in ("Tasa de Cambio BCV", "Ventas Diarias", "Inteligencia de Negocio")
+        or t.startswith("Auditoría Preventiva")
+    ]
+
+    assert titulos_de_seccion[0] == "Tasa de Cambio BCV"
+    assert titulos_de_seccion[1] == "Ventas Diarias"
+    assert titulos_de_seccion[2].startswith("Auditoría Preventiva")
+    assert titulos_de_seccion[3] == "Inteligencia de Negocio"
+
+
+def test_ventas_diarias_va_a_ancho_completo(vista):
+    seccion = vista.build_ventas_diarias()
+
+    assert isinstance(seccion, ft.ResponsiveRow)
+    assert seccion.controls[0].col == {"sm": 12, "lg": 12}
+
+
+def test_ventas_diarias_lista_las_casillas_de_la_especificacion(vista, producto_critico):
+    _registrar_venta_de_hoy([("TOR-001", 3.0)], metodo_pago="Pago Móvil", referencia="0412555")
+
+    textos = _textos(vista.build_ventas_diarias())
+
+    for encabezado in (
+        "Fecha y hora", "Descripción Corta", "Método de Pago",
+        "Referencia de Pago", "Cantidad de Artículos", "Monto Total Pagado",
+    ):
+        assert encabezado in textos
+    assert "Tornillo AP 1/4" in textos
+    assert "Pago Móvil" in textos
+    assert "0412555" in textos
+    assert "3" in textos
+    assert "1 venta(s) hoy" in textos
+
+
+def test_la_descripcion_de_ventas_diarias_admite_dos_lineas(vista, producto_critico):
+    """Un carrito con varios artículos concatena todos sus nombres cortos: en
+    una sola línea quedarían casi todos fuera."""
+    crear_producto(
+        codigo="TUE-002", referencia="REF-2", descripcion_general="Tuerca hexagonal",
+        departamento="Ferretería", precio_dolares=0.5, existencia=50.0,
+        nombre_referencia_corto="Tuerca 1/4", costo_usd_efectivo=0.2,
+        rol_usuario="administrador",
+    )
+    _registrar_venta_de_hoy([("TOR-001", 1.0), ("TUE-002", 2.0)])
+
+    concatenadas = [
+        c for c in _controles(vista.build_ventas_diarias())
+        if isinstance(c, ft.Text) and c.value == "Tornillo AP 1/4, Tuerca 1/4"
+    ]
+
+    assert concatenadas, "la lista no concatenó los nombres cortos del carrito"
+    assert concatenadas[0].max_lines == 2
+    assert concatenadas[0].overflow == ft.TextOverflow.ELLIPSIS
+
+
+def test_en_efectivo_la_referencia_se_muestra_con_un_guion(vista, producto_critico):
+    _registrar_venta_de_hoy([("TOR-001", 1.0)], metodo_pago="Efectivo", referencia=None)
+
+    textos = _textos(vista.build_ventas_diarias())
+
+    assert "-" in textos
+
+
+def test_sin_ventas_hoy_la_ventana_explica_que_no_hay_nada(vista):
+    textos = _textos(vista.build_ventas_diarias())
+
+    assert any("ninguna venta hoy" in t for t in textos)
+    assert "0 venta(s) hoy" in textos

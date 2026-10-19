@@ -8,6 +8,7 @@ from services.bcv_service import obtener_estado_tasa
 from services.reportes_service import (
     obtener_metricas_dashboard,
     obtener_top_ventas,
+    obtener_ventas_del_dia,
     obtener_alertas_stock,
     obtener_stock_minimo,
     actualizar_stock_minimo,
@@ -136,9 +137,21 @@ class DashboardView(BaseView):
             main_content = gd_view.get_body()
 
         elif self.current_section == "Inicio":
+            # Orden del cuerpo del Inicio (especificación 17/10/2026): las
+            # cuatro tarjetas (con la Tasa BCV primera por la izquierda), la
+            # ventana "Ventas Diarias", y debajo la Auditoría Preventiva y la
+            # Inteligencia de Negocio a ancho completo.
+            #
+            # "Ventas Diarias" queda FUERA de la restricción de ERS 3.6: es el
+            # registro de lo que se vendió hoy, no inteligencia de negocio, y
+            # un vendedor necesita consultarlo durante su turno.
+            secciones_inicio = [
+                self.build_metrics_cards(),
+                ft.Container(height=10),
+                self.build_ventas_diarias(),
+            ]
             # ERS 3.6: el panel de Inteligencia de Negocio y Auditoría de Stock
             # es exclusivo para roles administrativos/gerenciales.
-            secciones_inicio = [self.build_metrics_cards(), ft.Container(height=10)]
             if self.es_admin:
                 secciones_inicio.append(self.build_data_sections())
             else:
@@ -593,6 +606,134 @@ class DashboardView(BaseView):
             spacing=20,
             wrap=True,
         )
+
+    def build_ventas_diarias(self) -> ft.Control:
+        """Ventana "Ventas Diarias" del Inicio (nueva función 1 de la
+        especificación 17/10/2026): todas las ventas del día de hoy en forma de
+        lista, la más reciente arriba y la más vieja abajo.
+
+        Va entre las cuatro tarjetas y la Auditoría Preventiva, y a ancho
+        completo como ellas. Las columnas llevan ancho fijo (suman ~1120 px) y
+        la descripción se parte en dos líneas al estilo "agrupado" del
+        Inventario, porque el requisito explícito es que no haga falta un
+        deslizable horizontal para leer toda la información de la fila."""
+        text_color = self.get_text_color()
+        subtext = self.get_subtext_color()
+        accent = self.get_accent_color()
+
+        ventas = obtener_ventas_del_dia()
+
+        if ventas:
+            filas = []
+            for venta in ventas:
+                cantidad = venta["cantidad_articulos"]
+                # Las cantidades son REAL (hay productos que se venden por
+                # fracción): solo se muestran decimales cuando existen.
+                cantidad_txt = (
+                    f"{cantidad:,.0f}" if float(cantidad).is_integer() else f"{cantidad:,.2f}"
+                )
+                simbolo = "Bs" if venta["moneda"] == "Bs" else "$"
+                referencia = venta["referencia_pago"]
+
+                filas.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(venta["fecha_hora"], size=12, color=text_color, weight=ft.FontWeight.W_600),
+                            width=150,
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(
+                                venta["descripcion_corta"], size=13, color=text_color,
+                                # Dos líneas: un carrito con varios artículos
+                                # concatena todos sus nombres cortos y una sola
+                                # línea los dejaría casi todos fuera.
+                                max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            width=380,
+                            padding=ft.Padding.symmetric(vertical=6),
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(venta["metodo_pago"], size=12, color=text_color),
+                            width=140,
+                        )),
+                        ft.DataCell(ft.Container(
+                            # En Efectivo no hay comprobante que mostrar: el
+                            # guion deja claro que la casilla no quedó vacía
+                            # por un dato perdido.
+                            content=ft.Text(
+                                referencia or "-", size=12,
+                                color=text_color if referencia else subtext,
+                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            width=160,
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(cantidad_txt, size=12, color=text_color, weight=ft.FontWeight.W_600),
+                            width=130,
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(
+                                f"{simbolo} {venta['monto_total']:,.2f}",
+                                size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400,
+                            ),
+                            width=160,
+                        )),
+                    ])
+                )
+
+            contenido = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Fecha y hora", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Descripción Corta", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Método de Pago", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Referencia de Pago", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Cantidad de Artículos", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Monto Total Pagado", color=text_color, weight=ft.FontWeight.BOLD)),
+                ],
+                rows=filas,
+                data_row_min_height=56,
+                data_row_max_height=80,
+            )
+        else:
+            contenido = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, color=subtext, size=32),
+                    ft.Text("Todavía no se ha registrado ninguna venta hoy.", color=subtext, size=13),
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30,
+            )
+
+        tarjeta = self.create_card(
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Row([
+                                ft.Icon(ft.Icons.RECEIPT_LONG_ROUNDED, color=accent),
+                                ft.Text("Ventas Diarias", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ], spacing=10),
+                            ft.Text(
+                                f"{len(ventas)} venta(s) hoy", size=12,
+                                color=subtext, weight=ft.FontWeight.W_600,
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        wrap=True,
+                    ),
+                    ft.Divider(height=10, color=self.get_border_color()),
+                    self._tabla_a_ancho_completo(contenido),
+                ],
+                spacing=10,
+            ),
+            padding=15,
+            border_radius=18,
+            col={"sm": 12, "lg": 12},
+        )
+
+        # Igual que `build_data_sections`: el `ResponsiveRow` es lo que hace que
+        # la tarjeta se estire de izquierda a derecha (un Container suelto en un
+        # Column se encoge al ancho de su contenido).
+        return ft.ResponsiveRow(controls=[tarjeta], spacing=20)
 
     def build_data_sections(self) -> ft.Control:
         """Auditoría Preventiva e Inteligencia de Negocio, ambas a ANCHO COMPLETO
