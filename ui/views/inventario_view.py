@@ -5,7 +5,9 @@ from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from ui.components.seleccion_lista import SeleccionLista
-from ui.components.teclado_nav import ACCIONES_SOLO_ADMIN, ControlTeclado
+from ui.components.teclado_nav import (
+    ACCIONES_SOLO_ADMIN, ControlTeclado, etiqueta_atajo, tooltip_con_atajo,
+)
 from ui.components.dialogo_clave import DialogoClave
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 # La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
@@ -48,6 +50,22 @@ class InventarioView(BaseView):
     # 300 caracteres con margen; el alto es ese mismo cálculo en píxeles.
     _LINEAS_DESCRIPCION_RESUMEN = 6
     _ALTO_DESCRIPCION_RESUMEN = 104
+
+    # ── Etiquetas de los atajos sobre los íconos del ítem ────────────────────
+    # El PDF pide que los nombres de los atajos estén visibles "para siempre
+    # ser consciente de ellos", y un tooltip hay que ir a buscarlo con el
+    # mouse: la tecla se dibuja TAMBIÉN sobre el ícono.
+    #
+    # Los seis íconos conviven en una celda estrecha (en la vista agrupada la
+    # celda de acciones mide 250 px), así que la etiqueta no puede ocupar
+    # espacio propio: va SUPERPUESTA en la esquina inferior derecha del mismo
+    # cuadrado del ícono, dentro de un `Stack` del tamaño del botón. Así la
+    # fila no crece ni a lo ancho ni a lo alto —al contrario, el cuadrado de
+    # 34 px es más angosto que el botón de tamaño por omisión— y las dos
+    # vistas con tabla siguen entrando sin tocar sus altos de fila.
+    _LADO_BOTON_ACCION = 34
+    _TAM_ICONO_ACCION = 20
+    _TAM_ETIQUETA_ATAJO = 8
 
     def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
                  username: str | None = None, rol_usuario: str | None = None):
@@ -1059,7 +1077,8 @@ class InventarioView(BaseView):
             self._btn_columnas.visible = (self._modo_vista == "separado")
 
         def _boton_accion(accion: str, codigo: str, icono, color, tooltip: str, size=None):
-            """Botón de la fila cableado a `ejecutar_accion_item`.
+            """Botón de la fila cableado a `ejecutar_accion_item`, con la tecla
+            que lo acciona dibujada encima.
 
             `disabled` es la mitad visible de la regla del marcador: con otro
             ítem seleccionado, el botón se ve apagado en vez de aceptar el clic
@@ -1067,17 +1086,54 @@ class InventarioView(BaseView):
             cuelgue de la aplicación).
             """
             habilitado = self._seleccion.puede_accionar(codigo)
-            return ft.IconButton(
+            # El tooltip también lleva el atajo ("Editar (F5)"): sirve para
+            # confirmarlo, no para descubrirlo.
+            descripcion = tooltip_con_atajo(tooltip, accion)
+            boton = ft.IconButton(
                 icono,
                 icon_color=color,
-                icon_size=size,
-                tooltip=tooltip if habilitado else f"{tooltip} (hay otro ítem marcado)",
+                icon_size=size or self._TAM_ICONO_ACCION,
+                tooltip=descripcion if habilitado else f"{descripcion} (hay otro ítem marcado)",
                 disabled=not habilitado,
+                width=self._LADO_BOTON_ACCION,
+                height=self._LADO_BOTON_ACCION,
+                style=ft.ButtonStyle(padding=0),
                 on_click=lambda ev, a=accion, c=codigo: self.ejecutar_accion_item(a, c, ev),
+            )
+            etiqueta = etiqueta_atajo(accion)
+            if not etiqueta:
+                return boton
+
+            color_etiqueta = color if habilitado else subtext
+            insignia = ft.Container(
+                content=ft.Text(
+                    etiqueta,
+                    size=self._TAM_ETIQUETA_ATAJO,
+                    weight=ft.FontWeight.BOLD,
+                    color=color_etiqueta,
+                    no_wrap=True,
+                ),
+                # Fondo OPACO (el de la tarjeta) más borde y texto del color
+                # del ícono: así la tecla se lee sobre el dibujo del ícono y en
+                # los dos temas, sin tener que elegir un color de texto por
+                # tema. Un fondo translúcido dejaba el ícono asomando por
+                # detrás de la "F6" justo en los íconos más densos.
+                bgcolor=card_bg,
+                border=ft.Border.all(1, color_etiqueta),
+                border_radius=4,
+                padding=ft.Padding.symmetric(horizontal=2),
+                right=0,
+                bottom=0,
+            )
+            return ft.Stack(
+                controls=[boton, insignia],
+                width=self._LADO_BOTON_ACCION,
+                height=self._LADO_BOTON_ACCION,
             )
 
         def botones_accion(p, size=None) -> list[ft.Control]:
-            """Los seis botones del ítem, en el orden que usarán F1..F6."""
+            """Los seis botones del ítem, en el orden de F1 a F6: la posición
+            del ícono y la tecla que lo acciona cuentan la misma historia."""
             cod = p["codigo"]
             botones = [
                 _boton_accion("info", cod, ft.Icons.INFO_OUTLINE_ROUNDED, accent, "Ver detalle del ítem", size),

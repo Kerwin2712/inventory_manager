@@ -597,3 +597,125 @@ def test_las_teclas_de_funcion_si_actuan_con_un_campo_enfocado(vista, espia_acci
     _pulsar(vista, pagina, "F1")
 
     assert espia_acciones == [("info", "ATA-001")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Las etiquetas de los atajos están A LA VISTA sobre los íconos
+# ─────────────────────────────────────────────────────────────────────────────
+# Nota del PDF que sigue vigente: "que los nombres de los atajos sean visibles
+# en la pantalla para siempre ser consciente de ellos". Un tooltip hay que ir a
+# buscarlo con el mouse, así que no alcanza.
+MODOS_CON_TABLA = ["separado", "agrupado"]
+
+
+@pytest.fixture(params=MODOS_CON_TABLA)
+def vista_modo(request, vista):
+    """La misma vista en cada uno de los dos formatos con tabla."""
+    vista._modo_vista = request.param
+    vista._cargar_filas()
+    return vista
+
+
+def _celda_de_acciones(vista, codigo):
+    fila = next(r for r in vista._dt.rows if r.data == codigo)
+    contenido = fila.cells[-1].content
+    if isinstance(contenido, ft.Container):  # el modo agrupado envuelve la celda
+        contenido = contenido.content
+    return contenido
+
+
+def _botones_con_etiqueta(vista, codigo) -> list[tuple[ft.IconButton, str]]:
+    """Cada ícono de la fila con el texto de atajo que lleva superpuesto."""
+    pares = []
+    for stack in _celda_de_acciones(vista, codigo).controls:
+        assert isinstance(stack, ft.Stack), "el ícono debe traer su etiqueta al lado"
+        boton = next(c for c in stack.controls if isinstance(c, ft.IconButton))
+        textos = [
+            c.content.value for c in stack.controls
+            if isinstance(c, ft.Container) and isinstance(c.content, ft.Text)
+        ]
+        assert len(textos) == 1, f"se esperaba una sola etiqueta, hay {len(textos)}"
+        pares.append((boton, textos[0]))
+    return pares
+
+
+def test_los_seis_iconos_muestran_su_atajo_en_pantalla(vista_modo):
+    """En los dos formatos con tabla, y en el orden de F1 a F6."""
+    etiquetas = [texto for _boton, texto in _botones_con_etiqueta(vista_modo, "ATA-001")]
+
+    assert etiquetas == ["F1", "F2", "F3", "F4", "F5", "F6"]
+
+
+def test_la_etiqueta_tambien_esta_en_el_tooltip(vista_modo):
+    tooltips = [b.tooltip for b, _texto in _botones_con_etiqueta(vista_modo, "ATA-001")]
+
+    assert tooltips[4].startswith("Editar (F5)")
+    assert tooltips[5].startswith("Eliminar (F6)")
+
+
+def test_un_vendedor_no_ve_el_icono_del_historial_pero_conserva_el_mapeo(productos):
+    """El mapeo es fijo: F4 no se reasigna, simplemente no hay ícono que
+    accionar en la fila de un vendedor."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=False, username="vendedor", rol_usuario="vendedor")
+    v.get_body()
+
+    etiquetas = [texto for _boton, texto in _botones_con_etiqueta(v, "ATA-001")]
+    assert etiquetas == ["F1", "F2", "F3", "F5", "F6"]
+
+
+def test_la_etiqueta_no_hace_crecer_la_celda_de_acciones(vista_modo):
+    """Los seis íconos conviven en una celda estrecha (250 px en la vista
+    agrupada): la etiqueta va superpuesta, sin pedir espacio propio."""
+    lado = vista_modo._LADO_BOTON_ACCION
+    stacks = _celda_de_acciones(vista_modo, "ATA-001").controls
+
+    assert all(s.width == lado and s.height == lado for s in stacks)
+    assert len(stacks) * lado <= 250, "los seis botones deben seguir entrando"
+
+
+def _pastilla(stack) -> ft.Container:
+    return next(
+        c for c in stack.controls
+        if isinstance(c, ft.Container) and isinstance(c.content, ft.Text)
+    )
+
+
+def test_la_etiqueta_tapa_el_icono_con_un_fondo_opaco(vista_modo):
+    """Fondo OPACO (el de la tarjeta) y texto del color del ícono: con un
+    fondo translúcido, el dibujo del ícono asomaba por detrás de la "F6"."""
+    for stack in _celda_de_acciones(vista_modo, "ATA-001").controls:
+        boton = next(c for c in stack.controls if isinstance(c, ft.IconButton))
+        pastilla = _pastilla(stack)
+        assert pastilla.bgcolor == vista_modo.get_card_bg()
+        assert pastilla.content.color == boton.icon_color
+        assert pastilla.right == 0 and pastilla.bottom == 0
+
+
+@pytest.mark.parametrize("modo_tema", [ft.ThemeMode.DARK, ft.ThemeMode.LIGHT])
+def test_la_etiqueta_sigue_al_tema_de_la_aplicacion(vista, modo_tema):
+    """El fondo de la pastilla se toma del tema vigente en vez de fijar un
+    color: en modo claro la tarjeta es blanca y en oscuro casi negra, y en los
+    dos casos la tecla queda legible sobre el ícono."""
+    from ui.views.base_view import BaseView
+
+    previo = BaseView.current_theme_mode
+    try:
+        BaseView.current_theme_mode = modo_tema
+        vista._cargar_filas()
+
+        for stack in _celda_de_acciones(vista, "ATA-001").controls:
+            assert _pastilla(stack).bgcolor == vista.get_card_bg()
+    finally:
+        BaseView.current_theme_mode = previo
+
+
+def test_con_otro_item_marcado_la_etiqueta_se_apaga_con_el_icono(vista_modo, evento):
+    """La etiqueta no puede quedar brillante sobre un ícono deshabilitado: se
+    leería como que esa tecla todavía hace algo en esa fila."""
+    vista_modo.seleccionar_item("ATA-002", evento)
+
+    subtext = vista_modo.get_subtext_color()
+    for stack in _celda_de_acciones(vista_modo, "ATA-001").controls:
+        assert _pastilla(stack).content.color == subtext

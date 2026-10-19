@@ -114,11 +114,22 @@ def _icono_casilla(fila: ft.DataRow) -> ft.Icon:
     return _casilla(fila).content.content
 
 
+def _icono_de(control) -> ft.IconButton:
+    """Cada botón viaja dentro de un `Stack` junto a la etiqueta de su atajo
+    ("F1".."F6" superpuesta en la esquina del ícono)."""
+    if isinstance(control, ft.Stack):
+        return next(c for c in control.controls if isinstance(c, ft.IconButton))
+    return control
+
+
 def _botones(fila: ft.DataRow) -> list[ft.IconButton]:
     contenido = fila.cells[-1].content
     if isinstance(contenido, ft.Container):  # el modo agrupado envuelve la celda
         contenido = contenido.content
-    return [c for c in contenido.controls if isinstance(c, ft.IconButton)]
+    return [
+        _icono_de(c) for c in contenido.controls
+        if isinstance(c, (ft.IconButton, ft.Stack))
+    ]
 
 
 def _clic_en_fila(vista, codigo, evento):
