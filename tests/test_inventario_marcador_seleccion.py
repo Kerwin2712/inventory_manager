@@ -14,7 +14,15 @@ Mecánica que se blinda aquí, tal como la pidió el usuario:
 
 Se usa el mismo patrón de página falsa que `test_inventario_dialogos_pila.py`
 para que el enganche del teclado se ejercite contra una API parecida a la real.
+El teclado ya no lo atiende un handler propio de la vista sino `ControlTeclado`
+(`ui.components.teclado_nav`), cuyo `manejar` es una corutina: por eso las
+pulsaciones se ejercitan con `asyncio.run`. Los atajos completos (flechas,
+F1..F6, regla del foco) tienen su propio archivo,
+`test_inventario_atajos_teclado.py`; aquí solo se conserva lo que el marcador
+necesita de ellos.
 """
+import asyncio
+
 import flet as ft
 import pytest
 
@@ -218,10 +226,15 @@ def test_el_clic_dentro_de_la_casilla_marcada_deselecciona(vista_modo, evento):
     assert _fila(vista_modo, "SEL-002").selected is False
 
 
+def _pulsar(vista, pagina, tecla):
+    """`ControlTeclado.manejar` es `async def` (dentro espera a `scroll_to`)."""
+    return asyncio.run(vista._teclado.manejar(TeclaFalsa(pagina, tecla)))
+
+
 def test_la_tecla_escape_deselecciona(vista_modo, pagina, evento):
     _clic_en_fila(vista_modo, "SEL-002", evento)
 
-    vista_modo._handle_tecla(TeclaFalsa(pagina, "Escape"))
+    _pulsar(vista_modo, pagina, "Escape")
 
     assert vista_modo._seleccion.hay_seleccion is False
 
@@ -229,7 +242,7 @@ def test_la_tecla_escape_deselecciona(vista_modo, pagina, evento):
 def test_otra_tecla_no_deselecciona(vista_modo, pagina, evento):
     _clic_en_fila(vista_modo, "SEL-002", evento)
 
-    vista_modo._handle_tecla(TeclaFalsa(pagina, "Enter"))
+    _pulsar(vista_modo, pagina, "Enter")
 
     assert vista_modo._seleccion.seleccionado == "SEL-002"
 
@@ -250,8 +263,8 @@ def test_al_marcar_se_engancha_el_teclado_sin_pisar_el_handler_previo(vista, pag
 
     _clic_en_fila(vista, "SEL-001", evento)
 
-    assert pagina.on_keyboard_event == vista._handle_tecla
-    pagina.on_keyboard_event(TeclaFalsa(pagina, "Escape"))
+    assert pagina.on_keyboard_event is vista._teclado.handler
+    asyncio.run(pagina.on_keyboard_event(TeclaFalsa(pagina, "Escape")))
     assert recibidas == ["Escape"], "el handler previo debe seguir invocándose"
     assert vista._seleccion.hay_seleccion is False
 

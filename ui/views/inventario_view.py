@@ -5,6 +5,7 @@ from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from ui.components.seleccion_lista import SeleccionLista
+from ui.components.teclado_nav import ControlTeclado
 from ui.components.dialogo_clave import DialogoClave
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 # La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
@@ -80,12 +81,27 @@ class InventarioView(BaseView):
         # Ventas y Deudas por Cobrar van a reutilizar la misma mecánica. La
         # vista solo traduce clics y teclas a sus operaciones y repinta.
         self._seleccion = SeleccionLista(on_cambio=self._al_cambiar_seleccion)
-        # Handler de teclado que había antes de que esta vista capturara [Esc]
-        # (se conserva para seguir invocándolo; ver `_asegurar_captura_escape`).
-        self._keyboard_previo = None
+
+        # ── Atajos de teclado (segunda ola de octubre 2026) ─────────────────
+        # Qué significa cada tecla (flechas, Ctrl+flecha, [Esc], F1..F6) vive
+        # en `ui.components.teclado_nav`, compartido con las otras tres listas
+        # de la aplicación; esta vista solo declara QUÉ desplazar y QUÉ
+        # accionar. Los destinos de scroll se pasan como MÉTODOS y no como
+        # controles porque la tabla se reconstruye en cada repintado: un
+        # control guardado al instalar sería un control que ya no está en
+        # pantalla, y la flecha desplazaría algo invisible.
+        self._teclado = ControlTeclado(
+            obtener_pagina=self._get_page,
+            destino_vertical=self._destino_scroll_vertical,
+            destino_horizontal=self._destino_scroll_horizontal,
+            seleccion=self._seleccion,
+            al_limpiar=self.limpiar_seleccion,
+        )
+
         # Índice de los productos de la página en pantalla, por código: permite
-        # que las acciones por nombre (y los atajos de teclado que vendrán)
-        # trabajen con un código, sin depender del `dict` capturado en un clic.
+        # que las acciones por nombre (y los atajos F1..F6, que no tienen
+        # ningún clic del cual sacar la fila) trabajen con un código, sin
+        # depender del `dict` capturado en un clic.
         self._productos_en_pantalla: dict[str, dict] = {}
 
         # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
@@ -130,7 +146,16 @@ class InventarioView(BaseView):
                 return self.page
         except (RuntimeError, AttributeError):
             pass
-        return None
+        # Último recurso: el CUERPO de la vista. El Dashboard no monta esta
+        # vista como vista de ruta —instancia la clase y se queda solo con lo
+        # que devuelve `get_body()`—, y `View.page` es de solo lectura, así que
+        # `self.page` no llega a tener valor ni con la pantalla viva. El cuerpo
+        # sí está en el árbol de la página. Sin este recurso, los atajos de
+        # teclado dependerían de que el usuario haga clic en algo primero.
+        try:
+            return getattr(self, "_body_scroll_col", None).page
+        except (RuntimeError, AttributeError):
+            return None
 
     def _safe_update(self, e=None):
         p = self._get_page(e)
@@ -248,7 +273,40 @@ class InventarioView(BaseView):
             ft.Divider(height=6, color=border),
             self._build_tabla_panel(accent, card_bg, text_color, subtext, border),
         ]
+        # El cuerpo es lo único de esta vista que llega al árbol de la página
+        # (el Dashboard descarta la vista y se queda con su cuerpo), así que su
+        # montaje es el primer instante en que hay teclado que tomar — y el
+        # único que no depende de que el usuario haga clic antes: las flechas
+        # tienen que navegar desde que la pantalla aparece. El gancho se pone
+        # sobre la instancia porque el cuerpo es un `ft.Column` corriente y no
+        # una subclase propia; Flet invoca `did_mount()` del objeto.
+        self._body_scroll_col.did_mount = self._al_montar_cuerpo
         return self._body_scroll_col
+
+    def _al_montar_cuerpo(self):
+        """`did_mount` del cuerpo: con la pantalla viva se toma el teclado."""
+        self._teclado.instalar()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DESTINOS DE SCROLL DE LAS FLECHAS
+    # ─────────────────────────────────────────────────────────────────────────
+    # Las flechas deben hacer EXACTAMENTE lo que hacen los botones de flecha de
+    # la pantalla (`ui.components.scroll_nav`), así que apuntan a los mismos
+    # controles: el cuerpo de la página para el eje vertical y la Row de la
+    # tabla para el horizontal (un solo dueño por eje, ver `get_body`).
+    # Son métodos y no atributos para que el control se resuelva EN LA
+    # PULSACIÓN: entre dos pulsaciones puede haber un repintado que sustituya
+    # la tabla, y un control viejo ya no está en pantalla.
+    def _destino_scroll_vertical(self):
+        """Mismo destino que el cluster flotante ↑/↓ (`self._nav_v`)."""
+        return (
+            getattr(self, "_body_scroll_col", None)
+            or getattr(self, "_tabla_scroll_col", None)
+        )
+
+    def _destino_scroll_horizontal(self):
+        """Mismo destino que el cluster ←/→ de la barra (`self._nav_h`)."""
+        return getattr(self, "_tabla_scroll_row", None)
 
     # ─────────────────────────────────────────────────────────────────────────
     # PANEL BCV
@@ -546,13 +604,19 @@ class InventarioView(BaseView):
         self._safe_update()
 
     def seleccionar_item(self, codigo: str, e=None):
-        """Clic en cualquier parte de la fila: marca (nunca desmarca)."""
-        self._asegurar_captura_escape(e)
+        """Clic en cualquier parte de la fila: marca (nunca desmarca).
+
+        Reintenta `instalar()` (es idempotente) porque la página puede haber
+        llegado después de `get_body()`: una vista construida headless y
+        montada más tarde se quedaría sin teclado para siempre, y [Esc] es
+        justamente la tecla que hace falta en cuanto hay algo marcado.
+        """
+        self._teclado.instalar(e)
         self._seleccion.seleccionar(codigo)
 
     def alternar_item(self, codigo: str, e=None):
         """Clic DENTRO de la casilla marcadora: marca o desmarca."""
-        self._asegurar_captura_escape(e)
+        self._teclado.instalar(e)
         self._seleccion.alternar(codigo)
 
     def limpiar_seleccion(self, e=None):
@@ -563,42 +627,11 @@ class InventarioView(BaseView):
 
     def alternar_modo_seleccion(self, e=None):
         """Entra o sale del modo de selección múltiple (borrado por lote)."""
-        self._asegurar_captura_escape(e)
+        self._teclado.instalar(e)
         self._seleccion.alternar_modo()
         self._actualizar_barra_seleccion()
         self._cargar_filas()
         self._safe_update(e)
-
-    # ── Captura de [Esc] ────────────────────────────────────────────────────
-    def _asegurar_captura_escape(self, e=None):
-        """Engancha el teclado de la página la primera vez que se marca algo.
-
-        No se engancha al construir la vista porque entonces todavía no hay
-        `page` (la vista se instancia headless y se monta después), y porque
-        [Esc] solo tiene sentido cuando hay algo marcado. El handler que
-        estuviera puesto se guarda y se sigue invocando: esta vista comparte la
-        página con el resto del Dashboard y no debe quedarse con el teclado.
-        """
-        p = self._get_page(e)
-        if p is None:
-            return
-        try:
-            actual = getattr(p, "on_keyboard_event", None)
-            if actual is self._handle_tecla:
-                return
-            self._keyboard_previo = actual
-            p.on_keyboard_event = self._handle_tecla
-        except (AttributeError, RuntimeError):
-            pass  # página sin soporte de teclado: el botón de la barra suple a [Esc]
-
-    def _handle_tecla(self, e=None):
-        """[Esc] deselecciona; cualquier otra tecla sigue su curso."""
-        tecla = str(getattr(e, "key", "") or "")
-        if tecla.strip().lower() == "escape":
-            self.limpiar_seleccion(e)
-        previo = self._keyboard_previo
-        if previo is not None and previo is not self._handle_tecla:
-            previo(e)
 
     # ── Barra de estado de la selección ─────────────────────────────────────
     def _build_barra_seleccion(self, accent, subtext) -> ft.Row:
