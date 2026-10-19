@@ -50,6 +50,12 @@ class GestionDatosView(BaseView):
             destino_vertical=self._destino_vertical,
             destino_horizontal=self._destino_horizontal,
             registro_foco=RegistroFoco(),
+            # Identidad logica de la vista: el Dashboard la reemplaza en cada
+            # repintado, asi que el control nuevo RELEVA al de la instancia
+            # anterior en vez de encadenarse a el. Sin esto la cadena de
+            # handlers crece sin tope y las instancias viejas siguen actuando
+            # sobre controles que ya no estan en pantalla.
+            identidad="gestion_datos",
         )
         super().__init__(route="/gestion-datos", title="Gestión de Datos y Respaldos")
 

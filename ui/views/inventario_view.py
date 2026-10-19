@@ -123,6 +123,12 @@ class InventarioView(BaseView):
             # que la tecla no tiene que adivinar ninguna fila.
             ejecutar_accion=self._accionar_por_teclado,
             al_limpiar=self.limpiar_seleccion,
+            # Identidad logica de la vista: el Dashboard la reemplaza en cada
+            # repintado, asi que el control nuevo RELEVA al de la instancia
+            # anterior en vez de encadenarse a el. Sin esto la cadena de
+            # handlers crece sin tope y las instancias viejas siguen actuando
+            # sobre controles que ya no estan en pantalla.
+            identidad="inventario",
         )
         # ¿El cuerpo de esta vista salió de la pantalla? Ver
         # `_al_desmontar_cuerpo` y `_accionar_por_teclado`.
