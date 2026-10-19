@@ -318,6 +318,8 @@ class ControlTeclado:
         self.foco = registro_foco or RegistroFoco()
         self._handler_previo = None
         self._instalado = False
+        # True mientras este control está atendiendo una tecla (ver `manejar`).
+        self._procesando = False
         # Identidad logica de la vista que instala este control, p. ej.
         # "ventas". Dos controles con la MISMA identidad son la misma pantalla
         # reconstruida, no dos pantallas distintas, y el nuevo RELEVA al viejo
@@ -378,6 +380,16 @@ class ControlTeclado:
             # viejas seguían actuando sobre controles que ya no estaban en
             # pantalla (un atajo se ejecutaba dos veces, y la segunda abría un
             # diálogo sobre una tabla invisible).
+            # Antes de ponerse al frente hay que SALIR de la cadena vigente.
+            # Sin esto se forma un ciclo y la aplicación se cuelga: el
+            # Dashboard es una sola instancia que vuelve a instalarse al final
+            # de cada repintado, y para entonces el teclado lo tiene la vista
+            # que acaba de construir, cuya cadena ya apunta al Dashboard.
+            # Resultado: Dashboard → Ventas → Dashboard → … Una sola pulsación
+            # de F5 llegó a dar 247 vueltas y a apilar 120 diálogos, con lo que
+            # la ventana quedaba inservible y había que cerrar el programa.
+            actual = self._fuera_de_la_cadena(actual)
+
             anterior = getattr(actual, "_control_teclado", None)
             if (
                 anterior is not None
@@ -394,6 +406,38 @@ class ControlTeclado:
             return False
         self._instalado = True
         return True
+
+    def _fuera_de_la_cadena(self, cabeza):
+        """Devuelve la cadena `cabeza` con ESTE control quitado de ella.
+
+        La cadena es una lista enlazada de handlers (cada control guarda el
+        anterior en `_handler_previo`). Un control que aparece dos veces en
+        ella es un ciclo, y un ciclo aquí no degrada el rendimiento: congela
+        la aplicación entera, porque el bucle ocurre dentro del manejo de una
+        tecla. Por eso se recorre la cadena entera en cada instalación —son
+        unos pocos eslabones— en vez de confiar en que nadie la enrede.
+
+        El recorrido lleva un conjunto de controles ya vistos: si la cadena ya
+        venía ciclada, hay que cortar igual y no quedarse dando vueltas al
+        intentar repararla.
+        """
+        if cabeza is self._handler:
+            return self._handler_previo
+
+        vistos = set()
+        anterior = cabeza
+        while anterior is not None:
+            control = getattr(anterior, "_control_teclado", None)
+            if control is None or id(control) in vistos:
+                break
+            vistos.add(id(control))
+            if control._handler_previo is self._handler:
+                # Se empalma el eslabón de más abajo y este control queda
+                # fuera, sin romper el resto de la cadena.
+                control._handler_previo = self._handler_previo
+                break
+            anterior = control._handler_previo
+        return cabeza
 
     def desinstalar(self, e=None) -> bool:
         """Devuelve el teclado al handler anterior."""
@@ -421,15 +465,25 @@ class ControlTeclado:
         """`page.on_keyboard_event`. Siempre cede el evento al handler previo,
         incluso cuando esta vista ya lo consumió: otra parte de la aplicación
         puede tener un atajo legítimo sobre la misma tecla."""
-        intencion = interpretar_evento(
-            e,
-            hay_campo_con_foco=self.foco.hay_campo_con_foco,
-            hay_seleccion=self.hay_seleccion,
-        )
+        if self._procesando:
+            # Cinturón y tirantes contra una cadena mal formada. La guarda de
+            # `instalar` ya impide el ciclo, pero el precio de equivocarse acá
+            # no es lentitud: es la ventana congelada y el programa cerrado a
+            # la fuerza. Ante la duda, una tecla ignorada.
+            return
+        self._procesando = True
         try:
-            await self._aplicar(intencion, e)
+            intencion = interpretar_evento(
+                e,
+                hay_campo_con_foco=self.foco.hay_campo_con_foco,
+                hay_seleccion=self.hay_seleccion,
+            )
+            try:
+                await self._aplicar(intencion, e)
+            finally:
+                await self._ceder(e)
         finally:
-            await self._ceder(e)
+            self._procesando = False
 
     @property
     def hay_seleccion(self) -> bool:

@@ -452,3 +452,168 @@ def test_una_vista_sin_identidad_no_releva_a_una_con_identidad():
     _control(pagina).instalar()
 
     assert _cadena(pagina) == 2
+
+
+# ─── Ciclos en la cadena (el cuelgue de la aplicación) ──────────────────────
+
+def _largo_cadena(control, tope: int = 50) -> int:
+    """Cuántos eslabones hay por debajo de `control`, cortando si hay ciclo."""
+    vistos = set()
+    largo = 0
+    handler = control._handler_previo
+    while handler is not None and largo < tope:
+        duenio = getattr(handler, "_control_teclado", None)
+        if duenio is None or id(duenio) in vistos:
+            break
+        vistos.add(id(duenio))
+        largo += 1
+        handler = duenio._handler_previo
+    return largo
+
+
+def test_el_contenedor_que_se_reinstala_no_forma_un_ciclo():
+    """La regresión que congelaba la aplicación.
+
+    El Dashboard es UNA sola instancia que vuelve a instalarse al final de
+    cada repintado, y para entonces el teclado lo tiene la vista que acaba de
+    construir, cuya cadena ya apunta al Dashboard. Sin cortar la cadena, queda
+    Dashboard → Ventas → Dashboard → …, y una sola pulsación daba cientos de
+    vueltas: en la aplicación real abrió 120 diálogos y hubo que cerrarla.
+    """
+    pagina = PaginaFalsa()
+    dashboard = _control(pagina, identidad="dashboard")
+    vista = _control(pagina, identidad="ventas")
+
+    # Primer render: la vista anidada se engancha y después el contenedor.
+    vista.instalar()
+    dashboard.instalar()
+    # Repintado: el contenedor se reinstala con la vista al frente.
+    dashboard.instalar()
+
+    assert _largo_cadena(dashboard) < 10, "la cadena quedó ciclada"
+
+
+def test_una_pulsacion_recorre_cada_control_una_sola_vez():
+    """Medida de verdad del defecto: contar ejecuciones, no eslabones."""
+    pagina = PaginaFalsa()
+    destino_vista = DestinoFalso()
+    destino_dash = DestinoFalso()
+
+    dashboard = _control(pagina, identidad="dashboard", destino=destino_dash)
+    vista = _control(pagina, identidad="ventas", destino=destino_vista)
+
+    vista.instalar()
+    dashboard.instalar()
+    dashboard.instalar()
+    vista.instalar()
+    dashboard.instalar()
+
+    _correr(pagina.on_keyboard_event(EventoFalso("Arrow Down")))
+
+    assert len(destino_vista.llamadas) <= 1, destino_vista.llamadas
+    assert len(destino_dash.llamadas) <= 1, destino_dash.llamadas
+
+
+def test_la_accion_se_ejecuta_una_sola_vez_por_pulsacion():
+    """En la aplicación real cada vuelta del bucle abría un diálogo."""
+    pagina = PaginaFalsa()
+    seleccion = SeleccionLista()
+    seleccion.seleccionar("P-001")
+    aperturas = []
+
+    vista = ControlTeclado(
+        obtener_pagina=lambda e=None: pagina,
+        seleccion=seleccion,
+        ejecutar_accion=lambda accion, e=None: aperturas.append(accion),
+        identidad="ventas",
+    )
+    dashboard = _control(pagina, identidad="dashboard")
+
+    vista.instalar()
+    dashboard.instalar()
+    dashboard.instalar()
+
+    _correr(pagina.on_keyboard_event(EventoFalso("F5")))
+
+    assert aperturas == ["editar"], aperturas
+
+
+def test_reinstalar_en_cualquier_orden_no_cicla():
+    """El orden real depende de qué sección se dibuja y cuántas veces."""
+    pagina = PaginaFalsa()
+    dashboard = _control(pagina, identidad="dashboard")
+    ventas = _control(pagina, identidad="ventas")
+    inventario = _control(pagina, identidad="inventario")
+
+    for _ in range(4):
+        for control in (ventas, dashboard, inventario, dashboard, ventas):
+            control.instalar()
+
+    for control in (dashboard, ventas, inventario):
+        assert _largo_cadena(control) < 10
+
+
+def test_una_cadena_ya_ciclada_se_corta_al_reinstalar():
+    """Si alguien enreda la cadena por otro camino, instalar debe repararla
+    en vez de quedarse dando vueltas al intentarlo."""
+    pagina = PaginaFalsa()
+    uno = _control(pagina, identidad="uno")
+    dos = _control(pagina, identidad="dos")
+
+    uno.instalar()
+    dos.instalar()
+    uno._handler_previo = dos.handler  # ciclo forzado a mano
+
+    uno.instalar()  # no debe colgarse
+    assert _largo_cadena(uno) < 10
+
+
+def test_la_guarda_de_reentrada_corta_una_cadena_ciclada():
+    """Cinturón y tirantes: aunque la cadena quede mal, una tecla no puede
+    congelar la ventana."""
+    pagina = PaginaFalsa()
+    destino = DestinoFalso()
+    uno = _control(pagina, identidad="uno", destino=destino)
+    dos = _control(pagina, identidad="dos")
+
+    uno.instalar()
+    dos.instalar()
+    uno._handler_previo = dos.handler  # ciclo forzado, sin pasar por instalar
+
+    _correr(pagina.on_keyboard_event(EventoFalso("Arrow Down")))
+
+    assert len(destino.llamadas) <= 1
+
+
+def test_la_guarda_de_reentrada_se_libera_entre_pulsaciones():
+    """No puede quedarse trabada: la segunda tecla tiene que funcionar."""
+    pagina = PaginaFalsa()
+    destino = DestinoFalso()
+    control = _control(pagina, identidad="uno", destino=destino)
+    control.instalar()
+
+    _correr(pagina.on_keyboard_event(EventoFalso("Arrow Down")))
+    _correr(pagina.on_keyboard_event(EventoFalso("Arrow Down")))
+
+    assert len(destino.llamadas) == 2
+
+
+def test_la_guarda_se_libera_aunque_la_accion_reviente():
+    def accion_rota(accion, e=None):
+        raise RuntimeError("la vista fallo")
+
+    pagina = PaginaFalsa()
+    seleccion = SeleccionLista()
+    seleccion.seleccionar("P-001")
+    control = ControlTeclado(
+        obtener_pagina=lambda e=None: pagina,
+        seleccion=seleccion,
+        ejecutar_accion=accion_rota,
+        identidad="uno",
+    )
+    control.instalar()
+
+    with pytest.raises(RuntimeError):
+        _correr(pagina.on_keyboard_event(EventoFalso("F5")))
+
+    assert control._procesando is False
