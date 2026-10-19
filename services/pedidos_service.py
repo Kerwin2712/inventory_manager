@@ -34,6 +34,8 @@ escribe en la base).
 """
 from datetime import datetime
 
+import pandas as pd
+
 from core.models import normalizar_costo
 from services.busqueda_service import CRITERIO_POR_DEFECTO, buscar_productos
 from services.importacion_service import (
@@ -452,3 +454,110 @@ def total_unidades(session_id: str) -> float:
 def total_costo_efectivo(session_id: str) -> float:
     """Costo USD Efectivo total del pedido: cantidad × costo, por renglón."""
     return round(sum(r["cantidad"] * r["costo_usd_efectivo"] for r in obtener_renglones(session_id)), 2)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GENERACIÓN DEL ARCHIVO EXCEL
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _fila_excel(renglon: dict, proveedor: str, fecha_recepcion: str) -> dict:
+    """Traduce un renglón del borrador a una fila con los encabezados que la
+    Carga Masiva reconoce. Los montos se escriben como NÚMEROS (no como texto
+    con '$'): el lector de la importación interpreta la celda con `float`, y un
+    texto formateado lo obligaría a adivinar separadores."""
+    return {
+        ENCABEZADO_POR_CAMPO["codigo"]: renglon["codigo"],
+        ENCABEZADO_POR_CAMPO["referencia"]: renglon["referencia"],
+        ENCABEZADO_POR_CAMPO["departamento"]: renglon["departamento"],
+        ENCABEZADO_POR_CAMPO["descripcion_general"]: renglon["descripcion_general"],
+        ENCABEZADO_POR_CAMPO["marca"]: renglon["marca"],
+        ENCABEZADO_POR_CAMPO["precio_dolares"]: renglon["precio_usd_efectivo"],
+        ENCABEZADO_POR_CAMPO["precio_bcv"]: renglon["precio_usd_bcv"],
+        # El Proveedor y la Fecha de Recepción se piden UNA sola vez al cerrar
+        # el pedido, pero se repiten en cada fila porque la Carga Masiva resuelve
+        # el proveedor fila por fila (busca su `empresa` para enlazar el ID).
+        ENCABEZADO_POR_CAMPO["proveedor"]: proveedor,
+        # La cantidad recibida viaja en la columna Existencia: es la única que
+        # la importación escribe sobre el stock. Ojo (y es la razón por la que
+        # este archivo lo supervisa un Administrador): la importación hace
+        # INSERT OR REPLACE, así que FIJA la existencia en este número en vez de
+        # sumarla a la que el producto ya tenía.
+        ENCABEZADO_POR_CAMPO["existencia"]: renglon["cantidad"],
+        ENCABEZADO_POR_CAMPO["codigo_barras"]: renglon["codigo_barras"],
+        ENCABEZADO_POR_CAMPO["nombre_referencia_corto"]: renglon["nombre_referencia_corto"],
+        ENCABEZADO_SUB_DEPARTAMENTO: renglon["sub_departamento"],
+        ENCABEZADO_COSTO_EFECTIVO: renglon["costo_usd_efectivo"],
+        ENCABEZADO_COSTO_BCV: renglon["costo_usd_bcv"],
+        ENCABEZADO_FECHA_RECEPCION: fecha_recepcion,
+    }
+
+
+def construir_filas_pedido(session_id: str, proveedor: str, fecha_recepcion: str) -> list[dict]:
+    """Filas del Excel (encabezado → valor) del pedido de la sesión, ya
+    validadas. Separado de la escritura del archivo para poder verificar el
+    contenido sin tocar el disco."""
+    renglones = obtener_renglones(session_id)
+    if not renglones:
+        raise ValueError("ERR_PEDIDO_VACIO: No se puede generar el archivo de un pedido sin renglones.")
+    proveedor = validar_proveedor(proveedor)
+    fecha_recepcion = validar_fecha_recepcion(fecha_recepcion)
+    return [_fila_excel(r, proveedor, fecha_recepcion) for r in renglones]
+
+
+def generar_archivo_pedido(session_id: str, ruta_destino: str, proveedor: str, fecha_recepcion: str) -> dict:
+    """Escribe el Excel del pedido en `ruta_destino` y devuelve su resumen.
+
+    El libro sale con la hoja de productos en el formato de la Carga Masiva (así
+    el Administrador lo ingresa sin mapear columnas) más una hoja de resumen con
+    el Proveedor, la Fecha de Recepción y los totales, para que pueda
+    supervisarlo antes de importarlo.
+
+    No escribe nada en la base de datos (ver docstring del módulo) y tampoco
+    vacía el borrador: si el usuario quiere corregir algo y volver a exportar,
+    su pedido sigue armado.
+    """
+    filas = construir_filas_pedido(session_id, proveedor, fecha_recepcion)
+    proveedor = validar_proveedor(proveedor)
+    fecha_recepcion = validar_fecha_recepcion(fecha_recepcion)
+
+    if not (ruta_destino or "").strip():
+        raise ValueError("ERR_PEDIDO_RUTA: Debe indicar dónde guardar el archivo del pedido.")
+
+    # `columns=` explícito: fija el orden de las columnas y garantiza que todas
+    # las de la plantilla existan incluso si alguna fila no las trajera.
+    df_productos = pd.DataFrame(filas, columns=list(ENCABEZADOS_PEDIDO))
+    df_resumen = pd.DataFrame(
+        [
+            {"Dato": "Proveedor", "Valor": proveedor},
+            {"Dato": "Fecha de Recepción", "Valor": fecha_recepcion},
+            {"Dato": "Renglones", "Valor": len(filas)},
+            {"Dato": "Unidades totales", "Valor": total_unidades(session_id)},
+            {"Dato": "Costo USD Efectivo total", "Valor": total_costo_efectivo(session_id)},
+            {"Dato": "Generado", "Valor": datetime.now().strftime("%d/%m/%Y %H:%M:%S")},
+        ]
+    )
+
+    with pd.ExcelWriter(ruta_destino, engine="openpyxl") as writer:
+        df_productos.to_excel(writer, sheet_name=NOMBRE_HOJA_PEDIDO, index=False)
+        df_resumen.to_excel(writer, sheet_name=NOMBRE_HOJA_RESUMEN, index=False)
+
+    return {
+        "exito": True,
+        "ruta": ruta_destino,
+        "proveedor": proveedor,
+        "fecha_recepcion": fecha_recepcion,
+        "renglones": len(filas),
+        "unidades": total_unidades(session_id),
+        "mensaje": (
+            f"Pedido de nueva mercancía generado con {len(filas)} renglón(es) "
+            f"del proveedor '{proveedor}' (recepción {fecha_recepcion})."
+        ),
+    }
+
+
+def nombre_archivo_sugerido(proveedor: str = "") -> str:
+    """Nombre propuesto en el diálogo de guardado: identifica al proveedor y al
+    momento para que dos pedidos no se sobrescriban entre sí."""
+    prov = "".join(c for c in (proveedor or "") if c.isalnum() or c in " -_").strip().replace(" ", "_")
+    sufijo = f"_{prov}" if prov else ""
+    return f"Pedido_Nueva_Mercancia{sufijo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
