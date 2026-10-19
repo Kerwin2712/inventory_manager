@@ -307,6 +307,7 @@ class ControlTeclado:
         ejecutar_accion=None,
         al_limpiar=None,
         registro_foco: RegistroFoco | None = None,
+        identidad: str | None = None,
     ):
         self._obtener_pagina = obtener_pagina
         self._destino_vertical = destino_vertical
@@ -317,12 +318,34 @@ class ControlTeclado:
         self.foco = registro_foco or RegistroFoco()
         self._handler_previo = None
         self._instalado = False
-        # Referencia ESTABLE al handler. `self.manejar` crea un método ligado
-        # nuevo en cada acceso, así que `pagina.on_keyboard_event is
-        # self.manejar` siempre era falso: la guarda de reinstalación no
-        # disparaba nunca y el control acababa encadenado a sí mismo, con lo
-        # que una sola flecha se procesaba cientos de veces.
-        self._handler = self.manejar
+        # Identidad logica de la vista que instala este control, p. ej.
+        # "ventas". Dos controles con la MISMA identidad son la misma pantalla
+        # reconstruida, no dos pantallas distintas, y el nuevo RELEVA al viejo
+        # en vez de encadenarse a el (ver `instalar`). Sin identidad se
+        # encadena siempre, que es el comportamiento conservador.
+        self.identidad = identidad
+
+        # Referencia ESTABLE al handler, con el dueno colgado encima para que
+        # otra instalacion pueda reconocer quien tiene hoy el teclado.
+        # `self.manejar` crea un método ligado nuevo en cada acceso, así que
+        # `pagina.on_keyboard_event is self.manejar` siempre era falso: la
+        # guarda de reinstalación no disparaba nunca y el control acababa
+        # encadenado a sí mismo, con lo que una sola flecha se procesaba
+        # cientos de veces.
+        self._handler = self._crear_handler()
+
+    def _crear_handler(self):
+        """Envoltorio del handler con una referencia al control que lo creó.
+
+        Se usa una función con atributo en vez del método ligado para poder
+        preguntarle a `page.on_keyboard_event` de quién es: es lo que permite
+        relevar a un control de la misma vista en lugar de encadenarse a él.
+        """
+        async def handler(e=None):
+            await self.manejar(e)
+
+        handler._control_teclado = self
+        return handler
 
     # ── Instalación ─────────────────────────────────────────────────────────
     @property
@@ -345,7 +368,27 @@ class ControlTeclado:
             if actual is self._handler:
                 self._instalado = True
                 return True
-            self._handler_previo = actual
+
+            # Si quien tiene el teclado es un control de ESTA MISMA vista
+            # (misma identidad), es la pantalla anterior reconstruida: la
+            # relevamos y heredamos su handler previo, en vez de encadenarnos
+            # a ella. Encadenarse hacía crecer la cadena sin tope — el
+            # Dashboard reemplaza sus vistas en cada repintado —, de modo que
+            # una sola pulsación recorría todas las instancias pasadas y las
+            # viejas seguían actuando sobre controles que ya no estaban en
+            # pantalla (un atajo se ejecutaba dos veces, y la segunda abría un
+            # diálogo sobre una tabla invisible).
+            anterior = getattr(actual, "_control_teclado", None)
+            if (
+                anterior is not None
+                and self.identidad is not None
+                and anterior.identidad == self.identidad
+            ):
+                self._handler_previo = anterior._handler_previo
+                anterior._instalado = False
+            else:
+                self._handler_previo = actual
+
             pagina.on_keyboard_event = self._handler
         except (AttributeError, RuntimeError):
             return False

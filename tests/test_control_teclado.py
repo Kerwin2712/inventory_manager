@@ -350,3 +350,105 @@ def test_una_tecla_cualquiera_no_hace_nada(entorno):
     assert entorno["acciones"] == []
     assert entorno["vertical"].llamadas == []
     assert entorno["limpiezas"] == []
+
+
+# ─── Relevo entre controles de la misma vista ────────────────────────────────
+
+def _cadena(pagina) -> int:
+    """Cuántos controles de teclado hay encadenados en la página."""
+    largo = 0
+    handler = getattr(pagina, "on_keyboard_event", None)
+    while handler is not None:
+        control = getattr(handler, "_control_teclado", None)
+        if control is None:
+            break
+        largo += 1
+        handler = control._handler_previo
+    return largo
+
+
+def _control(pagina, identidad=None, destino=None):
+    return ControlTeclado(
+        obtener_pagina=lambda e=None: pagina,
+        destino_vertical=(lambda: destino) if destino is not None else None,
+        identidad=identidad,
+    )
+
+
+def test_una_vista_reconstruida_releva_a_la_anterior():
+    """El Dashboard reemplaza sus vistas en cada repintado. Sin relevo, la
+    cadena de handlers crece sin tope y cada pulsación recorre todas las
+    instancias pasadas."""
+    pagina = PaginaFalsa()
+    for _ in range(5):
+        _control(pagina, identidad="ventas").instalar()
+
+    assert _cadena(pagina) == 1
+
+
+def test_el_control_relevado_queda_marcado_como_no_instalado():
+    pagina = PaginaFalsa()
+    viejo = _control(pagina, identidad="ventas")
+    viejo.instalar()
+    nuevo = _control(pagina, identidad="ventas")
+    nuevo.instalar()
+
+    assert viejo.instalado is False
+    assert nuevo.instalado is True
+
+
+def test_la_instancia_vieja_ya_no_recibe_las_teclas():
+    """Era el defecto concreto: la vista anterior seguía actuando sobre una
+    tabla que ya no estaba en pantalla, y el atajo se ejecutaba dos veces."""
+    pagina = PaginaFalsa()
+    destino_viejo, destino_nuevo = DestinoFalso(), DestinoFalso()
+
+    _control(pagina, identidad="ventas", destino=destino_viejo).instalar()
+    _control(pagina, identidad="ventas", destino=destino_nuevo).instalar()
+
+    _correr(pagina.on_keyboard_event(EventoFalso("Arrow Down")))
+
+    assert destino_viejo.llamadas == []
+    assert len(destino_nuevo.llamadas) == 1
+
+
+def test_el_relevo_hereda_el_handler_previo_ajeno():
+    """Relevar a la vista anterior no puede costarle el teclado al Dashboard,
+    que estaba debajo en la cadena."""
+    pagina = PaginaFalsa()
+    recibidas = []
+    pagina.on_keyboard_event = lambda e: recibidas.append(getattr(e, "key", None))
+
+    _control(pagina, identidad="ventas").instalar()
+    _control(pagina, identidad="ventas").instalar()
+
+    _correr(pagina.on_keyboard_event(EventoFalso("Arrow Down")))
+    assert recibidas == ["Arrow Down"]
+
+
+def test_dos_vistas_distintas_si_se_encadenan():
+    """Identidades distintas son pantallas distintas que conviven: el
+    Dashboard y la vista que aloja, por ejemplo."""
+    pagina = PaginaFalsa()
+    _control(pagina, identidad="inicio").instalar()
+    _control(pagina, identidad="ventas").instalar()
+
+    assert _cadena(pagina) == 2
+
+
+def test_sin_identidad_se_encadena_como_antes():
+    """Comportamiento conservador: un control sin identidad declarada no
+    releva a nadie, porque no hay forma de saber si es el mismo."""
+    pagina = PaginaFalsa()
+    _control(pagina).instalar()
+    _control(pagina).instalar()
+
+    assert _cadena(pagina) == 2
+
+
+def test_una_vista_sin_identidad_no_releva_a_una_con_identidad():
+    pagina = PaginaFalsa()
+    _control(pagina, identidad="ventas").instalar()
+    _control(pagina).instalar()
+
+    assert _cadena(pagina) == 2

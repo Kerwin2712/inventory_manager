@@ -48,6 +48,12 @@ class DashboardView(BaseView):
             obtener_pagina=lambda e=None: self.get_current_page(e),
             destino_vertical=lambda: self._scroll_inicio_v,
             destino_horizontal=lambda: self._scroll_inicio_h,
+            # Identidad logica de la vista: el Dashboard la reemplaza en cada
+            # repintado, asi que el control nuevo RELEVA al de la instancia
+            # anterior en vez de encadenarse a el. Sin esto la cadena de
+            # handlers crece sin tope y las instancias viejas siguen actuando
+            # sobre controles que ya no estan en pantalla.
+            identidad="dashboard",
         )
         super().__init__(route="/dashboard", title="Inicio")
 

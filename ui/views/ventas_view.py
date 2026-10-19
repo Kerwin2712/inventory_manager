@@ -142,6 +142,12 @@ class VentasView(BaseView):
             ejecutar_accion=self.ejecutar_accion_sobre_seleccionado,
             al_limpiar=self.limpiar_seleccion,
             registro_foco=self._registro_foco,
+            # Identidad logica de la vista: el Dashboard la reemplaza en cada
+            # repintado, asi que el control nuevo RELEVA al de la instancia
+            # anterior en vez de encadenarse a el. Sin esto la cadena de
+            # handlers crece sin tope y las instancias viejas siguen actuando
+            # sobre controles que ya no estan en pantalla.
+            identidad="ventas",
         )
 
         self._columnas_carrito_ocultables = VentasView._COLUMNAS_CARRITO_OCULTABLES
