@@ -240,3 +240,6 @@ inventory.db
 # PDF Exports
 exports/
 
+
+# Worktrees de los agentes de Claude Code
+.claude/worktrees/
