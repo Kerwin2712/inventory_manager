@@ -4,9 +4,11 @@ from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
+from services.bcv_service import obtener_estado_tasa
 from services.reportes_service import (
     obtener_metricas_dashboard,
     obtener_top_ventas,
+    obtener_ventas_del_dia,
     obtener_alertas_stock,
     obtener_stock_minimo,
     actualizar_stock_minimo,
@@ -135,9 +137,21 @@ class DashboardView(BaseView):
             main_content = gd_view.get_body()
 
         elif self.current_section == "Inicio":
+            # Orden del cuerpo del Inicio (especificación 17/10/2026): las
+            # cuatro tarjetas (con la Tasa BCV primera por la izquierda), la
+            # ventana "Ventas Diarias", y debajo la Auditoría Preventiva y la
+            # Inteligencia de Negocio a ancho completo.
+            #
+            # "Ventas Diarias" queda FUERA de la restricción de ERS 3.6: es el
+            # registro de lo que se vendió hoy, no inteligencia de negocio, y
+            # un vendedor necesita consultarlo durante su turno.
+            secciones_inicio = [
+                self.build_metrics_cards(),
+                ft.Container(height=10),
+                self.build_ventas_diarias(),
+            ]
             # ERS 3.6: el panel de Inteligencia de Negocio y Auditoría de Stock
             # es exclusivo para roles administrativos/gerenciales.
-            secciones_inicio = [self.build_metrics_cards(), ft.Container(height=10)]
             if self.es_admin:
                 secciones_inicio.append(self.build_data_sections())
             else:
@@ -432,6 +446,102 @@ class DashboardView(BaseView):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+    # Ancho común de las tarjetas de la fila superior del Inicio. Cuatro de
+    # ellas más el espaciado entran en ~1120 px, el mismo ancho útil que usan
+    # las tablas de Auditoría y Ventas Diarias de más abajo.
+    ANCHO_TARJETA_METRICA = 265
+
+    def build_tarjeta_tasa_bcv(self) -> ft.Control:
+        """Tarjeta pequeña para ver y actualizar la Tasa BCV del día desde el
+        Inicio (cambio 4 de la especificación 17/10/2026).
+
+        El Inicio es la primera ventana que se ve al abrir el programa y la
+        tasa es el primer dato que el usuario corrige cada mañana, así que la
+        tarjeta va a la izquierda de las demás.
+
+        Replica la VISTA del panel BCV de Inventario —indicador verde/ámbar,
+        la tasa con su antigüedad y el botón "Actualizar Tasa"— pero delega la
+        edición al modal global `BaseView.mostrar_modal_tasa_bcv` en vez de
+        repetir la caja de texto del panel: la tarjeta debe ser pequeña y el
+        modal ya valida el valor, avisa y reconstruye la vista al guardar."""
+        estado = obtener_estado_tasa()
+        tasa = estado["tasa"]
+        descripcion = estado["descripcion"]
+
+        # Mismo criterio que el panel de Inventario: si la antigüedad se mide
+        # en días (no en horas) la tasa está vencida y el indicador pasa a
+        # ámbar. Se compara sobre el texto porque es lo que expone el servicio.
+        vencida = "día" in descripcion or "días" in descripcion
+        color_estado = ft.Colors.AMBER_400 if vencida else ft.Colors.GREEN_400
+        icono_estado = (
+            ft.Icons.WARNING_AMBER_ROUNDED if vencida
+            else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED
+        )
+
+        accent = self.get_accent_color()
+        valor = f"{tasa:,.2f} Bs/$" if tasa > 0 else "Sin tasa"
+
+        return self.create_card(
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color=accent, size=32),
+                            ft.Column(
+                                controls=[
+                                    ft.Text(
+                                        "Tasa de Cambio BCV", size=11,
+                                        color=self.get_subtext_color(), weight=ft.FontWeight.W_600,
+                                    ),
+                                    ft.Text(
+                                        valor, size=20, weight=ft.FontWeight.BOLD,
+                                        color=self.get_text_color(),
+                                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                ],
+                                spacing=2, tight=True, expand=True,
+                            ),
+                        ],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        controls=[
+                            ft.Icon(icono_estado, color=color_estado, size=16),
+                            ft.Text(
+                                descripcion, size=11, color=color_estado,
+                                weight=ft.FontWeight.W_600, max_lines=2,
+                                overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                            ),
+                        ],
+                        spacing=6,
+                    ),
+                    ft.Button(
+                        content=ft.Row(
+                            controls=[
+                                ft.Icon(ft.Icons.CURRENCY_EXCHANGE, size=16, color=ft.Colors.WHITE),
+                                ft.Text("Actualizar Tasa", weight=ft.FontWeight.BOLD, size=13),
+                            ],
+                            spacing=6, tight=True,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        style=ft.ButtonStyle(
+                            bgcolor=accent,
+                            color=ft.Colors.WHITE,
+                            shape=ft.RoundedRectangleBorder(radius=12),
+                        ),
+                        tooltip="Actualizar la tasa BCV del día",
+                        on_click=self.mostrar_modal_tasa_bcv,
+                    ),
+                ],
+                spacing=10,
+                tight=True,
+            ),
+            padding=18,
+            border_radius=18,
+            width=self.ANCHO_TARJETA_METRICA,
+        )
+
     def build_metrics_cards(self) -> ft.Control:
         """Construye las tarjetas de métricas con datos reales de la base de datos."""
         metricas = obtener_metricas_dashboard()
@@ -481,7 +591,7 @@ class DashboardView(BaseView):
                     vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
                 padding=18,
-                width=265,
+                width=self.ANCHO_TARJETA_METRICA,
                 bgcolor=self.get_card_bg(),
                 border_radius=18,
                 border=ft.Border.all(1, self.get_border_color()),
@@ -489,10 +599,150 @@ class DashboardView(BaseView):
             )
             card_widgets.append(c)
 
-        return ft.Row(controls=card_widgets, spacing=20, wrap=True)
+        # La tarjeta de Tasa BCV encabeza la fila (sugerencia explícita del
+        # cliente: "es más cómodo que esté a la izquierda de las demás").
+        return ft.Row(
+            controls=[self.build_tarjeta_tasa_bcv(), *card_widgets],
+            spacing=20,
+            wrap=True,
+        )
+
+    def build_ventas_diarias(self) -> ft.Control:
+        """Ventana "Ventas Diarias" del Inicio (nueva función 1 de la
+        especificación 17/10/2026): todas las ventas del día de hoy en forma de
+        lista, la más reciente arriba y la más vieja abajo.
+
+        Va entre las cuatro tarjetas y la Auditoría Preventiva, y a ancho
+        completo como ellas. Las columnas llevan ancho fijo (suman ~1120 px) y
+        la descripción se parte en dos líneas al estilo "agrupado" del
+        Inventario, porque el requisito explícito es que no haga falta un
+        deslizable horizontal para leer toda la información de la fila."""
+        text_color = self.get_text_color()
+        subtext = self.get_subtext_color()
+        accent = self.get_accent_color()
+
+        ventas = obtener_ventas_del_dia()
+
+        if ventas:
+            filas = []
+            for venta in ventas:
+                cantidad = venta["cantidad_articulos"]
+                # Las cantidades son REAL (hay productos que se venden por
+                # fracción): solo se muestran decimales cuando existen.
+                cantidad_txt = (
+                    f"{cantidad:,.0f}" if float(cantidad).is_integer() else f"{cantidad:,.2f}"
+                )
+                simbolo = "Bs" if venta["moneda"] == "Bs" else "$"
+                referencia = venta["referencia_pago"]
+
+                filas.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(venta["fecha_hora"], size=12, color=text_color, weight=ft.FontWeight.W_600),
+                            width=150,
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(
+                                venta["descripcion_corta"], size=13, color=text_color,
+                                # Dos líneas: un carrito con varios artículos
+                                # concatena todos sus nombres cortos y una sola
+                                # línea los dejaría casi todos fuera.
+                                max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            width=380,
+                            padding=ft.Padding.symmetric(vertical=6),
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(venta["metodo_pago"], size=12, color=text_color),
+                            width=140,
+                        )),
+                        ft.DataCell(ft.Container(
+                            # En Efectivo no hay comprobante que mostrar: el
+                            # guion deja claro que la casilla no quedó vacía
+                            # por un dato perdido.
+                            content=ft.Text(
+                                referencia or "-", size=12,
+                                color=text_color if referencia else subtext,
+                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            width=160,
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(cantidad_txt, size=12, color=text_color, weight=ft.FontWeight.W_600),
+                            width=130,
+                        )),
+                        ft.DataCell(ft.Container(
+                            content=ft.Text(
+                                f"{simbolo} {venta['monto_total']:,.2f}",
+                                size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400,
+                            ),
+                            width=160,
+                        )),
+                    ])
+                )
+
+            contenido = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Fecha y hora", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Descripción Corta", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Método de Pago", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Referencia de Pago", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Cantidad de Artículos", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Monto Total Pagado", color=text_color, weight=ft.FontWeight.BOLD)),
+                ],
+                rows=filas,
+                data_row_min_height=56,
+                data_row_max_height=80,
+            )
+        else:
+            contenido = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, color=subtext, size=32),
+                    ft.Text("Todavía no se ha registrado ninguna venta hoy.", color=subtext, size=13),
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30,
+            )
+
+        tarjeta = self.create_card(
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Row([
+                                ft.Icon(ft.Icons.RECEIPT_LONG_ROUNDED, color=accent),
+                                ft.Text("Ventas Diarias", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                            ], spacing=10),
+                            ft.Text(
+                                f"{len(ventas)} venta(s) hoy", size=12,
+                                color=subtext, weight=ft.FontWeight.W_600,
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        wrap=True,
+                    ),
+                    ft.Divider(height=10, color=self.get_border_color()),
+                    self._tabla_a_ancho_completo(contenido),
+                ],
+                spacing=10,
+            ),
+            padding=15,
+            border_radius=18,
+            col={"sm": 12, "lg": 12},
+        )
+
+        # Igual que `build_data_sections`: el `ResponsiveRow` es lo que hace que
+        # la tarjeta se estire de izquierda a derecha (un Container suelto en un
+        # Column se encoge al ancho de su contenido).
+        return ft.ResponsiveRow(controls=[tarjeta], spacing=20)
 
     def build_data_sections(self) -> ft.Control:
-        """Construye las tablas de métricas en contenedores adaptativos con datos reales."""
+        """Auditoría Preventiva e Inteligencia de Negocio, ambas a ANCHO COMPLETO
+        y en ese orden (especificación 17/10/2026, cambios 1 y 2).
+
+        Antes convivían a `lg: 6` (media pantalla cada una) y la Auditoría solo
+        alcanzaba a mostrar el nombre corto del producto, que es justo lo que el
+        cliente pedía ampliar. Con `lg: 12` las dos tarjetas ocupan el ancho
+        completo y se apilan dentro del mismo `ResponsiveRow`."""
         text_color = self.get_text_color()
         accent = self.get_accent_color()
 
@@ -570,7 +820,7 @@ class DashboardView(BaseView):
                 padding=30
             )
 
-        left_section = self.create_card(
+        seccion_inteligencia = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -591,7 +841,7 @@ class DashboardView(BaseView):
             ),
             padding=15,
             border_radius=18,
-            col={"sm": 12, "lg": 6},
+            col={"sm": 12, "lg": 12},
         )
 
         # ── 2. Auditoría Preventiva (Stock Crítico + Contacto Proveedor - ERS 3.6) ──
@@ -623,28 +873,21 @@ class DashboardView(BaseView):
         )
 
         if alertas_stock:
-            stock_rows = []
-            for item in alertas_stock:
-                contacto_str = f"{item['proveedor_nombre']} ({item['proveedor_telefono']})"
-                stock_rows.append(
-                    ft.DataRow(
-                        cells=[
-                            ft.DataCell(ft.Text(item["nombre_corto"], color=text_color, weight=ft.FontWeight.BOLD)),
-                            ft.DataCell(ft.Text(f"{item['existencia']:.0f}", color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD)),
-                            ft.DataCell(ft.Text(f"{item['minimo']:.0f}", color=text_color)),
-                            ft.DataCell(ft.Text(contacto_str, color=self.get_subtext_color())),
-                        ]
-                    )
-                )
+            stock_rows = [self._fila_auditoria(item, accent, text_color) for item in alertas_stock]
 
             stock_content = ft.DataTable(
                 columns=[
-                    ft.DataColumn(ft.Text("Producto", color=text_color)),
-                    ft.DataColumn(ft.Text("Stock Actual", color=text_color)),
-                    ft.DataColumn(ft.Text("Mínimo", color=text_color)),
-                    ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color)),
+                    ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Stock Actual", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Mínimo", color=text_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color, weight=ft.FontWeight.BOLD)),
                 ],
                 rows=stock_rows,
+                # Dos líneas de descripción necesitan alto de fila variable: los
+                # mismos valores que usa la vista "agrupado" del Inventario.
+                data_row_min_height=72,
+                data_row_max_height=95,
             )
         else:
             stock_content = ft.Container(
@@ -655,7 +898,7 @@ class DashboardView(BaseView):
                 padding=30
             )
 
-        right_section = self.create_card(
+        seccion_auditoria = self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -670,19 +913,129 @@ class DashboardView(BaseView):
                         wrap=True,
                     ),
                     ft.Divider(height=10, color=self.get_border_color()),
-                    stock_content,
+                    self._tabla_a_ancho_completo(stock_content),
                 ],
                 spacing=10,
             ),
             padding=15,
             border_radius=18,
-            col={"sm": 12, "lg": 6},
+            col={"sm": 12, "lg": 12},
         )
 
+        # La Auditoría va primero: es la ventana que el cliente consulta al
+        # abrir el programa (qué reponer hoy). La Inteligencia de Negocio queda
+        # debajo, también a ancho completo (cambio 2 de la especificación).
         return ft.ResponsiveRow(
             controls=[
-                left_section,
-                right_section,
+                seccion_auditoria,
+                seccion_inteligencia,
             ],
             spacing=20,
         )
+
+    def _tabla_a_ancho_completo(self, tabla: ft.Control) -> ft.Control:
+        """Envuelve una tabla ancha en su propio eje HORIZONTAL.
+
+        Los anchos de las tablas del Inicio están calculados para entrar
+        completas en una pantalla normal (sin deslizable horizontal, como pide
+        la especificación), pero en una ventana angosta la tabla se recortaría
+        contra el borde de la tarjeta. Este `Row` con scroll AUTO solo aparece
+        cuando hace falta. No rompe la regla de "un solo dueño por eje": el
+        cuerpo del Inicio es dueño del eje VERTICAL y este Row del HORIZONTAL."""
+        return ft.Row(controls=[tabla], scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def _fila_auditoria(self, item: dict, accent: str, text_color: str) -> ft.DataRow:
+        """Fila de la Auditoría Preventiva al estilo "agrupado" del Inventario.
+
+        El ancho ganado al pasar la tarjeta a pantalla completa se gasta en la
+        información que antes no cabía: la descripción general completa (hasta
+        DOS líneas, con elipsis al final, igual que el modo agrupado), el
+        código, la referencia, el nombre corto y el departamento/marca; todo
+        junto al stock actual, el mínimo que disparó la alerta y el contacto
+        del proveedor que ya se mostraban.
+
+        Los anchos son fijos (y suman ~1120 px) para que la tabla entre en una
+        pantalla normal sin deslizable horizontal, que es la condición que pide
+        la especificación."""
+        subtext = self.get_subtext_color()
+
+        def chip(texto: str, color: str) -> ft.Container:
+            return ft.Container(
+                content=ft.Text(texto, size=11, weight=ft.FontWeight.W_600, color=color),
+                bgcolor=ft.Colors.with_opacity(0.12, color),
+                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                border_radius=6,
+            )
+
+        celda_producto = ft.Container(
+            content=ft.Column([
+                ft.Text(
+                    item.get("descripcion_general") or item["nombre_corto"],
+                    size=13, weight=ft.FontWeight.BOLD, color=text_color,
+                    # El par `max_lines=2` + elipsis es lo que permite la
+                    # segunda línea cuando la descripción es larga: sin el
+                    # overflow explícito el texto se recortaría en seco.
+                    max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+                ft.Row([
+                    chip(f"Cód: {item['codigo']}", accent),
+                    chip(f"Ref: {item.get('referencia') or '-'}", subtext),
+                    chip(f"Corto: {item['nombre_corto']}", subtext),
+                ], spacing=6, wrap=True),
+            ], spacing=4, tight=True),
+            width=470,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        celda_clasificacion = ft.Container(
+            content=ft.Column([
+                ft.Text(item.get("departamento") or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
+                ft.Text(item.get("marca") or "-", size=11, color=subtext),
+            ], spacing=2, tight=True),
+            width=180,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        celda_stock = ft.Container(
+            content=ft.Text(f"{item['existencia']:.0f}", size=16, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
+            width=110,
+            alignment=ft.Alignment.CENTER_LEFT,
+        )
+
+        # `origen` dice qué umbral disparó la alerta ("producto" = el umbral
+        # propio del ítem, "global" = el parametrizado): sin ese dato un mínimo
+        # distinto al de la caja de texto parece un error de cálculo.
+        celda_minimo = ft.Container(
+            content=ft.Column([
+                ft.Text(f"{item['minimo']:.0f}", size=13, color=text_color, weight=ft.FontWeight.W_600),
+                ft.Text(
+                    "umbral propio" if item.get("origen") == "producto" else "umbral global",
+                    size=10, color=subtext,
+                ),
+            ], spacing=2, tight=True),
+            width=110,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        celda_proveedor = ft.Container(
+            content=ft.Column([
+                ft.Text(
+                    item["proveedor_nombre"], size=12, weight=ft.FontWeight.W_600, color=text_color,
+                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+                ft.Text(
+                    f"{item['proveedor_contacto']} · {item['proveedor_telefono']}",
+                    size=11, color=subtext, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+            ], spacing=2, tight=True),
+            width=250,
+            padding=ft.Padding.symmetric(vertical=6),
+        )
+
+        return ft.DataRow(cells=[
+            ft.DataCell(celda_producto),
+            ft.DataCell(celda_clasificacion),
+            ft.DataCell(celda_stock),
+            ft.DataCell(celda_minimo),
+            ft.DataCell(celda_proveedor),
+        ])

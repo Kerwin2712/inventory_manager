@@ -1,5 +1,12 @@
 import sqlite3
+from datetime import datetime
+
 from core.database import get_connection, get_setting, set_setting
+# El listado de Ventas Diarias necesita saber en qué moneda se cobró cada
+# método para elegir el monto correcto; se reutiliza la tupla que ya define el
+# carrito en vez de duplicar la lista (si mañana entra un método nuevo, el
+# reporte lo hereda sin tocar este módulo).
+from services.cart_manager import METODOS_PAGO_BS
 
 # ERS 3.6: "Auditoría preventiva ... cuando la Existencia cae por debajo del
 # stock mínimo PARAMETRIZADO". Se persiste en app_settings en vez de un
@@ -30,10 +37,12 @@ def actualizar_stock_minimo(valor: float) -> float:
 _SQL_ALERTAS = """
     SELECT
         p.codigo,
+        p.referencia,
         p.nombre_referencia_corto,
         p.existencia,
         p.descripcion_general,
         p.departamento,
+        p.marca,
         p.alerta_stock_minimo,
         prov.empresa AS proveedor_nombre,
         prov.telefono AS proveedor_telefono,
@@ -46,14 +55,22 @@ _SQL_ALERTAS = """
 
 def _fila_a_alerta(r, minimo: float, origen: str) -> dict:
     """Arma el diccionario de alerta con las claves que consume el Dashboard
-    (`ui/views/dashboard_view.py`), más `alerta_stock_minimo` y `origen`."""
+    (`ui/views/dashboard_view.py`), más `alerta_stock_minimo` y `origen`.
+
+    `referencia`, `descripcion_general` y `marca` se agregaron para la
+    Auditoría Preventiva a ancho completo (especificación 17/10/2026): con la
+    tarjeta ocupando media pantalla solo cabía el nombre corto, y el cliente
+    pedía "la información completa del item"."""
     propio = r["alerta_stock_minimo"]
     return {
         "codigo": r["codigo"],
+        "referencia": r["referencia"] or "",
         "nombre_corto": r["nombre_referencia_corto"] or r["codigo"],
+        "descripcion_general": r["descripcion_general"] or "",
         "existencia": float(r["existencia"] or 0.0),
         "minimo": float(minimo),
         "departamento": r["departamento"] or "General",
+        "marca": r["marca"] or "",
         "proveedor_nombre": r["proveedor_nombre"] or "Sin Proveedor Asignado",
         "proveedor_telefono": r["proveedor_telefono"] or "N/A",
         "proveedor_contacto": r["proveedor_contacto"] or "N/A",
@@ -236,6 +253,145 @@ def obtener_metricas_dashboard() -> dict:
         "total_categorias": total_categorias,
         "total_criticos": total_criticos
     }
+
+
+# Criterio de "venta de hoy". Se repite textualmente el que ya usan
+# `obtener_metricas_dashboard` y `obtener_top_ventas` para que la tarjeta
+# "Ventas del Día" y el listado "Ventas Diarias" del Inicio nunca discrepen:
+# si uno cuenta una venta, el otro también. Limitación conocida y heredada:
+# `ventas.fecha` se escribe con el `CURRENT_TIMESTAMP` de SQLite (UTC) y aquí
+# se compara contra la fecha LOCAL, así que las ventas hechas de noche
+# (después de las 20:00 en Venezuela, UTC-4) ya cargan la fecha UTC del día
+# siguiente y quedan fuera del "hoy" de ambos reportes. Corregirlo exige
+# normalizar la escritura de `ventas.fecha` a hora local (como se hizo con
+# `productos.created_at`), que es un cambio de datos fuera de este módulo.
+_SQL_VENTA_ES_DE_HOY = "DATE(v.fecha) = DATE('now', 'localtime')"
+
+# Formato de "Fecha y hora" que espera la lista de Ventas Diarias. Se arma en
+# el servicio y no en la vista para que la vista no tenga que conocer los dos
+# formatos en que SQLite puede devolver un DATETIME.
+_FORMATOS_FECHA = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f")
+
+
+def _formatear_fecha_hora(valor) -> str:
+    """Convierte el DATETIME crudo de SQLite a `dd/mm/aaaa hh:mm`.
+
+    Si el valor no respeta ninguno de los formatos conocidos se devuelve tal
+    cual: en una lista de auditoría es preferible mostrar el dato crudo antes
+    que esconder la fila o reventar la vista por un timestamp atípico.
+    """
+    if not valor:
+        return "-"
+    texto = str(valor)
+    for formato in _FORMATOS_FECHA:
+        try:
+            return datetime.strptime(texto, formato).strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            continue
+    return texto
+
+
+def obtener_ventas_del_dia() -> list[dict]:
+    """
+    Listado de las ventas del día de hoy para la ventana "Ventas Diarias" del
+    área de Inicio: la más reciente primero y la más vieja al final.
+
+    Devuelve, por cada venta (no por renglón), las casillas que pide la
+    especificación del 17/10/2026:
+
+    - `fecha_hora`: `dd/mm/aaaa hh:mm` ya formateado.
+    - `descripcion_corta`: los nombres cortos de TODOS los artículos del
+      carrito concatenados con ", ". Se arma en Python recorriendo el detalle
+      ordenado por `vd.id` en vez de con `GROUP_CONCAT`, porque SQLite no
+      garantiza el orden de agregación y el texto saldría distinto entre
+      ejecuciones (una lista que se reordena sola se lee como un error).
+    - `metodo_pago` y `referencia_pago`: la referencia solo viaja cuando el
+      método NO es Efectivo (en Efectivo no existe comprobante que mostrar).
+    - `cantidad_articulos`: unidades vendidas en el carrito (suma de
+      `vd.cantidad`), y `total_lineas` como dato auxiliar.
+    - `monto_total` y `moneda`: el monto REALMENTE cobrado
+      (`ventas.monto_cobrado`, que ya descuenta el descuento aplicado). Las
+      ventas anteriores a la actualización de octubre 2026 lo tienen en NULL,
+      así que cae con elegancia al total a precio de lista de la moneda del
+      método: `total_bcv` para los métodos en bolívares y `total_usd` para el
+      resto.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(f"""
+        SELECT
+            v.id,
+            v.fecha,
+            v.tipo_venta,
+            v.cliente_id,
+            v.metodo_pago,
+            v.referencia_pago,
+            v.total_usd,
+            v.total_bcv,
+            v.monto_cobrado
+        FROM ventas v
+        WHERE {_SQL_VENTA_ES_DE_HOY}
+        ORDER BY v.fecha DESC, v.id DESC
+    """)
+    ventas = cursor.fetchall()
+
+    # Un solo SELECT para el detalle de todas las ventas del día (en lugar de
+    # una consulta por venta): el día puede traer decenas de notas y la lista
+    # se reconstruye en cada `rebuild_ui()` del Dashboard.
+    detalle_por_venta: dict[int, list[sqlite3.Row]] = {}
+    if ventas:
+        marcadores = ",".join("?" for _ in ventas)
+        cursor.execute(f"""
+            SELECT
+                vd.venta_id,
+                vd.producto_codigo,
+                vd.cantidad,
+                p.nombre_referencia_corto
+            FROM ventas_detalle vd
+            LEFT JOIN productos p ON vd.producto_codigo = p.codigo
+            WHERE vd.venta_id IN ({marcadores})
+            ORDER BY vd.venta_id ASC, vd.id ASC
+        """, tuple(v["id"] for v in ventas))
+        for r in cursor.fetchall():
+            detalle_por_venta.setdefault(r["venta_id"], []).append(r)
+
+    conn.close()
+
+    listado = []
+    for v in ventas:
+        lineas = detalle_por_venta.get(v["id"], [])
+        # El nombre corto puede faltar (producto eliminado o sin referencia
+        # corta): el código es el único identificador que siempre existe.
+        nombres = [
+            (r["nombre_referencia_corto"] or r["producto_codigo"] or "-")
+            for r in lineas
+        ]
+        metodo = (v["metodo_pago"] or "Efectivo").strip()
+        en_bolivares = metodo in METODOS_PAGO_BS
+
+        monto_cobrado = v["monto_cobrado"]
+        if monto_cobrado is None:
+            monto_cobrado = v["total_bcv"] if en_bolivares else v["total_usd"]
+
+        listado.append({
+            "venta_id": v["id"],
+            "fecha": v["fecha"],
+            "fecha_hora": _formatear_fecha_hora(v["fecha"]),
+            "tipo_venta": v["tipo_venta"] or "",
+            "cliente_id": v["cliente_id"],
+            "descripcion_corta": ", ".join(nombres) if nombres else "-",
+            "metodo_pago": metodo,
+            # Cadena vacía (y no None) para que la vista pueda pintarla sin
+            # comprobar el tipo; el guion decorativo lo pone la vista.
+            "referencia_pago": (v["referencia_pago"] or "") if metodo != "Efectivo" else "",
+            "cantidad_articulos": float(sum(float(r["cantidad"] or 0.0) for r in lineas)),
+            "total_lineas": len(lineas),
+            "monto_total": float(monto_cobrado or 0.0),
+            "moneda": "Bs" if en_bolivares else "USD",
+        })
+
+    return listado
 
 
 def obtener_historial_producto(codigo: str) -> dict:
