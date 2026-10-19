@@ -17,13 +17,79 @@ from services.importacion_service import (
     analizar_proveedores_con_mapeo,
     ejecutar_importacion_completa_mapeada,
 )
+from services.busqueda_service import CRITERIOS_BUSQUEDA, CRITERIO_POR_DEFECTO
+from services import pedidos_service
 
 class GestionDatosView(BaseView):
     """Vista de Gestión de Datos y Respaldos del Sistema (ERS 1.1)."""
 
     def __init__(self, page: ft.Page = None, user_data: dict = None):
         self.user_data = user_data or {}
+        # Pila de diálogos del Generador de Pedido. El flujo encadena modales
+        # (pedido → casillas del renglón → cierre), y en Flet 0.86 el cierre
+        # solo se dibuja a través de `page.show_dialog` / `page.pop_dialog`.
+        self._dialog_stack: list[ft.AlertDialog] = []
+        # Controles del diálogo del pedido que hay que refrescar en vivo.
+        self._pedido_lista_col: ft.Column | None = None
+        self._pedido_resumen_lbl: ft.Text | None = None
+        self._pedido_resultados_col: ft.Column | None = None
         super().__init__(route="/gestion-datos", title="Gestión de Datos y Respaldos")
+
+    # =========================================================================
+    # PILA DE DIÁLOGOS (API nativa de Flet 0.86)
+    # =========================================================================
+
+    @property
+    def _dialog(self) -> "ft.AlertDialog | None":
+        """Diálogo activo (tope de la pila) o `None` si no hay ninguno."""
+        return self._dialog_stack[-1] if self._dialog_stack else None
+
+    def _open_dialog(self, dialog: ft.AlertDialog, e=None):
+        """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
+        if dialog not in self._dialog_stack:
+            self._dialog_stack.append(dialog)
+        dialog.open = True
+
+        p = self.get_current_page(e)
+        if p is None:
+            return
+        if hasattr(p, "show_dialog"):
+            try:
+                p.show_dialog(dialog)
+            except RuntimeError:
+                pass  # ya estaba montado en la pila de la página
+        else:  # respaldo para páginas que no exponen la API de diálogos
+            if dialog not in p.overlay:
+                p.overlay.append(dialog)
+            p.update()
+
+    def _close_dialog(self, e=None, dialog: ft.AlertDialog = None):
+        """Descarta el diálogo del tope y deja activo el que estaba debajo.
+
+        `pop_dialog()` cierra el diálogo más alto que siga ABIERTO, así que se
+        llama ANTES de bajar la bandera `open`: si se baja primero, el que Flet
+        encuentra como tope es el de abajo y se cierra el equivocado (el modal
+        quedaría pegado en pantalla, o activo pero invisible recibiendo clics).
+        """
+        if dialog is None:
+            dialog = self._dialog
+        if dialog is None:
+            return
+        if dialog in self._dialog_stack:
+            self._dialog_stack.remove(dialog)
+
+        p = self.get_current_page(e)
+        if p is not None and hasattr(p, "pop_dialog"):
+            p.pop_dialog()
+            dialog.open = False
+            return
+
+        dialog.open = False
+        if p is None:
+            return
+        if dialog in getattr(p, "overlay", []):
+            p.overlay.remove(dialog)
+        p.update()
 
     def abrir_dialogo_guardado(self, initial_dir: str, sugerencia_nombre: str) -> str:
         """Abre un cuadro de diálogo nativo de Windows (Tkinter) para seleccionar dónde guardar el respaldo Excel."""
@@ -121,6 +187,42 @@ class GestionDatosView(BaseView):
         )
         card_exportar.col = {"sm": 12, "lg": 6}
 
+        # ── Tarjeta 3: Generador de Archivo por Nueva Mercancía ───────────────
+        # Disponible para TODOS los roles a propósito (Nueva Función 6): es el
+        # punto del requisito — el empleado que recibe la mercancía arma el
+        # pedido en un Excel sin poder modificar el stock, y el Administrador
+        # lo supervisa y lo ingresa después por Carga Masiva de Datos.
+        card_pedido = self.create_card(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.ADD_SHOPPING_CART_ROUNDED, size=40, color=accent),
+                    ft.Column([
+                        ft.Text("Generador de Archivo por Nueva Mercancía", size=16, weight=ft.FontWeight.BOLD, color=text_color),
+                        ft.Text("Arma el pedido de mercancía recibida y lo exporta en el formato de Carga Masiva.", size=12, color=subtext_color)
+                    ], spacing=2, expand=True)
+                ], spacing=15),
+                ft.Divider(),
+                ft.Text(
+                    "Busque el item en el banco de datos, complete solo Costo, Precio de Venta, Marca y "
+                    "Cantidad, y al cerrar indique Proveedor y Fecha de Recepción. El archivo NO modifica "
+                    "el inventario: se le entrega al Administrador para que lo cargue supervisado.",
+                    size=13, color=subtext_color,
+                ),
+                ft.Container(height=10),
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.PLAYLIST_ADD_ROUNDED, color=ft.Colors.WHITE),
+                        ft.Text("ARMAR PEDIDO DE NUEVA MERCANCÍA", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    style=ft.ButtonStyle(bgcolor=accent, shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=self.mostrar_generador_pedido
+                )
+            ], spacing=12),
+            padding=20,
+            border_radius=16
+        )
+        card_pedido.col = {"sm": 12, "lg": 6}
+
         return ft.Container(
             content=ft.Column([
                 ft.Row([
@@ -129,7 +231,7 @@ class GestionDatosView(BaseView):
                 ], spacing=10),
                 ft.Text("Administre las importaciones masivas y la exportación de copias de seguridad de la base de datos.", color=subtext_color),
                 ft.Divider(height=20, color=self.get_border_color()),
-                ft.ResponsiveRow([card_importar, card_exportar], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
+                ft.ResponsiveRow([card_importar, card_exportar, card_pedido], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
             ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True),
             padding=15,
             expand=True
@@ -702,3 +804,526 @@ class GestionDatosView(BaseView):
 
         except Exception as ex:
             self.show_alert_error(e, f"Error al generar la copia de seguridad Excel: {ex}")
+
+    # =========================================================================
+    # GENERADOR DE ARCHIVO POR NUEVA MERCANCÍA (Nueva Función 6)
+    # =========================================================================
+    # La vista solo orquesta: el borrador, las validaciones y la generación del
+    # Excel viven en `services.pedidos_service` (testeable sin interfaz). Nada
+    # de este flujo escribe en la base de datos — ver el docstring del servicio.
+
+    def _refrescar_pedido(self, e=None):
+        """Redibuja la tabla del pedido en borrador y su resumen.
+
+        Se reconstruye desde el servicio en cada cambio (agregar, editar,
+        quitar) en vez de mutar los controles: el borrador es la única fuente
+        de verdad y así la pantalla no puede quedar desincronizada de él.
+        """
+        if self._pedido_lista_col is None:
+            return
+        sid = self.get_session_id(e)
+        renglones = pedidos_service.obtener_renglones(sid)
+
+        if not renglones:
+            self._pedido_lista_col.controls = [
+                ft.Text("El pedido está vacío. Busque un item arriba para agregarlo.",
+                        size=12, italic=True, color=self.get_subtext_color())
+            ]
+        else:
+            filas = [
+                ft.Row([
+                    ft.Text("ITEM", size=11, weight=ft.FontWeight.BOLD, color=self.get_accent_color(), width=220),
+                    ft.Text("MARCA", size=11, weight=ft.FontWeight.BOLD, color=self.get_accent_color(), width=110),
+                    ft.Text("CANT.", size=11, weight=ft.FontWeight.BOLD, color=self.get_accent_color(), width=60),
+                    ft.Text("COSTO $", size=11, weight=ft.FontWeight.BOLD, color=self.get_accent_color(), width=80),
+                    ft.Text("VENTA $", size=11, weight=ft.FontWeight.BOLD, color=self.get_accent_color(), width=80),
+                    ft.Text("", expand=True),
+                ], spacing=8)
+            ]
+            for indice, r in enumerate(renglones):
+                etiqueta = f"{r['codigo']} — {r['nombre_referencia_corto'] or r['descripcion_general']}"
+                if r["origen"] == "manual":
+                    # El alta manual queda identificada: son piezas que todavía
+                    # no existen en el sistema y el Administrador las creará al
+                    # importar, así que merecen una mirada aparte.
+                    etiqueta += "  (nueva)"
+                filas.append(ft.Row([
+                    ft.Text(etiqueta, size=12, color=self.get_text_color(), width=220, no_wrap=False),
+                    ft.Text(r["marca"] or "—", size=12, color=self.get_subtext_color(), width=110),
+                    ft.Text(f"{r['cantidad']:g}", size=12, color=self.get_text_color(), width=60),
+                    ft.Text(f"{r['costo_usd_efectivo']:.2f}", size=12, color=self.get_subtext_color(), width=80),
+                    ft.Text(f"{r['precio_usd_efectivo']:.2f}", size=12, color=self.get_subtext_color(), width=80),
+                    ft.TextButton(
+                        content=ft.Text("Editar", size=12),
+                        on_click=lambda ev, i=indice: self.mostrar_dialogo_editar_renglon(ev, i),
+                    ),
+                    ft.TextButton(
+                        content=ft.Text("Quitar", size=12, color=ft.Colors.RED_400),
+                        on_click=lambda ev, i=indice: self.quitar_renglon_pedido(ev, i),
+                    ),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            self._pedido_lista_col.controls = filas
+
+        if self._pedido_resumen_lbl is not None:
+            self._pedido_resumen_lbl.value = (
+                f"{len(renglones)} renglón(es) · {pedidos_service.total_unidades(sid):g} unidades · "
+                f"Costo total ${pedidos_service.total_costo_efectivo(sid):.2f}"
+            )
+        self.safe_update(e)
+
+    def mostrar_generador_pedido(self, e):
+        """Diálogo principal: buscar el item en el banco de datos, armar el
+        pedido y cerrarlo exportando el Excel."""
+        p = self.get_current_page(e)
+        if not p:
+            return
+
+        txt_busqueda = ft.TextField(
+            label="Buscar item registrado (código, descripción o referencia)",
+            prefix_icon=ft.Icons.SEARCH, dense=True, border_radius=10, expand=True,
+            on_submit=lambda ev: self._buscar_items(ev, txt_busqueda, dd_criterio),
+        )
+        dd_criterio = ft.Dropdown(
+            label="Buscar por",
+            value=CRITERIO_POR_DEFECTO,
+            options=[ft.dropdown.Option(c) for c in CRITERIOS_BUSQUEDA],
+            width=180, border_radius=10, dense=True,
+        )
+        self._pedido_resultados_col = ft.Column(controls=[], spacing=2)
+        self._pedido_lista_col = ft.Column(controls=[], spacing=4)
+        self._pedido_resumen_lbl = ft.Text("", size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color())
+
+        contenido = ft.Column([
+            ft.Text(
+                "El archivo que genere este asistente NO modifica el inventario: es el pedido que se le "
+                "entrega al Administrador para que lo cargue por Carga Masiva de Datos una vez supervisado.",
+                size=12, color=self.get_subtext_color(),
+            ),
+            ft.Row([
+                txt_busqueda,
+                dd_criterio,
+                ft.Button(
+                    content=ft.Text("Buscar"),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE,
+                    on_click=lambda ev: self._buscar_items(ev, txt_busqueda, dd_criterio),
+                ),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Container(
+                content=self._pedido_resultados_col,
+                padding=6, border_radius=10,
+                bgcolor=self.get_card_bg(), border=ft.Border.all(1, self.get_border_color()),
+            ),
+            ft.Row([
+                ft.Text("PEDIDO EN CURSO", size=12, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
+                self._pedido_resumen_lbl,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Container(
+                content=self._pedido_lista_col,
+                padding=6, border_radius=10,
+                bgcolor=self.get_card_bg(), border=ft.Border.all(1, self.get_border_color()),
+            ),
+            # El alta manual va separada del flujo principal: el PDF solo
+            # contempla items ya registrados y esta es la excepción para las
+            # piezas que llegan y todavía no existen en el banco de datos.
+            ft.Row([
+                ft.TextButton(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.NEW_LABEL_ROUNDED, size=18),
+                        ft.Text("Agregar mercancía nueva (no registrada en el sistema)", size=12),
+                    ], tight=True, spacing=6),
+                    on_click=self.mostrar_dialogo_renglon_manual,
+                ),
+            ]),
+        # Un solo dueño del eje vertical: el scroll vive acá y los bloques de
+        # adentro crecen; anidar otro scroll vertical rompe el arrastre.
+        ], spacing=10, tight=True, scroll=ft.ScrollMode.AUTO)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.ADD_SHOPPING_CART_ROUNDED, color=self.get_accent_color()),
+                ft.Text("Pedido de Nueva Mercancía", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(content=contenido, width=900, height=620),
+            actions=[
+                ft.TextButton(content=ft.Text("Cerrar sin exportar"), on_click=self._cerrar_generador),
+                ft.Button(
+                    content=ft.Text("CERRAR PEDIDO Y EXPORTAR"),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=self.mostrar_dialogo_cierre_pedido,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._pedido_dlg = dlg
+        self._open_dialog(dlg, e)
+        self._refrescar_pedido(e)
+
+    def _cerrar_generador(self, e):
+        """Cierra el asistente dejando el borrador intacto en memoria: el
+        usuario puede volver más tarde y seguir armando el mismo pedido."""
+        self._close_dialog(e, dialog=getattr(self, "_pedido_dlg", None))
+        self.safe_update(e)
+
+    def _buscar_items(self, e, txt_busqueda: ft.TextField, dd_criterio: ft.Dropdown):
+        """Busca en el banco de datos de items registrados para no tener que
+        rellenar todas las casillas del item (requisito del PDF)."""
+        try:
+            resultados = pedidos_service.buscar_items_para_pedido(
+                txt_busqueda.value or "", criterio=dd_criterio.value or CRITERIO_POR_DEFECTO
+            )
+        except ValueError as ex:
+            self.show_alert_error(e, str(ex))
+            return
+
+        if not resultados:
+            self._pedido_resultados_col.controls = [
+                ft.Text("Sin coincidencias en el banco de datos. Si la mercancía es nueva, use "
+                        "'Agregar mercancía nueva'.", size=12, italic=True, color=self.get_subtext_color())
+            ]
+        else:
+            self._pedido_resultados_col.controls = [
+                ft.Row([
+                    ft.Text(f"{prod['codigo']} — {prod.get('descripcion_general') or prod.get('nombre_referencia_corto') or ''}",
+                            size=12, color=self.get_text_color(), expand=True),
+                    ft.Text(prod.get("marca") or "—", size=12, color=self.get_subtext_color(), width=110),
+                    ft.TextButton(
+                        content=ft.Text("Agregar al pedido", size=12),
+                        on_click=lambda ev, pr=prod: self.mostrar_dialogo_renglon(ev, pr),
+                    ),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                for prod in resultados
+            ]
+        self.safe_update(e)
+
+    def _campos_casillas_renglon(self, valores: dict | None = None) -> dict:
+        """Las pocas casillas que el PDF pide por renglón: Costo $/BCV, Precio
+        Venta $/BCV, Marca y Cantidad. Todo lo demás lo trae el sistema."""
+        v = valores or {}
+        return {
+            "costo_usd_efectivo": ft.TextField(
+                label="Costo USD Efectivo", value=self._valor_texto(v.get("costo_usd_efectivo")),
+                dense=True, border_radius=10, width=200),
+            "costo_usd_bcv": ft.TextField(
+                label="Costo USD BCV", value=self._valor_texto(v.get("costo_usd_bcv")),
+                dense=True, border_radius=10, width=200),
+            "precio_usd_efectivo": ft.TextField(
+                label="Precio Venta USD Efectivo", value=self._valor_texto(v.get("precio_usd_efectivo")),
+                dense=True, border_radius=10, width=200),
+            "precio_usd_bcv": ft.TextField(
+                label="Precio Venta USD BCV", value=self._valor_texto(v.get("precio_usd_bcv")),
+                dense=True, border_radius=10, width=200),
+            "marca": ft.TextField(
+                label="Marca", value=str(v.get("marca") or ""),
+                dense=True, border_radius=10, width=200),
+            "cantidad": ft.TextField(
+                label="Cantidad recibida", value=self._valor_texto(v.get("cantidad")),
+                dense=True, border_radius=10, width=200),
+        }
+
+    @staticmethod
+    def _valor_texto(valor) -> str:
+        """Número a texto para los TextField (sin decimales inútiles)."""
+        if valor is None or valor == "":
+            return ""
+        try:
+            return f"{float(valor):g}"
+        except (TypeError, ValueError):
+            return str(valor)
+
+    def mostrar_dialogo_renglon(self, e, producto: dict):
+        """Casillas a completar de un item YA REGISTRADO. La Marca viene
+        pre-rellenada con la del producto y queda editable: la misma pieza puede
+        llegar de otra marca en este pedido."""
+        campos = self._campos_casillas_renglon({"marca": producto.get("marca") or ""})
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _agregar(ev):
+            try:
+                pedidos_service.agregar_renglon_desde_banco(
+                    self.get_session_id(ev),
+                    codigo=producto["codigo"],
+                    cantidad=campos["cantidad"].value,
+                    costo_usd_efectivo=campos["costo_usd_efectivo"].value,
+                    costo_usd_bcv=campos["costo_usd_bcv"].value,
+                    precio_usd_efectivo=campos["precio_usd_efectivo"].value,
+                    precio_usd_bcv=campos["precio_usd_bcv"].value,
+                    marca=campos["marca"].value,
+                )
+            except ValueError as ex:
+                lbl_err.value = str(ex)
+                self.safe_update(ev)
+                return
+            self._close_dialog(ev, dialog=dlg)
+            self._refrescar_pedido(ev)
+
+        ficha = ft.Column([
+            ft.Text(f"Código: {producto['codigo']}", size=13, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
+            ft.Text(f"Descripción: {producto.get('descripcion_general') or ''}", size=12, color=self.get_subtext_color()),
+            ft.Text(f"Referencia: {producto.get('referencia') or '—'} · Departamento: "
+                    f"{producto.get('departamento') or '—'} / {producto.get('sub_departamento') or '—'}",
+                    size=12, color=self.get_subtext_color()),
+        ], spacing=2)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Completar casillas del renglón", weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column([
+                    ficha,
+                    ft.Divider(height=10),
+                    ft.ResponsiveRow([campos[c] for c in pedidos_service.CAMPOS_EDITABLES_RENGLON], spacing=10),
+                    lbl_err,
+                ], spacing=10, tight=True),
+                width=520,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda ev: self._close_dialog(ev, dialog=dlg)),
+                ft.Button(
+                    content=ft.Text("Agregar al pedido"),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE, on_click=_agregar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._open_dialog(dlg, e)
+
+    def mostrar_dialogo_renglon_manual(self, e):
+        """Alta de un renglón para mercancía que NO está en el banco de datos.
+
+        Flujo aparte del principal a propósito: el PDF solo contempla items ya
+        registrados, pero un pedido real trae piezas nuevas y el empleado no
+        puede crearlas en el sistema. Se piden los datos que la Carga Masiva
+        necesita para poder abrir la ficha al importar.
+        """
+        campos = self._campos_casillas_renglon()
+        txt_codigo = ft.TextField(label="Código (obligatorio)", dense=True, border_radius=10, width=200)
+        txt_desc = ft.TextField(label="Descripción General (obligatoria)", dense=True, border_radius=10, expand=True)
+        txt_ref = ft.TextField(label="Referencia", dense=True, border_radius=10, width=200)
+        txt_depto = ft.TextField(label="Departamento", dense=True, border_radius=10, width=200)
+        txt_subdepto = ft.TextField(label="Sub-Departamento", dense=True, border_radius=10, width=200)
+        txt_barras = ft.TextField(label="Código de Barras", dense=True, border_radius=10, width=200)
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _agregar(ev):
+            try:
+                pedidos_service.agregar_renglon_manual(
+                    self.get_session_id(ev),
+                    codigo=txt_codigo.value,
+                    descripcion_general=txt_desc.value,
+                    cantidad=campos["cantidad"].value,
+                    costo_usd_efectivo=campos["costo_usd_efectivo"].value,
+                    costo_usd_bcv=campos["costo_usd_bcv"].value,
+                    precio_usd_efectivo=campos["precio_usd_efectivo"].value,
+                    precio_usd_bcv=campos["precio_usd_bcv"].value,
+                    marca=campos["marca"].value,
+                    referencia=txt_ref.value,
+                    departamento=txt_depto.value,
+                    sub_departamento=txt_subdepto.value,
+                    codigo_barras=txt_barras.value,
+                )
+            except ValueError as ex:
+                lbl_err.value = str(ex)
+                self.safe_update(ev)
+                return
+            self._close_dialog(ev, dialog=dlg)
+            self._refrescar_pedido(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.NEW_LABEL_ROUNDED, color=self.get_accent_color()),
+                ft.Text("Mercancía nueva (no registrada)", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Esta pieza no existe en el banco de datos. El Administrador la creará al "
+                            "cargar el archivo; indique los datos mínimos para identificarla.",
+                            size=12, color=self.get_subtext_color()),
+                    ft.Divider(height=10),
+                    ft.Row([txt_codigo, txt_desc], spacing=10),
+                    ft.ResponsiveRow([txt_ref, txt_depto, txt_subdepto, txt_barras], spacing=10),
+                    ft.Divider(height=10),
+                    ft.ResponsiveRow([campos[c] for c in pedidos_service.CAMPOS_EDITABLES_RENGLON], spacing=10),
+                    lbl_err,
+                ], spacing=10, tight=True),
+                width=560,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda ev: self._close_dialog(ev, dialog=dlg)),
+                ft.Button(
+                    content=ft.Text("Agregar al pedido"),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE, on_click=_agregar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._open_dialog(dlg, e)
+
+    def mostrar_dialogo_editar_renglon(self, e, indice: int):
+        """Edita las casillas de un renglón ya agregado (el pedido se revisa
+        completo antes de exportarlo)."""
+        sid = self.get_session_id(e)
+        renglones = pedidos_service.obtener_renglones(sid)
+        if not (0 <= indice < len(renglones)):
+            return
+        renglon = renglones[indice]
+        campos = self._campos_casillas_renglon(renglon)
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _guardar(ev):
+            try:
+                pedidos_service.editar_renglon(
+                    self.get_session_id(ev), indice,
+                    **{campo: campos[campo].value for campo in pedidos_service.CAMPOS_EDITABLES_RENGLON},
+                )
+            except ValueError as ex:
+                lbl_err.value = str(ex)
+                self.safe_update(ev)
+                return
+            self._close_dialog(ev, dialog=dlg)
+            self._refrescar_pedido(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Editar renglón — {renglon['codigo']}", weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(renglon["descripcion_general"], size=12, color=self.get_subtext_color()),
+                    ft.Divider(height=10),
+                    ft.ResponsiveRow([campos[c] for c in pedidos_service.CAMPOS_EDITABLES_RENGLON], spacing=10),
+                    lbl_err,
+                ], spacing=10, tight=True),
+                width=520,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Cancelar"), on_click=lambda ev: self._close_dialog(ev, dialog=dlg)),
+                ft.Button(
+                    content=ft.Text("Guardar cambios"),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE, on_click=_guardar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._open_dialog(dlg, e)
+
+    def quitar_renglon_pedido(self, e, indice: int):
+        """Quita un renglón del pedido en borrador."""
+        pedidos_service.quitar_renglon(self.get_session_id(e), indice)
+        self._refrescar_pedido(e)
+
+    def mostrar_dialogo_cierre_pedido(self, e):
+        """Cierre del pedido: Proveedor y Fecha de Recepción se piden UNA SOLA
+        VEZ (así lo exige el PDF), no renglón por renglón.
+
+        El Proveedor se elige entre los ya registrados en Cartera: el archivo
+        viaja con su nombre de empresa y la Carga Masiva lo usa para enlazar el
+        proveedor del producto al importar.
+        """
+        sid = self.get_session_id(e)
+        if not pedidos_service.obtener_renglones(sid):
+            self.show_alert_error(e, "El pedido está vacío: agregue al menos un renglón antes de exportarlo.")
+            return
+
+        from services.cartera_service import listar_proveedores
+        proveedores = listar_proveedores()
+        if not proveedores:
+            self.show_alert_error(
+                e, "No hay proveedores registrados. Registre el proveedor en Cartera antes de cerrar el pedido."
+            )
+            return
+
+        dd_proveedor = ft.Dropdown(
+            label="Proveedor (obligatorio)",
+            options=[ft.dropdown.Option(pr["empresa"]) for pr in proveedores if pr.get("empresa")],
+            width=360, border_radius=10,
+        )
+        txt_fecha = ft.TextField(
+            label=f"Fecha de Recepción ({pedidos_service.FORMATO_FECHA_RECEPCION})",
+            value=datetime.now().strftime("%d/%m/%Y"),
+            dense=True, border_radius=10, width=200,
+        )
+        lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        def _exportar(ev):
+            try:
+                proveedor = pedidos_service.validar_proveedor(dd_proveedor.value)
+                fecha = pedidos_service.validar_fecha_recepcion(txt_fecha.value)
+            except ValueError as ex:
+                lbl_err.value = str(ex)
+                self.safe_update(ev)
+                return
+
+            # El diálogo se cierra ANTES de abrir el selector nativo de archivo:
+            # el modal de Tkinter bloquea el hilo y quedaría por encima.
+            self._close_dialog(ev, dialog=dlg)
+            self.exportar_pedido(ev, proveedor, fecha)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.FACT_CHECK_ROUNDED, color=self.get_accent_color()),
+                ft.Text("Cerrar pedido y exportar", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Estos dos datos se piden una sola vez para todo el pedido.",
+                            size=12, color=self.get_subtext_color()),
+                    dd_proveedor,
+                    txt_fecha,
+                    ft.Text(
+                        f"{len(pedidos_service.obtener_renglones(sid))} renglón(es) · "
+                        f"{pedidos_service.total_unidades(sid):g} unidades",
+                        size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color(),
+                    ),
+                    lbl_err,
+                ], spacing=12, tight=True),
+                width=420,
+            ),
+            actions=[
+                ft.TextButton(content=ft.Text("Volver al pedido"), on_click=lambda ev: self._close_dialog(ev, dialog=dlg)),
+                ft.Button(
+                    content=ft.Text("GENERAR ARCHIVO EXCEL"),
+                    bgcolor=self.get_accent_color(), color=ft.Colors.WHITE, on_click=_exportar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._open_dialog(dlg, e)
+
+    def exportar_pedido(self, e, proveedor: str, fecha_recepcion: str):
+        """Pide la ruta con el mismo diálogo nativo que la Copia de Seguridad y
+        delega la escritura del Excel en el servicio."""
+        last_dir = get_setting("last_excel_dir", default=None)
+        if last_dir and not os.path.exists(last_dir):
+            last_dir = None
+
+        ruta_destino = self.abrir_dialogo_guardado(
+            last_dir, pedidos_service.nombre_archivo_sugerido(proveedor)
+        )
+        if not ruta_destino:
+            return
+
+        try:
+            resultado = pedidos_service.generar_archivo_pedido(
+                self.get_session_id(e), ruta_destino, proveedor, fecha_recepcion
+            )
+        except ValueError as ex:
+            self.show_alert_error(e, str(ex))
+            return
+        except Exception as ex:
+            self.show_alert_error(e, f"Error al generar el archivo del pedido: {ex}")
+            return
+
+        directorio = os.path.dirname(ruta_destino)
+        if directorio:
+            set_setting("last_excel_dir", directorio)
+
+        # Exportado el archivo, el borrador se descarta: el pedido ya salió del
+        # sistema y dejarlo cargado haría que el siguiente pedido arrancara con
+        # los renglones del anterior.
+        pedidos_service.vaciar_pedido(self.get_session_id(e))
+        self._cerrar_generador(e)
+        self._refrescar_pedido(e)
+        self.show_alert_success(e, f"{resultado['mensaje']}\nGuardado en: {resultado['ruta']}")
