@@ -5,7 +5,14 @@ from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from ui.components.seleccion_lista import SeleccionLista
+from ui.components.dialogo_clave import DialogoClave
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
+# La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
+# `authenticate_user` ya la compara con `core.security.verify_password` contra
+# el `password_hash` almacenado, así que se reutiliza en vez de escribir aquí
+# una segunda copia de la verificación (dos copias = dos criterios que se
+# pueden desincronizar).
+from services.user_service import authenticate_user
 from services.inventario_service import (
     crear_producto, obtener_producto, actualizar_producto,
     listar_productos, eliminar_producto,
@@ -554,6 +561,14 @@ class InventarioView(BaseView):
         self._actualizar_barra_seleccion()
         self._safe_update(e)
 
+    def alternar_modo_seleccion(self, e=None):
+        """Entra o sale del modo de selección múltiple (borrado por lote)."""
+        self._asegurar_captura_escape(e)
+        self._seleccion.alternar_modo()
+        self._actualizar_barra_seleccion()
+        self._cargar_filas()
+        self._safe_update(e)
+
     # ── Captura de [Esc] ────────────────────────────────────────────────────
     def _asegurar_captura_escape(self, e=None):
         """Engancha el teclado de la página la primera vez que se marca algo.
@@ -589,12 +604,19 @@ class InventarioView(BaseView):
     def _build_barra_seleccion(self, accent, subtext) -> ft.Row:
         """Controles para ver y manejar la selección sin adivinar.
 
-        El usuario necesita saber qué lleva marcado y poder liberarlo con el
-        ratón: si la única salida fuera [Esc], una selección olvidada se leería
-        como "los botones de la tabla dejaron de funcionar".
+        El usuario necesita una forma evidente de entrar y salir del modo de
+        lote y de saber cuántos ítems lleva marcados; si eso no está a la
+        vista, el modo múltiple se vuelve un estado invisible que deshabilita
+        botones sin explicación.
         """
         self._lbl_seleccion = ft.Text(
             self._seleccion.descripcion_estado(), size=11, color=subtext,
+        )
+        self._btn_modo_seleccion = ft.IconButton(
+            ft.Icons.CHECKLIST_ROUNDED,
+            icon_color=subtext,
+            tooltip="Activar selección múltiple (para borrar varios ítems)",
+            on_click=self.alternar_modo_seleccion,
         )
         self._btn_limpiar_seleccion = ft.IconButton(
             ft.Icons.HIGHLIGHT_OFF_ROUNDED,
@@ -603,10 +625,22 @@ class InventarioView(BaseView):
             visible=False,
             on_click=self.limpiar_seleccion,
         )
+        self._btn_borrar_lote = ft.Button(
+            content=ft.Text("Borrar marcados", size=11, weight=ft.FontWeight.BOLD),
+            icon=ft.Icons.DELETE_SWEEP_ROUNDED,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
+            visible=False,
+            on_click=self._confirmar_eliminar_lote,
+        )
         self._barra_seleccion = ft.Row(
             controls=[
+                self._btn_modo_seleccion,
                 self._lbl_seleccion,
                 self._btn_limpiar_seleccion,
+                self._btn_borrar_lote,
             ],
             spacing=4,
         )
@@ -618,10 +652,25 @@ class InventarioView(BaseView):
             return
         accent = self.get_accent_color()
         subtext = self.get_subtext_color()
+        multiple = self._seleccion.es_multiple
 
         self._lbl_seleccion.value = self._seleccion.descripcion_estado()
         self._lbl_seleccion.color = accent if self._seleccion.hay_seleccion else subtext
+        self._btn_modo_seleccion.icon_color = accent if multiple else subtext
+        self._btn_modo_seleccion.tooltip = (
+            "Salir de la selección múltiple"
+            if multiple
+            else "Activar selección múltiple (para borrar varios ítems)"
+        )
         self._btn_limpiar_seleccion.visible = self._seleccion.hay_seleccion
+        # Borrar en lote solo se ofrece en el modo múltiple: en modo marcador,
+        # el borrado del ítem señalado ya está en su propio botón de la fila.
+        self._btn_borrar_lote.visible = multiple and self._seleccion.hay_seleccion
+        if self._btn_borrar_lote.visible:
+            self._btn_borrar_lote.content = ft.Text(
+                f"Borrar marcados ({self._seleccion.cantidad})",
+                size=11, weight=ft.FontWeight.BOLD,
+            )
 
     # ─────────────────────────────────────────────────────────────────────────
     # ACCIONES DE UN ÍTEM (los seis botones de la fila)
@@ -908,7 +957,10 @@ class InventarioView(BaseView):
         # ── Casilla marcadora y sombreado de la fila ─────────────────────────
         def celda_marcador(p) -> ft.Control:
             marcado = self._seleccion.esta_seleccionado(p["codigo"])
-            icono = ft.Icons.RADIO_BUTTON_CHECKED if marcado else ft.Icons.RADIO_BUTTON_UNCHECKED
+            if self._seleccion.es_multiple:
+                icono = ft.Icons.CHECK_BOX_ROUNDED if marcado else ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED
+            else:
+                icono = ft.Icons.RADIO_BUTTON_CHECKED if marcado else ft.Icons.RADIO_BUTTON_UNCHECKED
             return ft.Container(
                 content=ft.Icon(icono, color=accent if marcado else subtext, size=20),
                 width=34,
@@ -2077,44 +2129,108 @@ class InventarioView(BaseView):
         except ValueError as ex:
             self._snack(str(ex), ft.Colors.RED_700, e)
 
-    # ─── Eliminar Producto ────────────────────────────────────────────────────
-    def _confirmar_eliminar(self, codigo: str, e=None):
-        accent = self.get_accent_color()
-        text_color = self.get_text_color()
-        card_bg = self.get_card_bg()
+    # ─── Eliminar Producto (exige la clave del usuario) ───────────────────────
+    # Decisión del usuario del proyecto: borrar inventario es irreversible y la
+    # sesión suele quedar abierta en un mostrador, así que CADA borrado pide la
+    # clave de la cuenta con la que está abierta la sesión. El borrado por lote
+    # la pide UNA SOLA VEZ para todo el lote: encadenar quince diálogos de clave
+    # haría que el usuario termine tecleándola sin leer qué autoriza.
+    def _paleta_dialogo(self) -> dict:
+        return {
+            "texto": self.get_text_color(),
+            "subtexto": self.get_subtext_color(),
+            "acento": self.get_accent_color(),
+            "fondo": self.get_card_bg(),
+            "borde": self.get_border_color(),
+        }
 
-        def _hacer_eliminar(ev):
-            self._close_dialog(ev)
+    def _verificar_clave_sesion(self, clave: str) -> bool:
+        """¿`clave` es la de la cuenta con la sesión abierta?
+
+        Delega en `authenticate_user`, que la compara con
+        `core.security.verify_password` contra el `password_hash` almacenado.
+        Sin usuario en sesión devuelve False (fail-closed): es preferible no
+        poder borrar a borrar sin autorización comprobable.
+        """
+        if not self.username or not clave:
+            return False
+        return authenticate_user(self.username, clave) is not None
+
+    def _pedir_clave_para_borrar(self, codigos: list[str], mensaje: str, e=None):
+        """Apila el diálogo de clave que autoriza el borrado de `codigos`."""
+        comp = DialogoClave(
+            titulo="Confirmar Eliminación",
+            mensaje=mensaje,
+            verificar_clave=self._verificar_clave_sesion,
+            on_exito=lambda ev=None: self._eliminar_codigos(codigos, ev),
+            on_cerrar=lambda ev=None: self._close_dialog(ev, dialog=comp.dialogo),
+            paleta=self._paleta_dialogo(),
+            etiqueta_confirmar="Eliminar",
+            icono=ft.Icons.DELETE_FOREVER_ROUNDED,
+        )
+        self._open_dialog(comp.dialogo, e)
+        return comp
+
+    def _confirmar_eliminar(self, codigo: str, e=None):
+        """Borrado de un ítem: enuncia su código y pide la clave."""
+        return self._pedir_clave_para_borrar(
+            [codigo],
+            f"Se eliminará permanentemente el producto '{codigo}'. "
+            "Esta acción no se puede deshacer.",
+            e,
+        )
+
+    def _confirmar_eliminar_lote(self, e=None):
+        """Borrado masivo: enuncia cuántos ítems y cuáles, y pide la clave una
+        sola vez para todo el lote."""
+        codigos = list(self._seleccion.seleccionados)
+        if not codigos:
+            self._snack("No hay ítems marcados para borrar.", ft.Colors.AMBER_700, e)
+            return None
+        # Se nombran los primeros códigos para que el usuario reconozca el lote
+        # sin convertir el diálogo en una lista interminable.
+        muestra = ", ".join(codigos[:8])
+        resto = len(codigos) - 8
+        if resto > 0:
+            muestra += f" y {resto} más"
+        plural = "ítems" if len(codigos) != 1 else "ítem"
+        return self._pedir_clave_para_borrar(
+            codigos,
+            f"Se eliminarán permanentemente {len(codigos)} {plural} del inventario "
+            f"({muestra}). Esta acción no se puede deshacer.",
+            e,
+        )
+
+    def _eliminar_codigos(self, codigos: list[str], e=None) -> list[str]:
+        """Ejecuta el borrado ya autorizado y deja la selección consistente.
+
+        Los códigos borrados se descartan del modelo de selección: si quedaran
+        marcados, una selección fantasma dejaría inertes los botones de todas
+        las filas vivas.
+        """
+        borrados, fallidos = [], []
+        for codigo in codigos:
             try:
                 eliminar_producto(codigo)
-                self._seleccion.descartar([codigo])
-                self._snack(f"Producto '{codigo}' eliminado.", ft.Colors.GREEN_700, ev)
-                self._refrescar_tabla(ev)
-            except ValueError as ex:
-                self._snack(str(ex), ft.Colors.RED_700, ev)
+                borrados.append(codigo)
+            except ValueError:
+                fallidos.append(codigo)
 
-        dlg = ft.AlertDialog(
-            modal=True,
-            title=ft.Row([
-                ft.Icon(ft.Icons.DELETE_FOREVER_ROUNDED, color=ft.Colors.RED_400),
-                ft.Text("Confirmar Eliminación", color=text_color),
-            ], spacing=10),
-            content=ft.Text(
-                f"¿Está seguro de eliminar permanentemente el producto '{codigo}'?\n"
-                "Esta acción no se puede deshacer.",
-                color=text_color,
-            ),
-            actions=[
-                ft.TextButton("Cancelar", on_click=self._close_dialog),
-                ft.Button(
-                    "Eliminar",
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
-                        shape=ft.RoundedRectangleBorder(radius=12)
-                    ),
-                    on_click=_hacer_eliminar,
-                ),
-            ],
-            bgcolor=card_bg,
-        )
-        self._open_dialog(dlg, e)
+        self._seleccion.descartar(borrados)
+        if self._seleccion.es_multiple and not self._seleccion.hay_seleccion:
+            # Lote terminado: salir del modo devuelve la tabla a su
+            # comportamiento normal sin que el usuario tenga que acordarse.
+            self._seleccion.desactivar_modo_multiple()
+        self._actualizar_barra_seleccion()
+
+        if borrados:
+            if len(borrados) == 1:
+                self._snack(f"Producto '{borrados[0]}' eliminado.", ft.Colors.GREEN_700, e)
+            else:
+                self._snack(f"{len(borrados)} productos eliminados.", ft.Colors.GREEN_700, e)
+        if fallidos:
+            self._snack(
+                f"No se pudo eliminar: {', '.join(fallidos)}.", ft.Colors.RED_700, e,
+            )
+        self._refrescar_tabla(e)
+        return borrados
