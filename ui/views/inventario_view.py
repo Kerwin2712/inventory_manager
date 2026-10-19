@@ -758,6 +758,11 @@ class InventarioView(BaseView):
         self._dt = ft.DataTable(
             columns=[self._build_columna_header(k, accent, text_color) for k in self._columnas_orden_visible()],
             rows=[],
+            # Explícito aunque sea el valor por omisión: todas las filas llevan
+            # `on_select_change` (clic en cualquier parte de la fila), y con la
+            # columna de casillas propia de la tabla activada se dibujaría una
+            # SEGUNDA casilla junto a nuestro marcador.
+            show_checkbox_column=False,
         )
         # Separación de ejes (ver nota en `get_body`): la Row scrollea en
         # HORIZONTAL (única dueña de ese eje, la tabla es más ancha que la

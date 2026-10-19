@@ -148,6 +148,12 @@ def test_la_fila_completa_es_sensible_al_clic(vista_modo):
         assert _fila(vista_modo, codigo).on_select_change is not None
 
 
+def test_la_tabla_no_dibuja_su_propia_columna_de_casillas(vista):
+    """Con `on_select_change` en todas las filas, activar la columna de
+    casillas de la tabla pondría una segunda casilla junto al marcador."""
+    assert vista._dt.show_checkbox_column is False
+
+
 def test_la_columna_marcador_no_se_puede_ocultar(vista):
     assert "marcador" not in vista._columnas_ocultables
     assert vista._columnas_orden_visible()[0] == "marcador"
