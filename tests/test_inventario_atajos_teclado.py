@@ -169,6 +169,7 @@ def test_el_cuerpo_toma_el_teclado_al_montarse(productos, pagina):
     cuerpo = v.get_body()
 
     assert cuerpo.did_mount == v._al_montar_cuerpo, "el cuerpo debe avisar al montarse"
+    assert cuerpo.will_unmount == v._al_desmontar_cuerpo, "y también al desmontarse"
     # Montaje: a partir de aquí el cuerpo está en el árbol y expone la página.
     v._body_scroll_col = DestinoFalso(pagina)
     cuerpo.did_mount()
@@ -215,6 +216,49 @@ def test_instalar_dos_veces_no_duplica_el_desplazamiento(vista, destinos, pagina
     _pulsar(vista, pagina, "Arrow Down")
 
     assert len(destinos["vertical"].llamadas) == 1
+
+
+def test_al_salir_de_la_pantalla_se_devuelve_el_teclado(productos, pagina):
+    """El Dashboard cambia de sección reconstruyendo su cuerpo: esta vista se
+    va sin que nadie la cierre, y el teclado tiene que volver a quien lo
+    tenía."""
+    previo = lambda ev: None
+    pagina.on_keyboard_event = previo
+
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=True, username="atajos", rol_usuario="administrador")
+    cuerpo = v.get_body()
+    v._body_scroll_col = DestinoFalso(pagina)
+    cuerpo.did_mount()
+    assert pagina.on_keyboard_event is v._teclado.handler
+
+    cuerpo.will_unmount()
+
+    assert pagina.on_keyboard_event is previo
+
+
+def test_una_vista_fuera_de_pantalla_no_acciona_el_item_que_quedo_marcado(vista, espia_acciones, pagina, evento):
+    """Es la acción con efecto real del lote: F2 sale de la vista por el
+    callback del Dashboard, así que una vista olvidada podría mandar a cobrar
+    un producto que el usuario ya no tiene delante."""
+    vista.seleccionar_item("ATA-002", evento)
+    vista._al_desmontar_cuerpo()
+
+    for tecla in sorted(ATAJOS_ITEM):
+        _pulsar(vista, pagina, tecla)
+
+    assert espia_acciones == []
+
+
+def test_al_volver_a_la_pantalla_las_teclas_vuelven_a_funcionar(vista, espia_acciones, pagina, evento):
+    vista.seleccionar_item("ATA-002", evento)
+    vista._al_desmontar_cuerpo()
+    vista._al_montar_cuerpo()
+
+    _pulsar(vista, pagina, "F5")
+
+    assert espia_acciones == [("editar", "ATA-002")]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

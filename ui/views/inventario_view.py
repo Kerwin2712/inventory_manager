@@ -121,9 +121,12 @@ class InventarioView(BaseView):
             # F1..F6 actúan SOLO sobre el ítem marcado: el punto de entrada
             # recibe el nombre de la acción y resuelve el código él mismo, así
             # que la tecla no tiene que adivinar ninguna fila.
-            ejecutar_accion=self.ejecutar_accion_sobre_seleccionado,
+            ejecutar_accion=self._accionar_por_teclado,
             al_limpiar=self.limpiar_seleccion,
         )
+        # ¿El cuerpo de esta vista salió de la pantalla? Ver
+        # `_al_desmontar_cuerpo` y `_accionar_por_teclado`.
+        self._cuerpo_desmontado = False
 
         # Índice de los productos de la página en pantalla, por código: permite
         # que las acciones por nombre (y los atajos F1..F6, que no tienen
@@ -383,11 +386,27 @@ class InventarioView(BaseView):
         # sobre la instancia porque el cuerpo es un `ft.Column` corriente y no
         # una subclase propia; Flet invoca `did_mount()` del objeto.
         self._body_scroll_col.did_mount = self._al_montar_cuerpo
+        self._body_scroll_col.will_unmount = self._al_desmontar_cuerpo
         return self._body_scroll_col
 
     def _al_montar_cuerpo(self):
         """`did_mount` del cuerpo: con la pantalla viva se toma el teclado."""
+        self._cuerpo_desmontado = False
         self._teclado.instalar()
+
+    def _al_desmontar_cuerpo(self):
+        """`will_unmount` del cuerpo: devolver el teclado al handler anterior.
+
+        El Dashboard cambia de sección RECONSTRUYENDO su cuerpo, así que esta
+        vista sale de la pantalla sin que nadie la cierre y sin que su estado
+        se descarte: el ítem que quedó marcado sigue marcado. Si el teclado
+        siguiera enganchado, una F2 pulsada mientras el usuario mira Ventas la
+        procesaría esta vista y mandaría a cobrar un producto que el usuario ya
+        no tiene delante — y esa sí es una acción con efecto real, porque sale
+        de la vista por el callback del Dashboard.
+        """
+        self._cuerpo_desmontado = True
+        self._teclado.desinstalar()
 
     # ─────────────────────────────────────────────────────────────────────────
     # DESTINOS DE SCROLL DE LAS FLECHAS
@@ -915,6 +934,20 @@ class InventarioView(BaseView):
         if not codigo:
             return False
         return self.ejecutar_accion_item(accion, codigo, e)
+
+    def _accionar_por_teclado(self, accion: str, e=None) -> bool:
+        """Lo que invocan F1..F6, con una guarda de más.
+
+        `_al_desmontar_cuerpo` devuelve el teclado al salir de la pantalla,
+        pero esa devolución depende de que `will_unmount` llegue y de que el
+        handler siga siendo el de esta vista (otra vista pudo instalarse
+        encima en el medio, y entonces la cadena nos sigue entregando las
+        teclas). La bandera no depende de nada de eso: una vista que ya no
+        está en pantalla no acciona ítems, y punto.
+        """
+        if self._cuerpo_desmontado:
+            return False
+        return self.ejecutar_accion_sobre_seleccionado(accion, e)
 
     def _build_tabla_panel(self, accent, card_bg, text_color, subtext, border) -> ft.Control:
         self._dt = ft.DataTable(
