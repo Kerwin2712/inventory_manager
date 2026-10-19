@@ -14,6 +14,8 @@ para forzar a quien la llama a pasar siempre la sesión correcta.
 """
 
 import datetime
+
+from core.database import get_connection
 from services.bcv_service import obtener_estado_tasa
 
 # Métodos de pago soportados (contexto Venezuela): Efectivo/Binance cobran al
@@ -21,7 +23,20 @@ from services.bcv_service import obtener_estado_tasa
 # Bolívares calculado con el Precio USD BCV x tasa vigente.
 METODOS_PAGO_USD = ("Efectivo", "Binance")
 METODOS_PAGO_BS = ("Pago Móvil", "Transferencia", "Punto")
-METODOS_PAGO = METODOS_PAGO_USD + METODOS_PAGO_BS
+# "Crédito" NO cobra: entrega la mercancía y registra el compromiso de pago
+# como una deuda por cobrar (ver `services/deudas_service.py`). Cobra en USD
+# —el saldo de la deuda se lleva en dólares— y existe únicamente en Venta
+# Formal, porque la deuda se registra contra la Cédula/RIF de un cliente de la
+# cartera y una venta de mostrador no tiene a quién cobrarle después.
+# El nombre va SIN tilde a propósito: es el valor que viaja a la columna
+# `ventas.metodo_pago` y se compara en varias capas; sin tilde no depende de
+# la codificación del archivo ni del terminal.
+METODOS_PAGO_CREDITO = ("Credito",)
+METODOS_PAGO = METODOS_PAGO_USD + METODOS_PAGO_BS + METODOS_PAGO_CREDITO
+
+# Único tipo de venta que admite Crédito (el otro, "Informal", es la Venta
+# Mostrador de la interfaz).
+TIPO_VENTA_FORMAL = "Formal"
 
 # session_id -> {"carritos": {...}, "activo": str}
 # El número de cada carrito NO se guarda en un contador monótono: se deriva
@@ -167,13 +182,118 @@ def establecer_metodo_pago(session_id: str, metodo: str, id_carrito: str = None)
     """Fija el método de pago elegido por el cliente en un carrito específico
     o en el activo de la sesión. Determina qué total se cobra: Efectivo/Binance
     cobran en dólares (Precio USD Efectivo); Pago Móvil/Transferencia cobran el
-    equivalente en Bolívares (Precio USD BCV x tasa vigente)."""
+    equivalente en Bolívares (Precio USD BCV x tasa vigente); Crédito no cobra
+    nada en el momento y genera una deuda por cobrar en dólares."""
     if metodo not in METODOS_PAGO:
         raise ValueError(f"Método de pago inválido: {metodo}")
     estado = _estado_sesion(session_id)
     c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
+    # Se rechaza aquí, al elegir el método, en vez de dejar que el carrito
+    # quede en un estado imposible y que el error salte recién al cobrar.
+    if metodo in METODOS_PAGO_CREDITO and c.get("tipo_venta") != TIPO_VENTA_FORMAL:
+        raise ValueError(
+            "El método de pago Crédito solo está disponible en Venta Formal: "
+            "la deuda se registra contra la Cédula/RIF del cliente."
+        )
     c["metodo_pago"] = metodo
     return c
+
+
+def establecer_tipo_venta(session_id: str, tipo_venta: str, id_carrito: str = None) -> dict:
+    """Cambia el tipo de venta del carrito REPARANDO el método de pago si deja
+    de ser válido.
+
+    Crédito solo existe en Venta Formal: pasar el carrito a Mostrador con
+    Crédito seleccionado lo devuelve a "Efectivo" en vez de dejar una
+    combinación inválida que `ventas_service.procesar_venta` rechazaría recién
+    al pulsar Procesar Venta (el vendedor no tendría forma de saber por qué).
+    """
+    estado = _estado_sesion(session_id)
+    c = estado["carritos"][id_carrito] if id_carrito and id_carrito in estado["carritos"] else obtener_carrito_activo(session_id)
+    c["tipo_venta"] = tipo_venta
+    if tipo_venta != TIPO_VENTA_FORMAL and c.get("metodo_pago") in METODOS_PAGO_CREDITO:
+        c["metodo_pago"] = "Efectivo"
+    return c
+
+
+# ─── Cobro de la venta: monto predeterminado, costos y descuento ─────────────
+# Lo que se cobra NO es siempre `total_usd`: depende del método de pago, y
+# desde la actualización de octubre 2026 el vendedor puede cobrar un monto
+# distinto al de lista (descuento). Estos helpers son el único lugar donde se
+# decide cuál es el "monto predeterminado" y cuál es el piso de ese descuento,
+# para que la vista (que lo muestra) y `ventas_service` (que lo valida y lo
+# persiste) no puedan discrepar.
+
+def moneda_de_cobro(metodo_pago: str) -> str:
+    """Moneda en la que se cobra un método de pago: "BCV" (Bolívares) o "USD"."""
+    return "BCV" if (metodo_pago or "") in METODOS_PAGO_BS else "USD"
+
+
+def calcular_monto_predeterminado(items: list, metodo_pago: str = "Efectivo") -> float:
+    """Monto a precio de LISTA que corresponde cobrar por estos renglones con
+    el método de pago indicado, en la moneda de ese método.
+
+    Es el "predeterminado" contra el que se calcula el porcentaje de descuento
+    y el valor con el que se auto-rellena la casilla del monto a cobrar.
+    """
+    clave = "subtotal_bcv" if moneda_de_cobro(metodo_pago) == "BCV" else "subtotal_usd"
+    return round(sum(float(item.get(clave) or 0.0) for item in (items or [])), 2)
+
+
+def obtener_costos_por_codigo(codigos) -> dict:
+    """Lee `costo_usd_efectivo` de los productos indicados.
+
+    Devuelve `{codigo: costo}` con el costo tal cual está en la base: `None`
+    cuando el producto no tiene costo registrado, para que quien calcule el
+    piso pueda distinguir "cuesta cero" de "no se sabe cuánto cuesta".
+    """
+    unicos = [str(c) for c in dict.fromkeys(codigos or []) if c]
+    if not unicos:
+        return {}
+    marcadores = ", ".join("?" for _ in unicos)
+    with get_connection() as conn:
+        filas = conn.execute(
+            f"SELECT codigo, costo_usd_efectivo FROM productos WHERE codigo IN ({marcadores})",
+            unicos,
+        ).fetchall()
+    return {fila["codigo"]: fila["costo_usd_efectivo"] for fila in filas}
+
+
+def calcular_suma_costos(items: list, costos_por_codigo: dict | None = None) -> dict:
+    """Suma de costos del carrito: `costo_usd_efectivo` x cantidad por renglón.
+
+    Es el PISO del descuento: cobrar por debajo de esto es vender a pérdida.
+    Devuelve `{"suma", "parcial", "sin_costo"}`; un producto sin costo
+    registrado se cuenta como 0 y queda listado en `sin_costo` con
+    `parcial=True`, porque entonces el piso calculado es más bajo que el real
+    y hay que advertirlo en vez de fingir que es exacto.
+
+    `costos_por_codigo` permite inyectar los costos ya leídos (así
+    `procesar_venta` los toma de su propio cursor, dentro de su transacción,
+    en vez de abrir una segunda conexión al mismo archivo SQLite).
+    """
+    renglones = list(items or [])
+    if costos_por_codigo is None:
+        costos_por_codigo = obtener_costos_por_codigo(
+            [item.get("codigo") or item.get("producto_codigo") for item in renglones]
+        )
+
+    suma = 0.0
+    sin_costo: list[str] = []
+    for item in renglones:
+        codigo = item.get("codigo") or item.get("producto_codigo")
+        costo = costos_por_codigo.get(codigo)
+        if costo is None:
+            if codigo and codigo not in sin_costo:
+                sin_costo.append(codigo)
+            continue
+        suma += float(costo) * float(item.get("cantidad") or 0.0)
+
+    return {
+        "suma": round(suma, 2),
+        "parcial": bool(sin_costo),
+        "sin_costo": tuple(sin_costo),
+    }
 
 
 def agregar_o_actualizar_producto(
