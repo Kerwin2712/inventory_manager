@@ -379,8 +379,7 @@ class GestionDatosView(BaseView):
                 p.update()
                 return
 
-            dlg.open = False
-            p.update()
+            self._close_dialog(ev, dialog=dlg)
 
             analisis = analizar_proveedores_con_mapeo(ruta_archivo, hoja_actual, mapeo.get("proveedor"))
             if not analisis.get("exito"):
@@ -397,12 +396,10 @@ class GestionDatosView(BaseView):
                 self.ejecutar_importacion_final_mapeada(ev, ruta_archivo, hoja_actual, mapeo)
 
         def _cancelar(ev):
-            dlg.open = False
-            p.update()
+            self._close_dialog(ev, dialog=dlg)
 
         def _cambiar_hoja(ev):
-            dlg.open = False
-            p.update()
+            self._close_dialog(ev, dialog=dlg)
             self.mostrar_asistente_mapeo(ev, ruta_archivo, hoja_forzada=dd_hoja.value)
 
         contenido = [
@@ -474,10 +471,7 @@ class GestionDatosView(BaseView):
             ],
         )
 
-        if dlg not in p.overlay:
-            p.overlay.append(dlg)
-        dlg.open = True
-        p.update()
+        self._open_dialog(dlg, e)
 
     def mostrar_asistente_proveedores_faltantes(self, e, ruta_archivo, faltantes, idx=0, on_completado=None):
         """Muestra un diálogo dinámico secuencial para completar información
@@ -535,8 +529,7 @@ class GestionDatosView(BaseView):
 
         def cerrar_asistente(e_close):
             print(">>> [mostrar_asistente_proveedores_faltantes] Asistente cancelado por el usuario.")
-            dlg.open = False
-            p.update()
+            self._close_dialog(e_close, dialog=dlg)
             self.show_alert_info(e, "Importación cancelada por el usuario.")
 
         def registrar_proveedor(e_reg):
@@ -582,8 +575,7 @@ class GestionDatosView(BaseView):
                 )
                 print(f">>> [registrar_proveedor] Registrado exitosamente en SQLite.")
                 
-                dlg.open = False
-                p.update()
+                self._close_dialog(e_reg, dialog=dlg)
 
                 # Siguiente o iniciar importación final
                 sig_idx = idx + 1
@@ -633,10 +625,7 @@ class GestionDatosView(BaseView):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
-        if dlg not in p.overlay:
-            p.overlay.append(dlg)
-        dlg.open = True
-        p.update()
+        self._open_dialog(dlg, e)
 
     def ejecutar_importacion_final(self, e, ruta_archivo):
         """Llama al servicio de importación real para los productos del Excel."""
@@ -705,8 +694,7 @@ class GestionDatosView(BaseView):
             return
 
         def cerrar_dialogo(e_close):
-            dlg.open = False
-            p.update()
+            self._close_dialog(e_close, dialog=dlg)
 
         dlg = ft.AlertDialog(
             title=ft.Row([
@@ -728,10 +716,7 @@ class GestionDatosView(BaseView):
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
-        if dlg not in p.overlay:
-            p.overlay.append(dlg)
-        dlg.open = True
-        p.update()
+        self._open_dialog(dlg, e)
 
     def handle_exportar_excel(self, e):
         """Exporta la base de datos completa a un libro Excel (.xlsx) con pestañas separadas (ERS 1.1)."""
