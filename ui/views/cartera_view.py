@@ -686,6 +686,12 @@ class CarteraView(BaseView):
                     tooltip="Editar fecha límite y monto total",
                     on_click=lambda ev, item=deuda: self.handle_abrir_edicion_deuda(item, ev),
                 ),
+                ft.IconButton(
+                    ft.Icons.DELETE_OUTLINED,
+                    icon_color=ft.Colors.RED_400,
+                    tooltip="Borrar la deuda con sus renglones y abonos",
+                    on_click=lambda ev, item=deuda: self.handle_confirmar_borrado_deuda(item, ev),
+                ),
             ], spacing=0),
             width=160,
             padding=ft.Padding.symmetric(vertical=6),
@@ -1017,6 +1023,84 @@ class CarteraView(BaseView):
                         shape=ft.RoundedRectangleBorder(radius=12),
                     ),
                     on_click=guardar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._abrir_dialogo(dlg, e)
+        return dlg
+
+    # ─── Botón Borrar: confirmación previa obligatoria ───────────────────────
+    def handle_confirmar_borrado_deuda(self, deuda: dict, e=None):
+        """Pide confirmación ANTES de borrar.
+
+        El borrado arrastra en cascada los renglones acreditados y todo el
+        historial de abonos de la deuda: destruye la constancia de los cobros
+        ya hechos y no hay forma de reconstruirla. El único resguardo posible
+        es que el usuario lo lea antes de confirmar, así que el texto nombra
+        lo que se va a perder y la cifra ya abonada.
+        """
+        actual = deudas_service.obtener_deuda(deuda.get("id"))
+        if actual is None:
+            self.show_alert_error("Esta deuda ya no existe. Actualice la lista.", e)
+            self.refrescar_deudas(e)
+            return
+
+        text_color = self.get_text_color()
+        subtext_color = self.get_subtext_color()
+        abonado = float(actual.get("total_abonado_usd") or 0)
+        cantidad_abonos = len(actual.get("abonos", []))
+
+        def borrar(ev):
+            borrada = deudas_service.eliminar_deuda(actual["id"])
+            self._cerrar_dialogo(ev, dialog=dlg)
+            if borrada:
+                self.show_alert_success("Deuda eliminada con sus renglones y abonos.", ev)
+            else:
+                self.show_alert_error("La deuda ya no existía.", ev)
+            self.refrescar_deudas(ev)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.RED_500),
+                ft.Text("¿Borrar esta deuda?", weight=ft.FontWeight.BOLD, color=text_color),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"{actual.get('cliente_nombre') or '-'}  ({actual.get('cliente_id') or '-'})",
+                        size=14, weight=ft.FontWeight.BOLD, color=text_color,
+                    ),
+                    ft.Text(
+                        f"Monto total ${float(actual.get('monto_total_usd') or 0):,.2f}  ·  "
+                        f"Saldo ${float(actual.get('saldo_usd') or 0):,.2f}  ·  "
+                        f"Fecha límite {self._fecha_legible(actual.get('fecha_limite_pago'))}",
+                        size=12, color=subtext_color,
+                    ),
+                    ft.Divider(height=10),
+                    ft.Text(
+                        "Esta acción borra también, en cascada, los renglones acreditados "
+                        f"({actual.get('cantidad_items') or 0}) y el historial de abonos "
+                        f"({cantidad_abonos} abono(s) por ${abonado:,.2f}) de esta deuda. "
+                        "No se puede deshacer.",
+                        size=13, weight=ft.FontWeight.W_600, color=ft.Colors.RED_400,
+                    ),
+                ], spacing=8, tight=True),
+                width=480,
+                padding=10,
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda ev: self._cerrar_dialogo(ev, dialog=dlg)),
+                ft.Button(
+                    content="Sí, Borrar Deuda",
+                    icon=ft.Icons.DELETE_FOREVER_OUTLINED,
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.RED_700,
+                        color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12),
+                    ),
+                    on_click=borrar,
                 ),
             ],
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,

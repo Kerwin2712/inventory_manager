@@ -635,6 +635,82 @@ def test_cancelar_la_edicion_no_cambia_nada(vista, pagina, evento):
     assert v._dialog_stack == []
 
 
+# ─── Botón Borrar: confirmación previa ──────────────────────────────────────
+
+def test_borrar_pide_confirmacion_antes_de_eliminar(vista, pagina, evento):
+    """Un clic en Borrar no borra: abre la confirmación y la deuda sigue ahí."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO, items=ITEMS)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Borrar").on_click(evento)
+
+    assert pagina.visible is v._dialog, "debe abrirse el diálogo de confirmación"
+    assert obtener_deuda(deuda["id"]) is not None, "no debe borrar sin confirmar"
+    textos = _textos(v._dialog)
+    assert any("Borrar esta deuda" in t for t in textos)
+
+
+def test_la_confirmacion_avisa_que_arrastra_renglones_y_abonos(vista, pagina, evento):
+    """El borrado destruye la constancia de los cobros ya hechos: el texto
+    tiene que nombrarlo, porque es el único resguardo que queda."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO, items=ITEMS)
+    registrar_abono(deuda["id"], 40.0)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Borrar").on_click(evento)
+    textos = " ".join(_textos(v._dialog))
+
+    assert "cascada" in textos
+    assert "renglones acreditados" in textos
+    assert "historial de abonos" in textos
+    assert "$40.00" in textos
+    assert "No se puede deshacer" in textos
+
+
+def test_confirmar_borra_la_deuda_y_la_saca_de_la_lista(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO, items=ITEMS)
+    registrar_abono(deuda["id"], 40.0)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Borrar").on_click(evento)
+    dlg = v._dialog
+    _click(dlg, "Sí, Borrar", evento)
+
+    assert obtener_deuda(deuda["id"]) is None
+    assert dlg.open is False
+    assert pagina.visible is None
+    assert v.dt_deudas.rows == []
+
+
+def test_cancelar_la_confirmacion_no_borra_nada(vista, pagina, evento):
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+
+    _boton_fila(_fila(v, 0), "Borrar").on_click(evento)
+    _click(v._dialog, "Cancelar", evento)
+
+    assert obtener_deuda(deuda["id"]) is not None
+    assert pagina.visible is None
+    assert v._dialog_stack == []
+    assert len(v.dt_deudas.rows) == 1
+
+
+def test_borrar_una_deuda_que_ya_no_existe_no_rompe_la_vista(vista, pagina, evento):
+    """Dos ventanas abiertas sobre la misma base: la otra ya la borró."""
+    deuda = crear_deuda("V-12345678", 100.0, FUTURO)
+    v = vista()
+    fila = _fila(v, 0)
+
+    from services.deudas_service import eliminar_deuda
+    eliminar_deuda(deuda["id"])
+
+    _boton_fila(fila, "Borrar").on_click(evento)
+
+    assert v._dialog_stack == [], "no debe abrirse ninguna confirmación"
+    assert any("ya no existe" in m for m in _snacks(pagina))
+    assert v.dt_deudas.rows == []
+
+
 def test_buscar_vuelve_a_la_primera_pagina(vista):
     """El usuario que busca espera ver el primer resultado, no la página en la
     que se había quedado."""
