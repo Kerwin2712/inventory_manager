@@ -1,0 +1,765 @@
+"""Atajos de teclado de la lista de Inventario (segunda ola de octubre 2026).
+
+Decisiones del usuario del proyecto que se blindan aquí (reemplazan la
+propuesta del PDF, donde F1-F3 navegaban):
+
+  - Con las flechas solas se navega arriba/abajo/izquierda/derecha según los
+    scrolls que haya en la vista; con Ctrl+flecha se va hasta el extremo de
+    ese eje. Es decir: las flechas hacen lo mismo que los botones de flecha de
+    la pantalla, y Ctrl+flecha lo mismo que "ir al inicio" / "ir al final".
+  - Las flechas navegan SOLO cuando ningún campo de texto tiene el foco: con
+    el cursor dentro de un campo, las flechas mueven el cursor como en
+    cualquier programa.
+  - F1 a F6 accionan los seis íconos del ítem MARCADO, con un mapeo fijo para
+    todos los roles: para un vendedor, F4 (Historial Clínico) simplemente no
+    hace nada. Sin ítem marcado, ninguna hace nada.
+  - F6 (eliminar) pide la clave del usuario cada vez, igual que el botón.
+  - [Esc] limpia la selección y suelta el foco.
+  - La vista comparte la página con el Dashboard, así que el handler de
+    teclado que hubiera puesto debe seguir recibiendo las teclas.
+
+La mecánica de las teclas se prueba aislada en `test_control_teclado.py`; lo
+que se verifica aquí es el CABLEADO de esta vista: que los destinos de scroll
+sean los controles correctos, que se resuelvan en la pulsación y que la regla
+del foco cubra los campos reales de la pantalla.
+
+Patrón de doble de página headless tomado de
+`test_inventario_marcador_seleccion.py` / `test_inventario_dialogos_pila.py`;
+las pulsaciones se ejercitan con `asyncio.run` porque `ControlTeclado.manejar`
+es una corutina (dentro espera a `scroll_to`), igual que en
+`test_control_teclado.py`.
+"""
+import asyncio
+
+import flet as ft
+import pytest
+
+from ui.components.teclado_nav import (
+    ACCIONES_CON_CLAVE, ATAJOS_ITEM, PASO_HORIZONTAL, PASO_VERTICAL,
+)
+
+CODIGOS = ("ATA-001", "ATA-002", "ATA-003")
+CLAVE = "clave-de-la-sesion-123"
+
+
+class PageFalsa:
+    """Página headless con teclado y pila de diálogos de Flet 0.86."""
+
+    def __init__(self):
+        self.dialogos = []
+        self.overlay = []
+        self.updates = 0
+        self.on_keyboard_event = None
+
+    def show_dialog(self, dialog):
+        if dialog in self.dialogos:
+            raise RuntimeError("Dialog is already opened")
+        dialog.open = True
+        self.dialogos.append(dialog)
+
+    def pop_dialog(self):
+        dlg = next((d for d in reversed(self.dialogos) if d.open), None)
+        if dlg is not None:
+            dlg.open = False
+        return dlg
+
+    def update(self):
+        self.updates += 1
+
+
+class EventoFalso:
+    def __init__(self, page):
+        self.page = page
+
+
+class TeclaFalsa:
+    def __init__(self, page, key, **modificadores):
+        self.page = page
+        self.key = key
+        for nombre, valor in modificadores.items():
+            setattr(self, nombre, valor)
+
+
+class DestinoFalso:
+    """Suplente de un control con scroll: registra cada `scroll_to`.
+
+    Hace falta porque un control de Flet sin página viva lanza al pedirle
+    `scroll_to`, y `ControlTeclado` traga esa excepción a propósito (un destino
+    desmontado no puede tumbar el teclado): sin el suplente, una flecha que no
+    desplaza nada y una flecha que desplaza bien se verían idénticas.
+
+    Expone `page` porque el suplente del cuerpo ocupa el lugar del control por
+    el que la vista alcanza la página cuando no hay evento (ver
+    `InventarioView._get_page`): un control montado de verdad también la
+    expone.
+    """
+
+    def __init__(self, page=None):
+        self.llamadas = []
+        self.page = page
+
+    async def scroll_to(self, **kwargs):
+        self.llamadas.append(kwargs)
+
+
+@pytest.fixture
+def pagina():
+    return PageFalsa()
+
+
+@pytest.fixture
+def evento(pagina):
+    return EventoFalso(pagina)
+
+
+@pytest.fixture
+def productos(db_temporal):
+    from services.inventario_service import crear_producto
+
+    for i, codigo in enumerate(CODIGOS, start=1):
+        crear_producto(
+            codigo=codigo,
+            referencia=f"REF-{i}",
+            descripcion_general=f"Producto con atajos {i}",
+            departamento="Pruebas",
+            marca="ACME",
+            precio_dolares=10.0 * i,
+            existencia=3,
+            costo_usd_efectivo=5.0 * i,
+            rol_usuario="administrador",
+        )
+    return list(CODIGOS)
+
+
+@pytest.fixture
+def vista(productos, pagina):
+    """Vista de administrador con el teclado ya enganchado a la página falsa."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=True, username="atajos", rol_usuario="administrador")
+    v.get_body()
+    v._teclado.instalar(EventoFalso(pagina))
+    return v
+
+
+@pytest.fixture
+def destinos(vista, pagina):
+    """Sustituye los dos controles con scroll por suplentes observables."""
+    vertical, horizontal = DestinoFalso(pagina), DestinoFalso()
+    vista._body_scroll_col = vertical
+    vista._tabla_scroll_row = horizontal
+    return {"vertical": vertical, "horizontal": horizontal}
+
+
+def _pulsar(vista, pagina, tecla, **modificadores):
+    return asyncio.run(vista._teclado.manejar(TeclaFalsa(pagina, tecla, **modificadores)))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Enganche a la página
+# ─────────────────────────────────────────────────────────────────────────────
+def test_el_cuerpo_toma_el_teclado_al_montarse(productos, pagina):
+    """El Dashboard descarta la vista y se queda con su cuerpo (y `View.page`
+    es de solo lectura), así que el montaje del cuerpo es el único momento en
+    que los atajos pueden engancharse sin esperar un clic del usuario: las
+    flechas tienen que navegar desde que aparece la pantalla."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=True, username="atajos", rol_usuario="administrador")
+    cuerpo = v.get_body()
+
+    assert cuerpo.did_mount == v._al_montar_cuerpo, "el cuerpo debe avisar al montarse"
+    assert cuerpo.will_unmount == v._al_desmontar_cuerpo, "y también al desmontarse"
+    # Montaje: a partir de aquí el cuerpo está en el árbol y expone la página.
+    v._body_scroll_col = DestinoFalso(pagina)
+    cuerpo.did_mount()
+
+    assert pagina.on_keyboard_event is v._teclado.handler
+
+
+def test_sin_pagina_la_vista_se_construye_igual(productos):
+    """Headless (como en las pruebas y en el primer `get_body()` de `__init__`)
+    no hay teclado que tomar, y eso no puede impedir construir la vista."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=True, username="atajos", rol_usuario="administrador")
+    v.get_body()
+
+    assert v._teclado.instalado is False
+
+
+def test_el_handler_previo_de_la_pagina_sigue_recibiendo_teclas(productos, pagina):
+    """La vista comparte la página con el Dashboard: enganchar los atajos del
+    Inventario no puede robarle el teclado al resto de la aplicación."""
+    recibidas = []
+    pagina.on_keyboard_event = lambda ev: recibidas.append(getattr(ev, "key", None))
+
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=True, username="atajos", rol_usuario="administrador")
+    v.get_body()
+    v._teclado.instalar(EventoFalso(pagina))
+
+    asyncio.run(pagina.on_keyboard_event(TeclaFalsa(pagina, "Arrow Down")))
+    asyncio.run(pagina.on_keyboard_event(TeclaFalsa(pagina, "Escape")))
+
+    assert recibidas == ["Arrow Down", "Escape"]
+
+
+def test_instalar_dos_veces_no_duplica_el_desplazamiento(vista, destinos, pagina):
+    """Cada clic en una fila reintenta `instalar()`: si no fuera idempotente,
+    el control acabaría encadenado a sí mismo y una sola flecha desplazaría
+    muchas veces."""
+    vista._teclado.instalar(EventoFalso(pagina))
+    vista._teclado.instalar(EventoFalso(pagina))
+
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert len(destinos["vertical"].llamadas) == 1
+
+
+def test_al_salir_de_la_pantalla_se_devuelve_el_teclado(productos, pagina):
+    """El Dashboard cambia de sección reconstruyendo su cuerpo: esta vista se
+    va sin que nadie la cierre, y el teclado tiene que volver a quien lo
+    tenía."""
+    previo = lambda ev: None
+    pagina.on_keyboard_event = previo
+
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=True, username="atajos", rol_usuario="administrador")
+    cuerpo = v.get_body()
+    v._body_scroll_col = DestinoFalso(pagina)
+    cuerpo.did_mount()
+    assert pagina.on_keyboard_event is v._teclado.handler
+
+    cuerpo.will_unmount()
+
+    assert pagina.on_keyboard_event is previo
+
+
+def test_una_vista_fuera_de_pantalla_no_acciona_el_item_que_quedo_marcado(vista, espia_acciones, pagina, evento):
+    """Es la acción con efecto real del lote: F2 sale de la vista por el
+    callback del Dashboard, así que una vista olvidada podría mandar a cobrar
+    un producto que el usuario ya no tiene delante."""
+    vista.seleccionar_item("ATA-002", evento)
+    vista._al_desmontar_cuerpo()
+
+    for tecla in sorted(ATAJOS_ITEM):
+        _pulsar(vista, pagina, tecla)
+
+    assert espia_acciones == []
+
+
+def test_al_volver_a_la_pantalla_las_teclas_vuelven_a_funcionar(vista, espia_acciones, pagina, evento):
+    vista.seleccionar_item("ATA-002", evento)
+    vista._al_desmontar_cuerpo()
+    vista._al_montar_cuerpo()
+
+    _pulsar(vista, pagina, "F5")
+
+    assert espia_acciones == [("editar", "ATA-002")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Destinos: las flechas mueven lo mismo que los botones de la pantalla
+# ─────────────────────────────────────────────────────────────────────────────
+def test_los_destinos_son_los_controles_duenos_de_cada_eje(vista):
+    """Un solo dueño por eje: el cuerpo de la página scrollea en vertical y la
+    Row de la tabla en horizontal (ver `test_scroll_nav_inventario.py`)."""
+    assert vista._destino_scroll_vertical() is vista._body_scroll_col
+    assert vista._body_scroll_col.scroll == ft.ScrollMode.AUTO
+    assert vista._destino_scroll_horizontal() is vista._tabla_scroll_row
+    assert vista._tabla_scroll_row.scroll == ft.ScrollMode.ALWAYS
+
+
+def test_el_destino_se_resuelve_en_la_pulsacion_y_no_se_guarda(vista, pagina):
+    """La tabla se reconstruye en cada repintado: un control guardado al
+    instalar sería un control que ya no está en pantalla."""
+    primero = DestinoFalso()
+    vista._body_scroll_col = primero
+    _pulsar(vista, pagina, "Arrow Down")
+    assert len(primero.llamadas) == 1
+
+    segundo = DestinoFalso()  # repintado: control nuevo
+    vista._body_scroll_col = segundo
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert len(primero.llamadas) == 1, "siguió desplazando el control viejo"
+    assert len(segundo.llamadas) == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Las cuatro flechas y el salto al extremo
+# ─────────────────────────────────────────────────────────────────────────────
+def test_flecha_abajo_baja_la_vista(vista, destinos, pagina):
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert destinos["vertical"].llamadas == [{"delta": PASO_VERTICAL, "duration": 200}]
+    assert destinos["horizontal"].llamadas == []
+
+
+def test_flecha_arriba_sube_la_vista(vista, destinos, pagina):
+    _pulsar(vista, pagina, "Arrow Up")
+
+    assert destinos["vertical"].llamadas == [{"delta": -PASO_VERTICAL, "duration": 200}]
+
+
+def test_flecha_derecha_desplaza_la_tabla_a_la_derecha(vista, destinos, pagina):
+    _pulsar(vista, pagina, "Arrow Right")
+
+    assert destinos["horizontal"].llamadas == [{"delta": PASO_HORIZONTAL, "duration": 200}]
+    assert destinos["vertical"].llamadas == []
+
+
+def test_flecha_izquierda_desplaza_la_tabla_a_la_izquierda(vista, destinos, pagina):
+    _pulsar(vista, pagina, "Arrow Left")
+
+    assert destinos["horizontal"].llamadas == [{"delta": -PASO_HORIZONTAL, "duration": 200}]
+
+
+def test_control_flecha_arriba_va_al_primer_item(vista, destinos, pagina):
+    """Equivale al botón "ir arriba del todo" del cluster vertical."""
+    _pulsar(vista, pagina, "Arrow Up", ctrl=True)
+
+    assert destinos["vertical"].llamadas == [{"offset": 0.0, "duration": 200}]
+
+
+def test_control_flecha_izquierda_va_al_inicio_de_la_tabla(vista, destinos, pagina):
+    """Equivale al botón "ir al Código (inicio)" del cluster horizontal."""
+    _pulsar(vista, pagina, "Arrow Left", ctrl=True)
+
+    assert destinos["horizontal"].llamadas == [{"offset": 0.0, "duration": 200}]
+
+
+def test_control_flecha_abajo_va_al_final_de_la_lista(vista, destinos, pagina):
+    _pulsar(vista, pagina, "Arrow Down", ctrl=True)
+
+    assert destinos["vertical"].llamadas[0]["delta"] > 10000
+
+
+def test_control_flecha_derecha_va_al_final_de_la_tabla(vista, destinos, pagina):
+    _pulsar(vista, pagina, "Arrow Right", ctrl=True)
+
+    assert destinos["horizontal"].llamadas[0]["delta"] > 10000
+
+
+def test_una_tecla_cualquiera_no_desplaza_nada(vista, destinos, pagina):
+    _pulsar(vista, pagina, "K")
+
+    assert destinos["vertical"].llamadas == []
+    assert destinos["horizontal"].llamadas == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Escape
+# ─────────────────────────────────────────────────────────────────────────────
+def test_escape_limpia_la_seleccion(vista, evento, pagina):
+    vista.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista, pagina, "Escape")
+
+    assert vista._seleccion.hay_seleccion is False
+
+
+def test_escape_suelta_el_foco_y_devuelve_la_navegacion(vista, destinos, pagina):
+    """Sin esto, el usuario tendría que buscar un hueco de la pantalla donde
+    hacer clic para que las flechas volvieran a navegar."""
+    vista._teclado.foco.tomar("busqueda")
+
+    _pulsar(vista, pagina, "Escape")
+    assert vista._teclado.foco.hay_campo_con_foco is False
+
+    _pulsar(vista, pagina, "Arrow Down")
+    assert destinos["vertical"].llamadas, "tras [Esc] las flechas deben navegar"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F1 a F6 sobre el ítem marcado
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def espia_acciones(vista):
+    """Registra qué acción llegó al punto de entrada único de los íconos.
+
+    Se espía `ejecutar_accion_item` y no los seis handlers porque es
+    exactamente el punto por el que entran también los clics: si la tecla
+    llega ahí, hace lo mismo que el botón, con sus mismas comprobaciones.
+    """
+    ejecutadas = []
+
+    def _registrar(accion, codigo, e=None):
+        ejecutadas.append((accion, codigo))
+        return True
+
+    vista.ejecutar_accion_item = _registrar
+    return ejecutadas
+
+
+@pytest.mark.parametrize("tecla,accion", sorted(ATAJOS_ITEM.items()))
+def test_cada_tecla_de_funcion_acciona_su_icono(vista, espia_acciones, pagina, evento, tecla, accion):
+    vista.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista, pagina, tecla)
+
+    assert espia_acciones == [(accion, "ATA-002")]
+
+
+@pytest.mark.parametrize("tecla", sorted(ATAJOS_ITEM))
+def test_sin_item_marcado_ninguna_tecla_de_funcion_hace_nada(vista, espia_acciones, pagina, tecla):
+    """Adivinar una fila sería disparar una acción —incluido un borrado—
+    sobre algo que el usuario no eligió."""
+    _pulsar(vista, pagina, tecla)
+
+    assert espia_acciones == []
+
+
+def test_la_tecla_actua_sobre_el_marcado_aunque_el_marcador_se_mueva(vista, espia_acciones, pagina, evento):
+    vista.seleccionar_item("ATA-001", evento)
+    vista.seleccionar_item("ATA-003", evento)
+
+    _pulsar(vista, pagina, "F5")
+
+    assert espia_acciones == [("editar", "ATA-003")]
+
+
+def test_f4_no_hace_nada_con_rol_vendedor(productos, pagina):
+    """El mapeo es fijo para todos los roles: el Historial Clínico es
+    exclusivo de administración, así que para un vendedor F4 no hace nada —y
+    sin un mensaje de error confuso sobre una tecla que nunca podrá usar."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=False, username="vendedor", rol_usuario="vendedor")
+    v.get_body()
+    v._teclado.instalar(EventoFalso(pagina))
+    historiales = []
+    v.accion_historial = lambda codigo, e=None: historiales.append(codigo)
+    v.seleccionar_item("ATA-001", EventoFalso(pagina))
+
+    _pulsar(v, pagina, "F4")
+
+    assert historiales == [], "un vendedor no puede abrir el historial clínico"
+    assert v._dialog is None, "no debe abrirse ningún diálogo"
+    assert pagina.overlay == [], "tampoco un aviso de error"
+
+
+def test_f4_si_abre_el_historial_para_un_administrador(vista, espia_acciones, pagina, evento):
+    vista.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista, pagina, "F4")
+
+    assert espia_acciones == [("historial", "ATA-002")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F6 exige la clave del usuario, igual que el botón
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def vista_con_sesion(productos, pagina):
+    """Vista cuya cuenta de sesión existe y tiene una clave conocida."""
+    from services.user_service import create_user
+    from ui.views.inventario_view import InventarioView
+
+    create_user("cajero", CLAVE, "administrador")
+    v = InventarioView(es_admin=True, username="cajero", rol_usuario="administrador")
+    v.get_body()
+    v._teclado.instalar(EventoFalso(pagina))
+    return v
+
+
+def _existe(codigo: str) -> bool:
+    from services.inventario_service import obtener_producto
+
+    return obtener_producto(codigo) is not None
+
+
+def _componente_clave(vista):
+    """El `DialogoClave` viaja en el `data` del diálogo apilado."""
+    from ui.components.dialogo_clave import DialogoClave
+
+    comp = vista._dialog.data
+    assert isinstance(comp, DialogoClave), "el diálogo del tope debe ser el de clave"
+    return comp
+
+
+def test_borrar_es_una_accion_con_clave():
+    """Contrato compartido: si alguien quitara `borrar` de esta lista, el
+    atajo tendría que dejar de pasar por el diálogo de clave."""
+    assert "borrar" in ACCIONES_CON_CLAVE
+    assert ATAJOS_ITEM["F6"] == "borrar"
+
+
+def test_f6_abre_el_dialogo_de_clave_y_no_borra_por_si_misma(vista_con_sesion, pagina, evento):
+    """La clave se exige CADA vez y venga de donde venga: no se puentea el
+    diálogo solo porque la orden llegó por teclado."""
+    vista_con_sesion.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista_con_sesion, pagina, "F6")
+
+    _componente_clave(vista_con_sesion)
+    assert _existe("ATA-002"), "F6 no puede borrar nada por sí misma"
+
+
+def test_f6_con_clave_incorrecta_no_borra(vista_con_sesion, pagina, evento):
+    vista_con_sesion.seleccionar_item("ATA-002", evento)
+    _pulsar(vista_con_sesion, pagina, "F6")
+
+    comp = _componente_clave(vista_con_sesion)
+    comp.campo.value = "clave-equivocada"
+    assert comp.confirmar(evento) is False
+
+    assert _existe("ATA-002")
+
+
+def test_f6_con_la_clave_correcta_borra_el_item_marcado(vista_con_sesion, pagina, evento):
+    vista_con_sesion.seleccionar_item("ATA-002", evento)
+    _pulsar(vista_con_sesion, pagina, "F6")
+
+    comp = _componente_clave(vista_con_sesion)
+    comp.campo.value = CLAVE
+    assert comp.confirmar(evento) is True
+
+    assert _existe("ATA-002") is False
+    assert _existe("ATA-001"), "solo se borra el ítem marcado"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# La regla del foco: con el cursor en un campo, las flechas son del cursor
+# ─────────────────────────────────────────────────────────────────────────────
+def _campos_de(control):
+    from ui.views.inventario_view import InventarioView
+
+    return list(InventarioView._campos_de_texto(control))
+
+
+def test_el_buscador_esta_enlazado_al_registro_de_foco(vista):
+    assert vista._f_busqueda.on_focus is not None
+    assert vista._f_busqueda.on_blur is not None
+
+
+def test_el_campo_de_la_tasa_bcv_esta_enlazado(vista):
+    assert vista._inp_nueva_tasa.on_focus is not None
+    assert vista._inp_nueva_tasa.on_blur is not None
+
+
+def test_con_el_buscador_enfocado_las_flechas_no_desplazan(vista, destinos, pagina, evento):
+    """Si el cursor está en el buscador, las flechas mueven el cursor como en
+    cualquier programa: nadie espera que al corregir una palabra se le mueva
+    la pantalla."""
+    vista._f_busqueda.on_focus(evento)
+
+    for tecla in ("Arrow Down", "Arrow Up", "Arrow Left", "Arrow Right"):
+        _pulsar(vista, pagina, tecla)
+
+    assert destinos["vertical"].llamadas == []
+    assert destinos["horizontal"].llamadas == []
+
+
+def test_al_soltar_el_campo_las_flechas_vuelven_a_navegar(vista, destinos, pagina, evento):
+    vista._f_busqueda.on_focus(evento)
+    vista._f_busqueda.on_blur(evento)
+
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert destinos["vertical"].llamadas, "sin campo enfocado las flechas navegan"
+
+
+def test_dos_campos_enfocados_en_desorden_no_liberan_la_navegacion(vista, destinos, pagina, evento):
+    """Flet puede entregar el `on_focus` del campo nuevo antes del `on_blur`
+    del anterior: el registro lleva un conjunto, así que el cruce no deja la
+    navegación suelta con el cursor todavía dentro de un campo."""
+    vista._f_busqueda.on_focus(evento)
+    vista._inp_nueva_tasa.on_focus(evento)
+    vista._f_busqueda.on_blur(evento)
+
+    _pulsar(vista, pagina, "Arrow Down")
+
+    assert destinos["vertical"].llamadas == []
+
+
+# ── Los campos de los diálogos del flujo de ingreso / edición ───────────────
+def test_los_campos_del_paso_1_quedan_enlazados(vista, evento):
+    vista._abrir_flujo_ingreso(evento)
+
+    campos = _campos_de(vista._dialog)
+    assert campos, "el paso 1 tiene el campo del código"
+    assert all(c.on_focus is not None and c.on_blur is not None for c in campos)
+
+
+def test_los_campos_del_formulario_completo_quedan_enlazados(vista, evento):
+    """El paso 2 es el diálogo con más campos de la vista, y los del selector
+    de departamentos vienen de otro componente: el recorrido del diálogo los
+    alcanza igual."""
+    vista._abrir_flujo_edicion("ATA-001", evento)
+
+    campos = _campos_de(vista._dialog)
+    assert len(campos) >= 10, f"solo se encontraron {len(campos)} campos"
+    sin_enlazar = [c.label for c in campos if c.on_focus is None or c.on_blur is None]
+    assert sin_enlazar == [], f"campos sin enlazar: {sin_enlazar}"
+
+
+def test_el_campo_de_la_clave_de_borrado_queda_enlazado(vista_con_sesion, evento):
+    """Escribir la clave no puede desplazar la lista de atrás."""
+    vista_con_sesion._confirmar_eliminar("ATA-001", evento)
+
+    campo = _componente_clave(vista_con_sesion).campo
+    assert campo.on_focus is not None and campo.on_blur is not None
+
+
+def test_los_campos_de_un_filtro_avanzado_quedan_enlazados(vista, evento):
+    """Los campos de los filtros de rango son variables locales de
+    `ui/components/multi_select_filter.py`: se alcanzan porque el diálogo pasa
+    por `_open_dialog`, no porque esta vista los enumere."""
+    vista._rf_existencia._abrir(evento)
+
+    campos = _campos_de(vista._dialog)
+    assert len(campos) == 2, "mínimo y máximo"
+    assert all(c.on_focus is not None and c.on_blur is not None for c in campos)
+
+
+def test_cerrar_un_dialogo_suelta_sus_campos(vista, destinos, pagina, evento):
+    """El diálogo se va sin que sus campos emitan `on_blur`: si no se sueltan,
+    el registro queda creyendo que hay un campo con el foco y las flechas no
+    vuelven a navegar nunca."""
+    vista._abrir_flujo_ingreso(evento)
+    campo = _campos_de(vista._dialog)[0]
+    campo.on_focus(evento)
+    assert vista._teclado.foco.hay_campo_con_foco is True
+
+    vista._cancelar_flujo_formulario(evento)
+
+    assert vista._teclado.foco.hay_campo_con_foco is False
+    _pulsar(vista, pagina, "Arrow Down")
+    assert destinos["vertical"].llamadas, "la navegación debe volver al cerrar"
+
+
+def test_las_teclas_de_funcion_si_actuan_con_un_campo_enfocado(vista, espia_acciones, pagina, evento):
+    """Con el foco en un campo, F1..F6 no editan nada, así que sí pueden
+    accionar: lo que no puede faltar es el ítem marcado."""
+    vista.seleccionar_item("ATA-001", evento)
+    vista._f_busqueda.on_focus(evento)
+
+    _pulsar(vista, pagina, "F1")
+
+    assert espia_acciones == [("info", "ATA-001")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Las etiquetas de los atajos están A LA VISTA sobre los íconos
+# ─────────────────────────────────────────────────────────────────────────────
+# Nota del PDF que sigue vigente: "que los nombres de los atajos sean visibles
+# en la pantalla para siempre ser consciente de ellos". Un tooltip hay que ir a
+# buscarlo con el mouse, así que no alcanza.
+MODOS_CON_TABLA = ["separado", "agrupado"]
+
+
+@pytest.fixture(params=MODOS_CON_TABLA)
+def vista_modo(request, vista):
+    """La misma vista en cada uno de los dos formatos con tabla."""
+    vista._modo_vista = request.param
+    vista._cargar_filas()
+    return vista
+
+
+def _celda_de_acciones(vista, codigo):
+    fila = next(r for r in vista._dt.rows if r.data == codigo)
+    contenido = fila.cells[-1].content
+    if isinstance(contenido, ft.Container):  # el modo agrupado envuelve la celda
+        contenido = contenido.content
+    return contenido
+
+
+def _botones_con_etiqueta(vista, codigo) -> list[tuple[ft.IconButton, str]]:
+    """Cada ícono de la fila con el texto de atajo que lleva superpuesto."""
+    pares = []
+    for stack in _celda_de_acciones(vista, codigo).controls:
+        assert isinstance(stack, ft.Stack), "el ícono debe traer su etiqueta al lado"
+        boton = next(c for c in stack.controls if isinstance(c, ft.IconButton))
+        textos = [
+            c.content.value for c in stack.controls
+            if isinstance(c, ft.Container) and isinstance(c.content, ft.Text)
+        ]
+        assert len(textos) == 1, f"se esperaba una sola etiqueta, hay {len(textos)}"
+        pares.append((boton, textos[0]))
+    return pares
+
+
+def test_los_seis_iconos_muestran_su_atajo_en_pantalla(vista_modo):
+    """En los dos formatos con tabla, y en el orden de F1 a F6."""
+    etiquetas = [texto for _boton, texto in _botones_con_etiqueta(vista_modo, "ATA-001")]
+
+    assert etiquetas == ["F1", "F2", "F3", "F4", "F5", "F6"]
+
+
+def test_la_etiqueta_tambien_esta_en_el_tooltip(vista_modo):
+    tooltips = [b.tooltip for b, _texto in _botones_con_etiqueta(vista_modo, "ATA-001")]
+
+    assert tooltips[4].startswith("Editar (F5)")
+    assert tooltips[5].startswith("Eliminar (F6)")
+
+
+def test_un_vendedor_no_ve_el_icono_del_historial_pero_conserva_el_mapeo(productos):
+    """El mapeo es fijo: F4 no se reasigna, simplemente no hay ícono que
+    accionar en la fila de un vendedor."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=False, username="vendedor", rol_usuario="vendedor")
+    v.get_body()
+
+    etiquetas = [texto for _boton, texto in _botones_con_etiqueta(v, "ATA-001")]
+    assert etiquetas == ["F1", "F2", "F3", "F5", "F6"]
+
+
+def test_la_etiqueta_no_hace_crecer_la_celda_de_acciones(vista_modo):
+    """Los seis íconos conviven en una celda estrecha (250 px en la vista
+    agrupada): la etiqueta va superpuesta, sin pedir espacio propio."""
+    lado = vista_modo._LADO_BOTON_ACCION
+    stacks = _celda_de_acciones(vista_modo, "ATA-001").controls
+
+    assert all(s.width == lado and s.height == lado for s in stacks)
+    assert len(stacks) * lado <= 250, "los seis botones deben seguir entrando"
+
+
+def _pastilla(stack) -> ft.Container:
+    return next(
+        c for c in stack.controls
+        if isinstance(c, ft.Container) and isinstance(c.content, ft.Text)
+    )
+
+
+def test_la_etiqueta_tapa_el_icono_con_un_fondo_opaco(vista_modo):
+    """Fondo OPACO (el de la tarjeta) y texto del color del ícono: con un
+    fondo translúcido, el dibujo del ícono asomaba por detrás de la "F6"."""
+    for stack in _celda_de_acciones(vista_modo, "ATA-001").controls:
+        boton = next(c for c in stack.controls if isinstance(c, ft.IconButton))
+        pastilla = _pastilla(stack)
+        assert pastilla.bgcolor == vista_modo.get_card_bg()
+        assert pastilla.content.color == boton.icon_color
+        assert pastilla.right == 0 and pastilla.bottom == 0
+
+
+@pytest.mark.parametrize("modo_tema", [ft.ThemeMode.DARK, ft.ThemeMode.LIGHT])
+def test_la_etiqueta_sigue_al_tema_de_la_aplicacion(vista, modo_tema):
+    """El fondo de la pastilla se toma del tema vigente en vez de fijar un
+    color: en modo claro la tarjeta es blanca y en oscuro casi negra, y en los
+    dos casos la tecla queda legible sobre el ícono."""
+    from ui.views.base_view import BaseView
+
+    previo = BaseView.current_theme_mode
+    try:
+        BaseView.current_theme_mode = modo_tema
+        vista._cargar_filas()
+
+        for stack in _celda_de_acciones(vista, "ATA-001").controls:
+            assert _pastilla(stack).bgcolor == vista.get_card_bg()
+    finally:
+        BaseView.current_theme_mode = previo
+
+
+def test_con_otro_item_marcado_la_etiqueta_se_apaga_con_el_icono(vista_modo, evento):
+    """La etiqueta no puede quedar brillante sobre un ícono deshabilitado: se
+    leería como que esa tecla todavía hace algo en esa fila."""
+    vista_modo.seleccionar_item("ATA-002", evento)
+
+    subtext = vista_modo.get_subtext_color()
+    for stack in _celda_de_acciones(vista_modo, "ATA-001").controls:
+        assert _pastilla(stack).content.color == subtext

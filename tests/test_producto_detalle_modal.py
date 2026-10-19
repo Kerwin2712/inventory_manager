@@ -368,4 +368,10 @@ def test_cada_fila_y_cada_tarjeta_ofrecen_el_acceso_al_detalle(producto):
             c.tooltip for c in _descendientes(vista._vista_container)
             if getattr(c, "tooltip", None)
         ]
-        assert "Ver detalle del ítem" in tooltips, f"falta en el modo '{modo}'"
+        # El tooltip enuncia además el atajo de teclado del ícono ("Ver
+        # detalle del ítem (F1)"), así que se compara por prefijo: lo que esta
+        # prueba vigila es que el acceso al detalle exista en los tres modos,
+        # no la redacción exacta del texto.
+        assert any(t.startswith("Ver detalle del ítem") for t in tooltips), (
+            f"falta en el modo '{modo}'"
+        )

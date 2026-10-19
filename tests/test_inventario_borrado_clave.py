@@ -341,7 +341,12 @@ def test_en_modo_multiple_los_items_no_marcados_quedan_deshabilitados(vista, eve
     _marcar_lote(vista, ["DEL-001"], evento)
 
     fila_ajena = next(r for r in vista._dt.rows if r.data == "DEL-002")
-    botones = [c for c in fila_ajena.cells[-1].content.controls if isinstance(c, ft.IconButton)]
+    # Cada botón viaja dentro de un `Stack` junto a la etiqueta de su atajo.
+    botones = [
+        next(h for h in c.controls if isinstance(h, ft.IconButton))
+        for c in fila_ajena.cells[-1].content.controls
+        if isinstance(c, ft.Stack)
+    ]
     assert botones and all(b.disabled for b in botones)
 
 

@@ -5,6 +5,9 @@ from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from ui.components.seleccion_lista import SeleccionLista
+from ui.components.teclado_nav import (
+    ACCIONES_SOLO_ADMIN, ControlTeclado, etiqueta_atajo, tooltip_con_atajo,
+)
 from ui.components.dialogo_clave import DialogoClave
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 # La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
@@ -48,6 +51,22 @@ class InventarioView(BaseView):
     _LINEAS_DESCRIPCION_RESUMEN = 6
     _ALTO_DESCRIPCION_RESUMEN = 104
 
+    # ── Etiquetas de los atajos sobre los íconos del ítem ────────────────────
+    # El PDF pide que los nombres de los atajos estén visibles "para siempre
+    # ser consciente de ellos", y un tooltip hay que ir a buscarlo con el
+    # mouse: la tecla se dibuja TAMBIÉN sobre el ícono.
+    #
+    # Los seis íconos conviven en una celda estrecha (en la vista agrupada la
+    # celda de acciones mide 250 px), así que la etiqueta no puede ocupar
+    # espacio propio: va SUPERPUESTA en la esquina inferior derecha del mismo
+    # cuadrado del ícono, dentro de un `Stack` del tamaño del botón. Así la
+    # fila no crece ni a lo ancho ni a lo alto —al contrario, el cuadrado de
+    # 34 px es más angosto que el botón de tamaño por omisión— y las dos
+    # vistas con tabla siguen entrando sin tocar sus altos de fila.
+    _LADO_BOTON_ACCION = 34
+    _TAM_ICONO_ACCION = 20
+    _TAM_ETIQUETA_ATAJO = 8
+
     def __init__(self, on_back_callback=None, on_procesar_venta=None, es_admin: bool = False,
                  username: str | None = None, rol_usuario: str | None = None):
         self.on_back_callback = on_back_callback
@@ -67,6 +86,11 @@ class InventarioView(BaseView):
         self._form_codigo_verificado = False
         self._editing_codigo: str | None = None
 
+        # Nombres con los que los campos de cada diálogo quedaron anotados en
+        # el registro de foco, para poder soltarlos al cerrarlo (ver
+        # `_soltar_campos_de_dialogo`).
+        self._campos_por_dialogo: dict[int, tuple[str, ...]] = {}
+
         # ── Pila de diálogos abiertos (el tope es el activo) ─────────────────
         # Es una PILA y no una única referencia porque un diálogo puede abrir
         # otro encima (p. ej. el aviso de código duplicado sobre el paso 1): al
@@ -80,12 +104,34 @@ class InventarioView(BaseView):
         # Ventas y Deudas por Cobrar van a reutilizar la misma mecánica. La
         # vista solo traduce clics y teclas a sus operaciones y repinta.
         self._seleccion = SeleccionLista(on_cambio=self._al_cambiar_seleccion)
-        # Handler de teclado que había antes de que esta vista capturara [Esc]
-        # (se conserva para seguir invocándolo; ver `_asegurar_captura_escape`).
-        self._keyboard_previo = None
+
+        # ── Atajos de teclado (segunda ola de octubre 2026) ─────────────────
+        # Qué significa cada tecla (flechas, Ctrl+flecha, [Esc], F1..F6) vive
+        # en `ui.components.teclado_nav`, compartido con las otras tres listas
+        # de la aplicación; esta vista solo declara QUÉ desplazar y QUÉ
+        # accionar. Los destinos de scroll se pasan como MÉTODOS y no como
+        # controles porque la tabla se reconstruye en cada repintado: un
+        # control guardado al instalar sería un control que ya no está en
+        # pantalla, y la flecha desplazaría algo invisible.
+        self._teclado = ControlTeclado(
+            obtener_pagina=self._get_page,
+            destino_vertical=self._destino_scroll_vertical,
+            destino_horizontal=self._destino_scroll_horizontal,
+            seleccion=self._seleccion,
+            # F1..F6 actúan SOLO sobre el ítem marcado: el punto de entrada
+            # recibe el nombre de la acción y resuelve el código él mismo, así
+            # que la tecla no tiene que adivinar ninguna fila.
+            ejecutar_accion=self._accionar_por_teclado,
+            al_limpiar=self.limpiar_seleccion,
+        )
+        # ¿El cuerpo de esta vista salió de la pantalla? Ver
+        # `_al_desmontar_cuerpo` y `_accionar_por_teclado`.
+        self._cuerpo_desmontado = False
+
         # Índice de los productos de la página en pantalla, por código: permite
-        # que las acciones por nombre (y los atajos de teclado que vendrán)
-        # trabajen con un código, sin depender del `dict` capturado en un clic.
+        # que las acciones por nombre (y los atajos F1..F6, que no tienen
+        # ningún clic del cual sacar la fila) trabajen con un código, sin
+        # depender del `dict` capturado en un clic.
         self._productos_en_pantalla: dict[str, dict] = {}
 
         # ── Visibilidad de columnas de la tabla (mostrar/ocultar) ───────────
@@ -130,7 +176,16 @@ class InventarioView(BaseView):
                 return self.page
         except (RuntimeError, AttributeError):
             pass
-        return None
+        # Último recurso: el CUERPO de la vista. El Dashboard no monta esta
+        # vista como vista de ruta —instancia la clase y se queda solo con lo
+        # que devuelve `get_body()`—, y `View.page` es de solo lectura, así que
+        # `self.page` no llega a tener valor ni con la pantalla viva. El cuerpo
+        # sí está en el árbol de la página. Sin este recurso, los atajos de
+        # teclado dependerían de que el usuario haga clic en algo primero.
+        try:
+            return getattr(self, "_body_scroll_col", None).page
+        except (RuntimeError, AttributeError):
+            return None
 
     def _safe_update(self, e=None):
         p = self._get_page(e)
@@ -141,6 +196,77 @@ class InventarioView(BaseView):
                 self.update()
             except (RuntimeError, AttributeError):
                 pass
+
+    # =========================================================================
+    # REGISTRO DE FOCO DE LOS CAMPOS DE TEXTO
+    # =========================================================================
+    # Las flechas navegan SOLO cuando ningún campo de texto tiene el foco: con
+    # el cursor dentro de un campo deben mover el cursor, como en cualquier
+    # programa. Flet no expone un "¿quién tiene el foco?" global, así que cada
+    # campo avisa al tomarlo y al soltarlo (`RegistroFoco.enlazar`). Un campo
+    # sin enlazar no es un detalle estético: mientras el usuario escribe en él,
+    # las flechas le mueven la pantalla, que es justo lo que la regla evita.
+    #
+    # Los campos de los DIÁLOGOS se enlazan recorriendo el diálogo al apilarlo
+    # y no uno por uno: casi todos son variables locales de la función que los
+    # construye —incluidos los de los filtros avanzados, que viven en
+    # `ui/components/multi_select_filter.py`, y los del selector de
+    # departamentos—, así que una lista escrita a mano se quedaría corta con el
+    # próximo diálogo que se agregue, y el síntoma (la pantalla moviéndose al
+    # escribir) no apunta al campo olvidado.
+
+    # Atributos por los que se desciende buscando campos. `content`, `title` y
+    # `label` pueden traer un texto plano en vez de un control, y de ahí no se
+    # baja (`str` no tiene hijos).
+    _ATRIBUTOS_CON_HIJOS = ("controls", "actions", "content", "title", "label")
+
+    @classmethod
+    def _campos_de_texto(cls, control, _vistos=None):
+        """Recorre el árbol de `control` y entrega sus `ft.TextField`."""
+        if _vistos is None:
+            _vistos = set()
+        if control is None or isinstance(control, str) or id(control) in _vistos:
+            return
+        _vistos.add(id(control))
+        if isinstance(control, ft.TextField):
+            yield control
+        for attr in cls._ATRIBUTOS_CON_HIJOS:
+            hijo = getattr(control, attr, None)
+            if isinstance(hijo, (list, tuple)):
+                for nieto in hijo:
+                    yield from cls._campos_de_texto(nieto, _vistos)
+            else:
+                yield from cls._campos_de_texto(hijo, _vistos)
+
+    def _enlazar_campos(self, control, etiqueta: str) -> tuple[str, ...]:
+        """Anota en el registro de foco cada campo de texto de `control`.
+
+        El nombre lleva `id()` porque dos campos pueden compartir etiqueta (dos
+        diálogos con un "Mínimo" cada uno) y el registro distingue por nombre:
+        con nombres repetidos, el `on_blur` de uno soltaría el foco del otro.
+        """
+        nombres = []
+        for i, campo in enumerate(self._campos_de_texto(control)):
+            nombre = f"{etiqueta}:{campo.label or i}:{id(campo):x}"
+            self._teclado.foco.enlazar(campo, nombre)
+            nombres.append(nombre)
+        return tuple(nombres)
+
+    def _enlazar_campos_de_dialogo(self, dialog) -> tuple[str, ...]:
+        nombres = self._enlazar_campos(dialog, "dialogo")
+        self._campos_por_dialogo[id(dialog)] = nombres
+        return nombres
+
+    def _soltar_campos_de_dialogo(self, dialog) -> None:
+        """Olvida los campos de un diálogo que se cierra.
+
+        Al cerrarse, el diálogo desaparece sin que sus campos lleguen a emitir
+        `on_blur`: sin soltarlos a mano, el registro se queda creyendo que hay
+        un campo con el foco y las flechas dejan de navegar PARA SIEMPRE, sin
+        nada en pantalla que explique por qué.
+        """
+        for nombre in self._campos_por_dialogo.pop(id(dialog), ()):
+            self._teclado.foco.soltar(nombre)
 
     @property
     def _dialog(self) -> "ft.AlertDialog | None":
@@ -163,6 +289,7 @@ class InventarioView(BaseView):
             return
         if dialog in self._dialog_stack:
             self._dialog_stack.remove(dialog)
+        self._soltar_campos_de_dialogo(dialog)
 
         p = self._get_page(e)
         if p is not None and hasattr(p, "pop_dialog"):
@@ -192,6 +319,9 @@ class InventarioView(BaseView):
         if dialog not in self._dialog_stack:
             self._dialog_stack.append(dialog)
         dialog.open = True
+        # Mientras el cursor esté en un campo de este diálogo, las flechas son
+        # del cursor y no de la lista de abajo.
+        self._enlazar_campos_de_dialogo(dialog)
 
         p = self._get_page(e)
         if p is None:
@@ -248,7 +378,56 @@ class InventarioView(BaseView):
             ft.Divider(height=6, color=border),
             self._build_tabla_panel(accent, card_bg, text_color, subtext, border),
         ]
+        # El cuerpo es lo único de esta vista que llega al árbol de la página
+        # (el Dashboard descarta la vista y se queda con su cuerpo), así que su
+        # montaje es el primer instante en que hay teclado que tomar — y el
+        # único que no depende de que el usuario haga clic antes: las flechas
+        # tienen que navegar desde que la pantalla aparece. El gancho se pone
+        # sobre la instancia porque el cuerpo es un `ft.Column` corriente y no
+        # una subclase propia; Flet invoca `did_mount()` del objeto.
+        self._body_scroll_col.did_mount = self._al_montar_cuerpo
+        self._body_scroll_col.will_unmount = self._al_desmontar_cuerpo
         return self._body_scroll_col
+
+    def _al_montar_cuerpo(self):
+        """`did_mount` del cuerpo: con la pantalla viva se toma el teclado."""
+        self._cuerpo_desmontado = False
+        self._teclado.instalar()
+
+    def _al_desmontar_cuerpo(self):
+        """`will_unmount` del cuerpo: devolver el teclado al handler anterior.
+
+        El Dashboard cambia de sección RECONSTRUYENDO su cuerpo, así que esta
+        vista sale de la pantalla sin que nadie la cierre y sin que su estado
+        se descarte: el ítem que quedó marcado sigue marcado. Si el teclado
+        siguiera enganchado, una F2 pulsada mientras el usuario mira Ventas la
+        procesaría esta vista y mandaría a cobrar un producto que el usuario ya
+        no tiene delante — y esa sí es una acción con efecto real, porque sale
+        de la vista por el callback del Dashboard.
+        """
+        self._cuerpo_desmontado = True
+        self._teclado.desinstalar()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DESTINOS DE SCROLL DE LAS FLECHAS
+    # ─────────────────────────────────────────────────────────────────────────
+    # Las flechas deben hacer EXACTAMENTE lo que hacen los botones de flecha de
+    # la pantalla (`ui.components.scroll_nav`), así que apuntan a los mismos
+    # controles: el cuerpo de la página para el eje vertical y la Row de la
+    # tabla para el horizontal (un solo dueño por eje, ver `get_body`).
+    # Son métodos y no atributos para que el control se resuelva EN LA
+    # PULSACIÓN: entre dos pulsaciones puede haber un repintado que sustituya
+    # la tabla, y un control viejo ya no está en pantalla.
+    def _destino_scroll_vertical(self):
+        """Mismo destino que el cluster flotante ↑/↓ (`self._nav_v`)."""
+        return (
+            getattr(self, "_body_scroll_col", None)
+            or getattr(self, "_tabla_scroll_col", None)
+        )
+
+    def _destino_scroll_horizontal(self):
+        """Mismo destino que el cluster ←/→ de la barra (`self._nav_h`)."""
+        return getattr(self, "_tabla_scroll_row", None)
 
     # ─────────────────────────────────────────────────────────────────────────
     # PANEL BCV
@@ -271,16 +450,21 @@ class InventarioView(BaseView):
         )
         self._lbl_tasa_icon = ft.Icon(ind_icon, color=ind_color, size=18)
 
-        self._inp_nueva_tasa = ft.TextField(
-            label="Nueva tasa (Bs/$)",
-            hint_text="Ej: 50.35",
-            width=180,
-            keyboard_type=ft.KeyboardType.NUMBER,
-            color=text_color,
-            border_color=border,
-            focused_border_color=accent,
-            border_radius=12,
-            on_submit=self._handle_actualizar_tasa,
+        # Enlazado al registro de foco: escribir una tasa no debe desplazar la
+        # lista de abajo (ver "REGISTRO DE FOCO DE LOS CAMPOS DE TEXTO").
+        self._inp_nueva_tasa = self._teclado.foco.enlazar(
+            ft.TextField(
+                label="Nueva tasa (Bs/$)",
+                hint_text="Ej: 50.35",
+                width=180,
+                keyboard_type=ft.KeyboardType.NUMBER,
+                color=text_color,
+                border_color=border,
+                focused_border_color=accent,
+                border_radius=12,
+                on_submit=self._handle_actualizar_tasa,
+            ),
+            "tasa_bcv",
         )
 
         btn_act_tasa = ft.Button(
@@ -335,13 +519,19 @@ class InventarioView(BaseView):
         # Descripción, Marca, Código de Barras y Nombre Corto (búsqueda por
         # palabras independientes con AND), en lugar de seis cajas de texto
         # separadas — minimiza el espacio ocupado sin perder cobertura.
-        self._f_busqueda = ft.TextField(
-            label="Buscar código, referencia, descripción, marca...",
-            hint_text="Escriba cualquier término y los resultados se filtran al instante",
-            expand=True,
-            color=text_color, border_color=border, focused_border_color=accent,
-            border_radius=12, prefix_icon=ft.Icons.SEARCH,
-            on_change=self._handle_filtro_change,
+        # El buscador es EL campo donde más tiempo está el cursor en esta
+        # pantalla: sin enlazarlo al registro de foco, corregir un término de
+        # búsqueda le desplazaría la lista al usuario mientras escribe.
+        self._f_busqueda = self._teclado.foco.enlazar(
+            ft.TextField(
+                label="Buscar código, referencia, descripción, marca...",
+                hint_text="Escriba cualquier término y los resultados se filtran al instante",
+                expand=True,
+                color=text_color, border_color=border, focused_border_color=accent,
+                border_radius=12, prefix_icon=ft.Icons.SEARCH,
+                on_change=self._handle_filtro_change,
+            ),
+            "busqueda",
         )
 
         # Filtros de selección múltiple con buscador (departamento, marca,
@@ -546,13 +736,19 @@ class InventarioView(BaseView):
         self._safe_update()
 
     def seleccionar_item(self, codigo: str, e=None):
-        """Clic en cualquier parte de la fila: marca (nunca desmarca)."""
-        self._asegurar_captura_escape(e)
+        """Clic en cualquier parte de la fila: marca (nunca desmarca).
+
+        Reintenta `instalar()` (es idempotente) porque la página puede haber
+        llegado después de `get_body()`: una vista construida headless y
+        montada más tarde se quedaría sin teclado para siempre, y [Esc] es
+        justamente la tecla que hace falta en cuanto hay algo marcado.
+        """
+        self._teclado.instalar(e)
         self._seleccion.seleccionar(codigo)
 
     def alternar_item(self, codigo: str, e=None):
         """Clic DENTRO de la casilla marcadora: marca o desmarca."""
-        self._asegurar_captura_escape(e)
+        self._teclado.instalar(e)
         self._seleccion.alternar(codigo)
 
     def limpiar_seleccion(self, e=None):
@@ -563,42 +759,11 @@ class InventarioView(BaseView):
 
     def alternar_modo_seleccion(self, e=None):
         """Entra o sale del modo de selección múltiple (borrado por lote)."""
-        self._asegurar_captura_escape(e)
+        self._teclado.instalar(e)
         self._seleccion.alternar_modo()
         self._actualizar_barra_seleccion()
         self._cargar_filas()
         self._safe_update(e)
-
-    # ── Captura de [Esc] ────────────────────────────────────────────────────
-    def _asegurar_captura_escape(self, e=None):
-        """Engancha el teclado de la página la primera vez que se marca algo.
-
-        No se engancha al construir la vista porque entonces todavía no hay
-        `page` (la vista se instancia headless y se monta después), y porque
-        [Esc] solo tiene sentido cuando hay algo marcado. El handler que
-        estuviera puesto se guarda y se sigue invocando: esta vista comparte la
-        página con el resto del Dashboard y no debe quedarse con el teclado.
-        """
-        p = self._get_page(e)
-        if p is None:
-            return
-        try:
-            actual = getattr(p, "on_keyboard_event", None)
-            if actual is self._handle_tecla:
-                return
-            self._keyboard_previo = actual
-            p.on_keyboard_event = self._handle_tecla
-        except (AttributeError, RuntimeError):
-            pass  # página sin soporte de teclado: el botón de la barra suple a [Esc]
-
-    def _handle_tecla(self, e=None):
-        """[Esc] deselecciona; cualquier otra tecla sigue su curso."""
-        tecla = str(getattr(e, "key", "") or "")
-        if tecla.strip().lower() == "escape":
-            self.limpiar_seleccion(e)
-        previo = self._keyboard_previo
-        if previo is not None and previo is not self._handle_tecla:
-            previo(e)
 
     # ── Barra de estado de la selección ─────────────────────────────────────
     def _build_barra_seleccion(self, accent, subtext) -> ft.Row:
@@ -676,8 +841,12 @@ class InventarioView(BaseView):
     # ACCIONES DE UN ÍTEM (los seis botones de la fila)
     # ─────────────────────────────────────────────────────────────────────────
     # Cada botón entra por aquí, con un nombre estable y un solo argumento (el
-    # código del ítem): así la próxima ola puede enlazar F1..F6 al ítem marcado
-    # sin tener que alcanzar closures anónimas enterradas en `_cargar_filas`.
+    # código del ítem): así los atajos F1..F6 se enlazan al ítem marcado sin
+    # tener que alcanzar closures anónimas enterradas en `_cargar_filas`.
+    #
+    # El orden es el de `teclado_nav.ATAJOS_ITEM` (F1 info … F6 borrar) y es el
+    # mismo en que se dibujan los botones de la fila: la tecla y la posición
+    # del ícono cuentan la misma historia.
     ACCIONES_ITEM = ("info", "cobrar", "carrito", "historial", "editar", "borrar")
 
     def _producto_en_pantalla(self, codigo: str) -> dict | None:
@@ -727,7 +896,7 @@ class InventarioView(BaseView):
         }
 
     def ejecutar_accion_item(self, accion: str, codigo: str, e=None) -> bool:
-        """Punto de entrada único de los seis botones (y de los futuros atajos).
+        """Punto de entrada único de los seis botones y de los atajos F1..F6.
 
         Vuelve a comprobar `puede_accionar` aunque el botón ya venga
         deshabilitado: la regla tiene que valer también para quien invoque la
@@ -736,7 +905,12 @@ class InventarioView(BaseView):
         handler = self._handlers_accion().get(accion)
         if handler is None:
             raise ValueError(f"Acción de ítem desconocida: {accion!r}")
-        if accion == "historial" and not self.es_admin:
+        # El mapeo de teclas es FIJO para todos los roles (decisión del usuario
+        # del proyecto): para un vendedor, F4 simplemente no hace nada. Se
+        # devuelve False EN SILENCIO y no con un aviso, porque un error sobre
+        # una tecla que ese rol nunca va a poder usar solo confunde; el ícono
+        # tampoco se dibuja en su fila.
+        if accion in ACCIONES_SOLO_ADMIN and not self.es_admin:
             return False
         if not self._seleccion.puede_accionar(codigo):
             self._snack(
@@ -748,11 +922,32 @@ class InventarioView(BaseView):
         return True
 
     def ejecutar_accion_sobre_seleccionado(self, accion: str, e=None) -> bool:
-        """Misma acción, aplicada al ítem marcado (base de los atajos F1..F6)."""
+        """Misma acción, aplicada al ítem marcado: es lo que invocan F1..F6.
+
+        Sin ítem marcado no hace NADA (devuelve False): adivinar una fila
+        sería disparar una acción —incluido un borrado— sobre algo que el
+        usuario no eligió. F6 sigue pasando por el diálogo de clave como el
+        botón de la fila, porque entra por `ejecutar_accion_item` y no por
+        `eliminar_producto`: la clave se exige venga de la tecla o del clic.
+        """
         codigo = self._seleccion.seleccionado
         if not codigo:
             return False
         return self.ejecutar_accion_item(accion, codigo, e)
+
+    def _accionar_por_teclado(self, accion: str, e=None) -> bool:
+        """Lo que invocan F1..F6, con una guarda de más.
+
+        `_al_desmontar_cuerpo` devuelve el teclado al salir de la pantalla,
+        pero esa devolución depende de que `will_unmount` llegue y de que el
+        handler siga siendo el de esta vista (otra vista pudo instalarse
+        encima en el medio, y entonces la cadena nos sigue entregando las
+        teclas). La bandera no depende de nada de eso: una vista que ya no
+        está en pantalla no acciona ítems, y punto.
+        """
+        if self._cuerpo_desmontado:
+            return False
+        return self.ejecutar_accion_sobre_seleccionado(accion, e)
 
     def _build_tabla_panel(self, accent, card_bg, text_color, subtext, border) -> ft.Control:
         self._dt = ft.DataTable(
@@ -906,8 +1101,8 @@ class InventarioView(BaseView):
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
 
         # Índice por código de lo que hay en pantalla: las acciones por nombre
-        # (y los atajos de teclado que vienen después) reciben un código y
-        # resuelven el producto aquí, sin depender del `dict` de un clic.
+        # y los atajos F1..F6 reciben un código y resuelven el producto aquí,
+        # sin depender del `dict` de un clic (una tecla no tiene ninguno).
         self._productos_en_pantalla = {p["codigo"]: p for p in todos}
 
         # Selector de columnas visible solo en modo separado
@@ -915,7 +1110,8 @@ class InventarioView(BaseView):
             self._btn_columnas.visible = (self._modo_vista == "separado")
 
         def _boton_accion(accion: str, codigo: str, icono, color, tooltip: str, size=None):
-            """Botón de la fila cableado a `ejecutar_accion_item`.
+            """Botón de la fila cableado a `ejecutar_accion_item`, con la tecla
+            que lo acciona dibujada encima.
 
             `disabled` es la mitad visible de la regla del marcador: con otro
             ítem seleccionado, el botón se ve apagado en vez de aceptar el clic
@@ -923,17 +1119,54 @@ class InventarioView(BaseView):
             cuelgue de la aplicación).
             """
             habilitado = self._seleccion.puede_accionar(codigo)
-            return ft.IconButton(
+            # El tooltip también lleva el atajo ("Editar (F5)"): sirve para
+            # confirmarlo, no para descubrirlo.
+            descripcion = tooltip_con_atajo(tooltip, accion)
+            boton = ft.IconButton(
                 icono,
                 icon_color=color,
-                icon_size=size,
-                tooltip=tooltip if habilitado else f"{tooltip} (hay otro ítem marcado)",
+                icon_size=size or self._TAM_ICONO_ACCION,
+                tooltip=descripcion if habilitado else f"{descripcion} (hay otro ítem marcado)",
                 disabled=not habilitado,
+                width=self._LADO_BOTON_ACCION,
+                height=self._LADO_BOTON_ACCION,
+                style=ft.ButtonStyle(padding=0),
                 on_click=lambda ev, a=accion, c=codigo: self.ejecutar_accion_item(a, c, ev),
+            )
+            etiqueta = etiqueta_atajo(accion)
+            if not etiqueta:
+                return boton
+
+            color_etiqueta = color if habilitado else subtext
+            insignia = ft.Container(
+                content=ft.Text(
+                    etiqueta,
+                    size=self._TAM_ETIQUETA_ATAJO,
+                    weight=ft.FontWeight.BOLD,
+                    color=color_etiqueta,
+                    no_wrap=True,
+                ),
+                # Fondo OPACO (el de la tarjeta) más borde y texto del color
+                # del ícono: así la tecla se lee sobre el dibujo del ícono y en
+                # los dos temas, sin tener que elegir un color de texto por
+                # tema. Un fondo translúcido dejaba el ícono asomando por
+                # detrás de la "F6" justo en los íconos más densos.
+                bgcolor=card_bg,
+                border=ft.Border.all(1, color_etiqueta),
+                border_radius=4,
+                padding=ft.Padding.symmetric(horizontal=2),
+                right=0,
+                bottom=0,
+            )
+            return ft.Stack(
+                controls=[boton, insignia],
+                width=self._LADO_BOTON_ACCION,
+                height=self._LADO_BOTON_ACCION,
             )
 
         def botones_accion(p, size=None) -> list[ft.Control]:
-            """Los seis botones del ítem, en el orden que usarán F1..F6."""
+            """Los seis botones del ítem, en el orden de F1 a F6: la posición
+            del ícono y la tecla que lo acciona cuentan la misma historia."""
             cod = p["codigo"]
             botones = [
                 _boton_accion("info", cod, ft.Icons.INFO_OUTLINE_ROUNDED, accent, "Ver detalle del ítem", size),
@@ -1458,6 +1691,7 @@ class InventarioView(BaseView):
                 from services.cart_manager import cambiar_carrito_activo
                 c_act, _ = agregar_o_actualizar_producto(sid, prod, cantidad=cant, id_carrito=c_carrito["id"])
                 cambiar_carrito_activo(sid, c_carrito["id"])
+                self._soltar_campos_de_dialogo(dlg)
                 dlg.open = False
                 p.update()
 
@@ -1485,6 +1719,7 @@ class InventarioView(BaseView):
                 p.update()
 
         def cerrar(ev_close):
+            self._soltar_campos_de_dialogo(dlg)
             dlg.open = False
             p.update()
 
@@ -1521,6 +1756,11 @@ class InventarioView(BaseView):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN
         )
 
+        # Este diálogo es el único del módulo que todavía se monta a mano en el
+        # `overlay` en vez de pasar por `_open_dialog`, así que sus campos
+        # (cantidad, cédula del cliente, datos del cliente nuevo) hay que
+        # enlazarlos y soltarlos aquí mismo.
+        self._enlazar_campos_de_dialogo(dlg)
         if dlg not in p.overlay:
             p.overlay.append(dlg)
         dlg.open = True
