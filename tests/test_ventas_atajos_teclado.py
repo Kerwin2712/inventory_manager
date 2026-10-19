@@ -212,6 +212,20 @@ def test_el_handler_previo_de_la_pagina_sigue_recibiendo_teclas(db_temporal, pag
     assert recibidas == ["Arrow Down", "F5", "Escape"]
 
 
+def test_un_rebuild_suelta_el_marcador_de_la_instancia_que_se_reemplaza(vista, pagina, evento):
+    """El Dashboard reconstruye esta vista en cada render y la instancia vieja
+    queda enganchada al teclado como handler previo de la nueva. Con la marca
+    puesta seguiría respondiendo a F5/F6 sobre una tabla que ya no está en
+    pantalla: el usuario vería aparecer un segundo diálogo de edición solo."""
+    _marcar(vista, "TEC-002", evento)
+
+    vista.rebuild_ui(evento)
+    _pulsar(vista, pagina, "F5")
+
+    assert vista._seleccion.hay_seleccion is False
+    assert pagina.visible is None
+
+
 def test_una_vista_headless_no_se_cae_al_no_poder_instalar(db_temporal):
     """Sin página, los atajos simplemente no existen y los botones en
     pantalla los suplen; lo que no puede pasar es que la vista no cargue."""

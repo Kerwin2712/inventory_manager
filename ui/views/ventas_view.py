@@ -172,7 +172,20 @@ class VentasView(BaseView):
         """Sobreescribe BaseView.rebuild_ui(): esta vista es reconstruida por
         DashboardView en cada render y no permanece adjunta a la página, por lo
         que reconstruir solo self.controls no se refleja en pantalla. En su
-        lugar se delega al callback del Dashboard, que sí es la vista viva."""
+        lugar se delega al callback del Dashboard, que sí es la vista viva.
+
+        Antes de delegar se suelta el marcador, porque el Dashboard está por
+        reemplazar esta instancia por una recién construida, y esta se queda
+        enganchada al teclado de la página como handler previo de la nueva
+        (así es como las dos ceden el evento y ninguna le roba el teclado al
+        resto de la aplicación). Con la marca puesta, esta instancia difunta
+        seguiría respondiendo a F5/F6 sobre una tabla que ya no está en
+        pantalla y el usuario vería aparecer un segundo diálogo de edición
+        solo. La instancia nueva arranca sin marca de todos modos, así que
+        esto no le quita nada al usuario: pone al modelo de acuerdo con lo
+        que se ve.
+        """
+        self._seleccion.limpiar()
         if self.on_update_callback:
             try:
                 self.on_update_callback()
