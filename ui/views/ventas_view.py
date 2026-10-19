@@ -307,6 +307,35 @@ class VentasView(BaseView):
         """
         return self._teclado.instalar(e)
 
+    def _enlazar_foco(self, campos: dict) -> None:
+        """Enlaza un grupo de `TextField` al registro de foco, por nombre.
+
+        TODO campo de texto de la vista en el que pueda estar el cursor tiene
+        que pasar por aquí —los del cuerpo y los de cada diálogo—, porque la
+        regla de las flechas se decide con este registro: un campo que se
+        quede sin enlazar le desplaza la pantalla al usuario justo mientras
+        escribe en él, que es exactamente lo que la regla evita. Los nombres
+        se prefijan por diálogo para que dos campos homónimos (dos "Teléfono",
+        dos "Cantidad") no se pisen la entrada del registro.
+        """
+        for nombre, campo in campos.items():
+            self._registro_foco.enlazar(campo, nombre)
+
+    def _liberar_foco(self) -> None:
+        """Da por soltado el foco de todos los campos. Se llama al cerrar
+        cualquier diálogo.
+
+        Hace falta porque no se puede contar con que Flet entregue el `on_blur`
+        de un campo que desaparece de la pantalla junto con su diálogo. Si ese
+        aviso no llega, el registro se queda creyendo que hay un campo con el
+        cursor y las flechas dejan de navegar para siempre, sin nada en
+        pantalla que explique por qué. El error se corre a propósito hacia
+        este lado: los diálogos de esta vista son modales, así que al cerrarse
+        no queda ningún campo detrás en el que el usuario pueda estar
+        escribiendo.
+        """
+        self._registro_foco.limpiar()
+
     def _destino_scroll_vertical(self):
         """Qué desplazan ↑/↓ (y Ctrl+↑/↓ hasta el extremo).
 
@@ -384,6 +413,7 @@ class VentasView(BaseView):
             return
         if dialog in self._dialog_stack:
             self._dialog_stack.remove(dialog)
+        self._liberar_foco()
 
         p = self.get_current_page(e) or self._page_ref
         if p is not None and hasattr(p, "pop_dialog"):
@@ -556,10 +586,7 @@ class VentasView(BaseView):
             on_change=self._filtrar_solo_digitos_cliente,
             on_submit=self.handle_buscar_cliente,
         )
-        # Regla del foco: mientras el cursor esté en un campo, las flechas son
-        # del cursor y no de la navegación. Un campo que se quede sin enlazar
-        # le mueve la pantalla al usuario mientras escribe.
-        self._registro_foco.enlazar(self.cli_search_numero, "cliente_cedula")
+        self._enlazar_foco({"cliente_cedula": self.cli_search_numero})
         self.btn_buscar_cli = ft.ElevatedButton(
             content=ft.Row([ft.Icon(ft.Icons.SEARCH, size=18), ft.Text("Buscar Cliente", weight=ft.FontWeight.BOLD)], tight=True),
             style=ft.ButtonStyle(
@@ -632,8 +659,10 @@ class VentasView(BaseView):
             text_align=ft.TextAlign.CENTER,
             border_radius=12,
         )
-        self._registro_foco.enlazar(self.prod_search_input, "busqueda_producto")
-        self._registro_foco.enlazar(self.cant_input, "cantidad_solicitada")
+        self._enlazar_foco({
+            "busqueda_producto": self.prod_search_input,
+            "cantidad_solicitada": self.cant_input,
+        })
         self.btn_buscar_prod = ft.IconButton(
             icon=ft.Icons.MANAGE_SEARCH,
             icon_color=self.get_accent_color(),
@@ -1064,6 +1093,13 @@ class VentasView(BaseView):
         f_telefono = ft.TextField(label="Teléfono", border_radius=12, width=200)
         f_direccion = ft.TextField(label="Dirección", border_radius=12, expand=True)
         f_correo = ft.TextField(label="Correo (opcional)", border_radius=12, expand=True)
+        self._enlazar_foco({
+            "cliente_nuevo_cedula": f_numero,
+            "cliente_nuevo_nombre": f_nombre,
+            "cliente_nuevo_telefono": f_telefono,
+            "cliente_nuevo_direccion": f_direccion,
+            "cliente_nuevo_correo": f_correo,
+        })
         lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
 
         def _crear(ev):
@@ -1076,6 +1112,7 @@ class VentasView(BaseView):
                     correo=f_correo.value,
                 )
                 dlg.open = False
+                self._liberar_foco()
                 self.safe_update(ev)
                 vincular_cliente_a_carrito(self._sid, nuevo)
                 self.show_alert_success(ev, f"Cliente '{nuevo['nombre']}' registrado y vinculado a la venta.")
@@ -1086,6 +1123,7 @@ class VentasView(BaseView):
 
         def cerrar(ev):
             dlg.open = False
+            self._liberar_foco()
             self.safe_update(ev)
 
         dlg = ft.AlertDialog(
@@ -1442,6 +1480,10 @@ class VentasView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER, text_align=ft.TextAlign.CENTER,
             border_radius=12,
         )
+        self._enlazar_foco({
+            "inventario_modal_busqueda": txt_busqueda,
+            "inventario_modal_cantidad": cant_modal_input,
+        })
 
         btn_modo_modal = ft.SegmentedButton(
             selected=[modo_vista_state["modo"]],
@@ -1481,6 +1523,7 @@ class VentasView(BaseView):
             except ValueError:
                 cant = 1.0
             dlg.open = False
+            self._liberar_foco()
             self.safe_update(ev)
             self.agregar_producto_directo(prod, cant, ev)
 
@@ -1595,6 +1638,7 @@ class VentasView(BaseView):
 
         def cerrar(ev):
             dlg.open = False
+            self._liberar_foco()
             self.safe_update(ev)
 
         dlg = ft.AlertDialog(
@@ -1687,6 +1731,11 @@ class VentasView(BaseView):
             width=170,
             border_radius=12
         )
+        self._enlazar_foco({
+            "editar_renglon_cantidad": txt_cant,
+            "editar_renglon_precio_usd": txt_precio_usd,
+            "editar_renglon_precio_bcv": txt_precio_bcv,
+        })
         lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
 
         def guardar_cambios(e_save):
@@ -2423,6 +2472,11 @@ class VentasView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._actualizar_porcentaje_descuento,
         )
+        self._enlazar_foco({
+            "cobro_referencia": self.txt_referencia_pago,
+            "cobro_monto": self.txt_monto_cobrar,
+            "cobro_descuento": self.txt_descuento,
+        })
         self.lbl_pct_descuento = ft.Text("", size=14, weight=ft.FontWeight.BOLD)
         self._lbl_err_cobro = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
 
@@ -2718,6 +2772,13 @@ class VentasView(BaseView):
             prefix_icon=ft.Icons.ALTERNATE_EMAIL,
             border_radius=12,
         )
+        self._enlazar_foco({
+            "credito_fecha": self.txt_credito_fecha,
+            "credito_telefono": self.txt_credito_telefono,
+            "credito_direccion": self.txt_credito_direccion,
+            "credito_contacto2": self.txt_credito_contacto2,
+            "credito_correo": self.txt_credito_correo,
+        })
         self._lbl_err_credito = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
 
         if not hay_cliente:
