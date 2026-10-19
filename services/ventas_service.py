@@ -13,6 +13,7 @@ Actualización de octubre 2026 — el COBRO de la venta deja de ser implícito:
   (`services/deudas_service.py`) y solo existe en Venta Formal.
 """
 import sqlite3
+from datetime import datetime
 
 from core.database import get_connection
 from services import deudas_service
@@ -38,6 +39,72 @@ METODO_SIN_REFERENCIA = "Efectivo"
 # OFF, solo se puede aplicar hacia arriba": el monto a crédito no puede bajar
 # del 95% del precio de lista. Hacia arriba no hay tope propio del crédito.
 FACTOR_MINIMO_CREDITO = 0.95
+
+# Marca en `app_settings` de la migración de `ventas.fecha` a hora local (mismo
+# mecanismo que `core.database._normalizar_created_at_productos` usa para
+# `productos.created_at`).
+CLAVE_MIGRACION_FECHA_VENTAS = "migracion_fecha_local_ventas"
+
+
+def _ahora_local() -> str:
+    """Marca de tiempo en hora LOCAL del equipo, en el formato que usa todo el
+    proyecto (`services/inventario_service.crear_producto` escribe igual)."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def migrar_fechas_ventas_a_hora_local() -> bool:
+    """Pasa a hora LOCAL las `ventas.fecha` guardadas en UTC. Devuelve True si
+    hizo la conversión en esta llamada.
+
+    El DEFAULT `CURRENT_TIMESTAMP` de SQLite escribe UTC, mientras que los
+    reportes preguntan por "hoy" con `DATE('now','localtime')`: en Venezuela
+    (UTC-4) una venta hecha después de las 20:00 locales se guardaba ya con la
+    fecha UTC del día siguiente y desaparecía del día en curso. Es el mismo
+    bug que se corrigió para `productos.created_at`.
+
+    Es IDEMPOTENTE por obligación: correrla dos veces volvería a desplazar las
+    fechas, esta vez sin ningún UTC que corregir. La constancia queda en
+    `app_settings`, igual que la migración de productos.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (CLAVE_MIGRACION_FECHA_VENTAS,)
+        )
+        if cursor.fetchone():
+            return False
+
+        cursor.execute(
+            "UPDATE ventas SET fecha = datetime(fecha, 'localtime') "
+            "WHERE fecha IS NOT NULL AND TRIM(fecha) <> ''"
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, 'done')",
+            (CLAVE_MIGRACION_FECHA_VENTAS,),
+        )
+        conn.commit()
+    return True
+
+
+def _asegurar_migracion_fecha_local() -> None:
+    """Dispara la migración de fechas antes de registrar una venta nueva.
+
+    Se engancha aquí, y no en `core/database.init_db`, por dos razones: este
+    módulo es el ÚNICO que inserta en `ventas`, y el orden importa — una vez
+    que se empiezan a escribir fechas locales, correr la migración después
+    desplazaría también esas filas ya correctas. Llamarla justo antes del
+    primer INSERT local garantiza que ninguna fila local la preceda.
+
+    No cachea el resultado en memoria a propósito: la comprobación es un
+    SELECT sobre `app_settings` (una fila), y un indicador de proceso daría
+    falsos positivos al cambiar de base de datos.
+    """
+    try:
+        migrar_fechas_ventas_a_hora_local()
+    except Exception as ex:
+        # Una migración fallida no debe impedir vender: la venta nueva se
+        # guardará igual con su fecha local correcta.
+        print(f"[ERROR] No se pudo normalizar la hora de las ventas existentes: {ex}")
 
 
 def _a_numero(valor, etiqueta: str) -> float:
@@ -164,6 +231,10 @@ def procesar_venta(
     # huérfana que después haya que compensar.
     fecha_limite = deudas_service.normalizar_fecha(fecha_limite_pago) if es_credito else None
 
+    # Antes de escribir la primera fecha local hay que haber convertido las
+    # heredadas en UTC (ver `_asegurar_migracion_fecha_local`).
+    _asegurar_migracion_fecha_local()
+
     # ── Referencia del pago ──────────────────────────────────────────────────
     referencia_limpia = (referencia_pago or "").strip() or None
     omitida = bool(referencia_omitida)
@@ -281,14 +352,20 @@ def procesar_venta(
             INSERT INTO ventas (
                 tipo_venta, cliente_id, total_usd, total_bcv, metodo_pago,
                 referencia_pago, referencia_omitida, monto_cobrado,
-                porcentaje_descuento, usuario_nombre
+                porcentaje_descuento, usuario_nombre, fecha
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tipo_venta_clean, cliente_id, total_usd, total_bcv, metodo_pago_clean,
                 referencia_limpia, 1 if omitida else 0, monto_final,
                 porcentaje, usuario_nombre,
+                # `fecha` explícita en hora LOCAL: el DEFAULT CURRENT_TIMESTAMP
+                # de SQLite guarda UTC, y los reportes preguntan por "hoy" con
+                # DATE('now','localtime'), así que una venta hecha de noche en
+                # Venezuela (UTC-4) se guardaba con la fecha del día siguiente
+                # y desaparecía de "Ventas del Día".
+                _ahora_local(),
             )
         )
         venta_id = cursor.lastrowid
