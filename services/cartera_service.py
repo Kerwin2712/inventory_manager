@@ -29,9 +29,21 @@ def format_documento(tipo: str, numero: str) -> str:
 # SERVICIOS PARA LA CARTERA DE CLIENTES
 # ==========================================
 
-def crear_cliente(nombre: str, cedula_rif: str, direccion: str = "", telefono: str = "", correo: str = "") -> dict:
+def crear_cliente(
+    nombre: str,
+    cedula_rif: str,
+    direccion: str = "",
+    telefono: str = "",
+    correo: str = "",
+    contacto_secundario: str = "",
+) -> dict:
     """
     Crea un nuevo cliente en SQLite tras aplicar la Regla RNO-CLI-01.
+
+    `contacto_secundario` es opcional y existe por simetría con
+    `actualizar_cliente`: un campo que solo se puede escribir al editar, y no
+    al crear, obliga a guardar dos veces para registrar un dato que ya estaba
+    en pantalla.
     """
     cli_model = Cliente(
         nombre_razon_social=nombre,
@@ -46,8 +58,9 @@ def crear_cliente(nombre: str, cedula_rif: str, direccion: str = "", telefono: s
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO clientes (cedula_rif, nombre, direccion, telefono, correo)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO clientes
+                    (cedula_rif, nombre, direccion, telefono, correo, contacto_secundario)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cli_model.cedula_rif,
@@ -55,6 +68,7 @@ def crear_cliente(nombre: str, cedula_rif: str, direccion: str = "", telefono: s
                     cli_model.direccion,
                     cli_model.telefono,
                     cli_model.email,
+                    (contacto_secundario or "").strip() or None,
                 )
             )
             conn.commit()
@@ -103,8 +117,25 @@ def buscar_cliente_por_cedula(cedula_rif: str) -> dict | None:
     return None
 
 
-def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = None, telefono: str = None, correo: str = None) -> dict:
-    """Actualiza los datos de un cliente existente aplicando RNO-CLI-01."""
+def actualizar_cliente(
+    cedula_rif: str,
+    nombre: str = None,
+    direccion: str = None,
+    telefono: str = None,
+    correo: str = None,
+    contacto_secundario: str = None,
+) -> dict:
+    """Actualiza los datos de un cliente existente aplicando RNO-CLI-01.
+
+    Todo parámetro en `None` significa "no modificar": se conserva el valor
+    almacenado. Para vaciar un campo opcional se pasa la cadena vacía.
+
+    `contacto_secundario` lo pide la ventana del método de pago "Crédito": no
+    era un campo del registro original de la cartera, así que un cliente
+    cargado antes llega sin él y la ventana de crédito es la primera
+    oportunidad de capturarlo. Sin este parámetro el dato se quedaba en el
+    formulario y nunca llegaba a la ficha del cliente.
+    """
     cliente_actual = obtener_cliente(cedula_rif)
     if not cliente_actual:
         raise ValueError(f"El cliente con Cédula/RIF '{cedula_rif}' no existe.")
@@ -113,6 +144,11 @@ def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = Non
     nueva_direccion = direccion if direccion is not None else cliente_actual["direccion"]
     nuevo_telefono = telefono if telefono is not None else cliente_actual["telefono"]
     nuevo_correo = correo if correo is not None else cliente_actual["correo"]
+    nuevo_contacto2 = (
+        contacto_secundario
+        if contacto_secundario is not None
+        else cliente_actual.get("contacto_secundario")
+    )
 
     cli_model = Cliente(
         nombre_razon_social=nuevo_nombre,
@@ -122,12 +158,15 @@ def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = Non
         email=nuevo_correo,
     )
 
+    contacto2_limpio = (nuevo_contacto2 or "").strip() or None
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             UPDATE clientes
-            SET nombre = ?, direccion = ?, telefono = ?, correo = ?, updated_at = CURRENT_TIMESTAMP
+            SET nombre = ?, direccion = ?, telefono = ?, correo = ?,
+                contacto_secundario = ?, updated_at = CURRENT_TIMESTAMP
             WHERE cedula_rif = ?
             """,
             (
@@ -135,6 +174,7 @@ def actualizar_cliente(cedula_rif: str, nombre: str = None, direccion: str = Non
                 cli_model.direccion,
                 cli_model.telefono,
                 cli_model.email,
+                contacto2_limpio,
                 cli_model.cedula_rif,
             )
         )

@@ -2435,17 +2435,18 @@ class VentasView(BaseView):
 
         # Se completa la ficha del cliente con lo que el vendedor acaba de
         # recoger: estos campos no eran obligatorios al registrarlo y la
-        # cartera es el lugar donde tienen que quedar.
-        # NOTA: `cartera_service.actualizar_cliente` no acepta todavía
-        # `contacto_secundario` (la columna existe en `clientes` pero ningún
-        # servicio público la escribe), así que ese dato queda solo en el
-        # compromiso de esta venta y no se persiste en la cartera.
+        # cartera es el lugar donde tienen que quedar. El contacto secundario
+        # entra aquí por primera vez para un cliente cargado antes de que la
+        # columna existiera.
         try:
             actualizar_cliente(
                 cedula_rif=cedula, telefono=telefono, direccion=direccion,
-                correo=correo,
+                correo=correo, contacto_secundario=contacto_secundario,
             )
-            cliente.update({"telefono": telefono, "direccion": direccion, "correo": correo})
+            cliente.update({
+                "telefono": telefono, "direccion": direccion, "correo": correo,
+                "contacto_secundario": contacto_secundario,
+            })
         except ValueError as ex:
             self._lbl_err_credito.value = f"No se pudo actualizar la ficha del cliente: {ex}"
             self.safe_update(e)
