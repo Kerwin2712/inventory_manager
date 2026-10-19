@@ -5,7 +5,7 @@ from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
 from ui.components.seleccion_lista import SeleccionLista
-from ui.components.teclado_nav import ControlTeclado
+from ui.components.teclado_nav import ACCIONES_SOLO_ADMIN, ControlTeclado
 from ui.components.dialogo_clave import DialogoClave
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 # La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
@@ -95,6 +95,10 @@ class InventarioView(BaseView):
             destino_vertical=self._destino_scroll_vertical,
             destino_horizontal=self._destino_scroll_horizontal,
             seleccion=self._seleccion,
+            # F1..F6 actúan SOLO sobre el ítem marcado: el punto de entrada
+            # recibe el nombre de la acción y resuelve el código él mismo, así
+            # que la tecla no tiene que adivinar ninguna fila.
+            ejecutar_accion=self.ejecutar_accion_sobre_seleccionado,
             al_limpiar=self.limpiar_seleccion,
         )
 
@@ -709,8 +713,12 @@ class InventarioView(BaseView):
     # ACCIONES DE UN ÍTEM (los seis botones de la fila)
     # ─────────────────────────────────────────────────────────────────────────
     # Cada botón entra por aquí, con un nombre estable y un solo argumento (el
-    # código del ítem): así la próxima ola puede enlazar F1..F6 al ítem marcado
-    # sin tener que alcanzar closures anónimas enterradas en `_cargar_filas`.
+    # código del ítem): así los atajos F1..F6 se enlazan al ítem marcado sin
+    # tener que alcanzar closures anónimas enterradas en `_cargar_filas`.
+    #
+    # El orden es el de `teclado_nav.ATAJOS_ITEM` (F1 info … F6 borrar) y es el
+    # mismo en que se dibujan los botones de la fila: la tecla y la posición
+    # del ícono cuentan la misma historia.
     ACCIONES_ITEM = ("info", "cobrar", "carrito", "historial", "editar", "borrar")
 
     def _producto_en_pantalla(self, codigo: str) -> dict | None:
@@ -769,7 +777,12 @@ class InventarioView(BaseView):
         handler = self._handlers_accion().get(accion)
         if handler is None:
             raise ValueError(f"Acción de ítem desconocida: {accion!r}")
-        if accion == "historial" and not self.es_admin:
+        # El mapeo de teclas es FIJO para todos los roles (decisión del usuario
+        # del proyecto): para un vendedor, F4 simplemente no hace nada. Se
+        # devuelve False EN SILENCIO y no con un aviso, porque un error sobre
+        # una tecla que ese rol nunca va a poder usar solo confunde; el ícono
+        # tampoco se dibuja en su fila.
+        if accion in ACCIONES_SOLO_ADMIN and not self.es_admin:
             return False
         if not self._seleccion.puede_accionar(codigo):
             self._snack(
@@ -781,7 +794,14 @@ class InventarioView(BaseView):
         return True
 
     def ejecutar_accion_sobre_seleccionado(self, accion: str, e=None) -> bool:
-        """Misma acción, aplicada al ítem marcado (base de los atajos F1..F6)."""
+        """Misma acción, aplicada al ítem marcado: es lo que invocan F1..F6.
+
+        Sin ítem marcado no hace NADA (devuelve False): adivinar una fila
+        sería disparar una acción —incluido un borrado— sobre algo que el
+        usuario no eligió. F6 sigue pasando por el diálogo de clave como el
+        botón de la fila, porque entra por `ejecutar_accion_item` y no por
+        `eliminar_producto`: la clave se exige venga de la tecla o del clic.
+        """
         codigo = self._seleccion.seleccionado
         if not codigo:
             return False

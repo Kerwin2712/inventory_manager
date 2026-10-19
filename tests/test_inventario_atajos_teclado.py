@@ -10,6 +10,10 @@ propuesta del PDF, donde F1-F3 navegaban):
   - Las flechas navegan SOLO cuando ningún campo de texto tiene el foco: con
     el cursor dentro de un campo, las flechas mueven el cursor como en
     cualquier programa.
+  - F1 a F6 accionan los seis íconos del ítem MARCADO, con un mapeo fijo para
+    todos los roles: para un vendedor, F4 (Historial Clínico) simplemente no
+    hace nada. Sin ítem marcado, ninguna hace nada.
+  - F6 (eliminar) pide la clave del usuario cada vez, igual que el botón.
   - [Esc] limpia la selección y suelta el foco.
   - La vista comparte la página con el Dashboard, así que el handler de
     teclado que hubiera puesto debe seguir recibiendo las teclas.
@@ -30,9 +34,12 @@ import asyncio
 import flet as ft
 import pytest
 
-from ui.components.teclado_nav import PASO_HORIZONTAL, PASO_VERTICAL
+from ui.components.teclado_nav import (
+    ACCIONES_CON_CLAVE, ATAJOS_ITEM, PASO_HORIZONTAL, PASO_VERTICAL,
+)
 
 CODIGOS = ("ATA-001", "ATA-002", "ATA-003")
+CLAVE = "clave-de-la-sesion-123"
 
 
 class PageFalsa:
@@ -321,3 +328,151 @@ def test_escape_suelta_el_foco_y_devuelve_la_navegacion(vista, destinos, pagina)
 
     _pulsar(vista, pagina, "Arrow Down")
     assert destinos["vertical"].llamadas, "tras [Esc] las flechas deben navegar"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F1 a F6 sobre el ítem marcado
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def espia_acciones(vista):
+    """Registra qué acción llegó al punto de entrada único de los íconos.
+
+    Se espía `ejecutar_accion_item` y no los seis handlers porque es
+    exactamente el punto por el que entran también los clics: si la tecla
+    llega ahí, hace lo mismo que el botón, con sus mismas comprobaciones.
+    """
+    ejecutadas = []
+
+    def _registrar(accion, codigo, e=None):
+        ejecutadas.append((accion, codigo))
+        return True
+
+    vista.ejecutar_accion_item = _registrar
+    return ejecutadas
+
+
+@pytest.mark.parametrize("tecla,accion", sorted(ATAJOS_ITEM.items()))
+def test_cada_tecla_de_funcion_acciona_su_icono(vista, espia_acciones, pagina, evento, tecla, accion):
+    vista.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista, pagina, tecla)
+
+    assert espia_acciones == [(accion, "ATA-002")]
+
+
+@pytest.mark.parametrize("tecla", sorted(ATAJOS_ITEM))
+def test_sin_item_marcado_ninguna_tecla_de_funcion_hace_nada(vista, espia_acciones, pagina, tecla):
+    """Adivinar una fila sería disparar una acción —incluido un borrado—
+    sobre algo que el usuario no eligió."""
+    _pulsar(vista, pagina, tecla)
+
+    assert espia_acciones == []
+
+
+def test_la_tecla_actua_sobre_el_marcado_aunque_el_marcador_se_mueva(vista, espia_acciones, pagina, evento):
+    vista.seleccionar_item("ATA-001", evento)
+    vista.seleccionar_item("ATA-003", evento)
+
+    _pulsar(vista, pagina, "F5")
+
+    assert espia_acciones == [("editar", "ATA-003")]
+
+
+def test_f4_no_hace_nada_con_rol_vendedor(productos, pagina):
+    """El mapeo es fijo para todos los roles: el Historial Clínico es
+    exclusivo de administración, así que para un vendedor F4 no hace nada —y
+    sin un mensaje de error confuso sobre una tecla que nunca podrá usar."""
+    from ui.views.inventario_view import InventarioView
+
+    v = InventarioView(es_admin=False, username="vendedor", rol_usuario="vendedor")
+    v.get_body()
+    v._teclado.instalar(EventoFalso(pagina))
+    historiales = []
+    v.accion_historial = lambda codigo, e=None: historiales.append(codigo)
+    v.seleccionar_item("ATA-001", EventoFalso(pagina))
+
+    _pulsar(v, pagina, "F4")
+
+    assert historiales == [], "un vendedor no puede abrir el historial clínico"
+    assert v._dialog is None, "no debe abrirse ningún diálogo"
+    assert pagina.overlay == [], "tampoco un aviso de error"
+
+
+def test_f4_si_abre_el_historial_para_un_administrador(vista, espia_acciones, pagina, evento):
+    vista.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista, pagina, "F4")
+
+    assert espia_acciones == [("historial", "ATA-002")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F6 exige la clave del usuario, igual que el botón
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def vista_con_sesion(productos, pagina):
+    """Vista cuya cuenta de sesión existe y tiene una clave conocida."""
+    from services.user_service import create_user
+    from ui.views.inventario_view import InventarioView
+
+    create_user("cajero", CLAVE, "administrador")
+    v = InventarioView(es_admin=True, username="cajero", rol_usuario="administrador")
+    v.get_body()
+    v._teclado.instalar(EventoFalso(pagina))
+    return v
+
+
+def _existe(codigo: str) -> bool:
+    from services.inventario_service import obtener_producto
+
+    return obtener_producto(codigo) is not None
+
+
+def _componente_clave(vista):
+    """El `DialogoClave` viaja en el `data` del diálogo apilado."""
+    from ui.components.dialogo_clave import DialogoClave
+
+    comp = vista._dialog.data
+    assert isinstance(comp, DialogoClave), "el diálogo del tope debe ser el de clave"
+    return comp
+
+
+def test_borrar_es_una_accion_con_clave():
+    """Contrato compartido: si alguien quitara `borrar` de esta lista, el
+    atajo tendría que dejar de pasar por el diálogo de clave."""
+    assert "borrar" in ACCIONES_CON_CLAVE
+    assert ATAJOS_ITEM["F6"] == "borrar"
+
+
+def test_f6_abre_el_dialogo_de_clave_y_no_borra_por_si_misma(vista_con_sesion, pagina, evento):
+    """La clave se exige CADA vez y venga de donde venga: no se puentea el
+    diálogo solo porque la orden llegó por teclado."""
+    vista_con_sesion.seleccionar_item("ATA-002", evento)
+
+    _pulsar(vista_con_sesion, pagina, "F6")
+
+    _componente_clave(vista_con_sesion)
+    assert _existe("ATA-002"), "F6 no puede borrar nada por sí misma"
+
+
+def test_f6_con_clave_incorrecta_no_borra(vista_con_sesion, pagina, evento):
+    vista_con_sesion.seleccionar_item("ATA-002", evento)
+    _pulsar(vista_con_sesion, pagina, "F6")
+
+    comp = _componente_clave(vista_con_sesion)
+    comp.campo.value = "clave-equivocada"
+    assert comp.confirmar(evento) is False
+
+    assert _existe("ATA-002")
+
+
+def test_f6_con_la_clave_correcta_borra_el_item_marcado(vista_con_sesion, pagina, evento):
+    vista_con_sesion.seleccionar_item("ATA-002", evento)
+    _pulsar(vista_con_sesion, pagina, "F6")
+
+    comp = _componente_clave(vista_con_sesion)
+    comp.campo.value = CLAVE
+    assert comp.confirmar(evento) is True
+
+    assert _existe("ATA-002") is False
+    assert _existe("ATA-001"), "solo se borra el ítem marcado"
