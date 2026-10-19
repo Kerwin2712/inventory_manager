@@ -4,6 +4,7 @@ from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
+from ui.components.teclado_nav import ControlTeclado
 from services.bcv_service import obtener_estado_tasa
 from services.reportes_service import (
     obtener_metricas_dashboard,
@@ -31,6 +32,23 @@ class DashboardView(BaseView):
         self.rango_top_ventas = "Hoy"
         self.limite_top_ventas = 10
         self.sidebar_collapsed = True
+        # Destinos de scroll del area de Inicio, capturados al construir el
+        # cuerpo. Se guardan para que el teclado los resuelva EN EL MOMENTO de
+        # la pulsacion: el cuerpo se reconstruye en cada repintado, asi que un
+        # control capturado al instalar el teclado seria uno que ya no esta en
+        # pantalla.
+        self._scroll_inicio_v = None
+        self._scroll_inicio_h = None
+        self._teclado = ControlTeclado(
+            # Resolución tardía a propósito: pasar `self.get_current_page`
+            # directamente congelaría el método que exista en este instante,
+            # de modo que cualquier reemplazo posterior (una subclase, o un
+            # doble de prueba que sustituye la página) quedaría ignorado y el
+            # teclado buscaría la página por un camino viejo.
+            obtener_pagina=lambda e=None: self.get_current_page(e),
+            destino_vertical=lambda: self._scroll_inicio_v,
+            destino_horizontal=lambda: self._scroll_inicio_h,
+        )
         super().__init__(route="/dashboard", title="Inicio")
 
     @property
@@ -84,6 +102,16 @@ class DashboardView(BaseView):
         self.rebuild_ui()
 
     def get_body(self) -> ft.Control:
+        # Los destinos de scroll se olvidan en CADA construcción, y solo la
+        # rama de Inicio los vuelve a poner. Es lo que evita el error sutil de
+        # esta pantalla: al cambiar de sección, el cuerpo del Inicio deja de
+        # estar montado, y un destino que sobreviviera haría que las flechas
+        # desplazaran un control invisible mientras el usuario mira Ventas o
+        # Inventario. Sin destino, las flechas de esta vista no hacen nada y
+        # el teclado se lo cede a la vista anidada, que tiene los suyos.
+        self._scroll_inicio_v = None
+        self._scroll_inicio_h = None
+
         # Selección del contenido principal según la sección activa
         if self.current_section == "Ventas":
             # `get_current_page()` en lugar de `self.page`: este último lanza
@@ -183,6 +211,7 @@ class DashboardView(BaseView):
                 scroll=ft.ScrollMode.AUTO,
                 spacing=20,
             )
+            self._scroll_inicio_v = main_content
         else:
             main_content = ft.Container(
                 content=ft.Column(
@@ -198,6 +227,12 @@ class DashboardView(BaseView):
                 alignment=ft.Alignment.CENTER,
                 expand=True,
             )
+
+        # Instalación perezosa: al construirse la vista todavía no hay `page`
+        # (se instancia headless y se monta después), así que el primer intento
+        # falla sin consecuencias y el siguiente repintado lo engancha.
+        # `instalar()` es idempotente.
+        self._teclado.instalar()
 
         return ft.Row(
             controls=[
@@ -864,7 +899,9 @@ class DashboardView(BaseView):
             except ValueError as ex:
                 self.show_alert_error(e, str(ex))
 
-        inp_stock_minimo = ft.TextField(
+        # Enlazado al registro de foco: mientras el cursor esté aquí, las
+        # flechas editan el número en vez de desplazar la pantalla.
+        inp_stock_minimo = self._teclado.foco.enlazar(ft.TextField(
             label="Stock mínimo",
             value=f"{stock_minimo_actual:.0f}",
             width=110,
@@ -872,7 +909,7 @@ class DashboardView(BaseView):
             border_radius=12,
             content_padding=8,
             on_submit=handle_guardar_stock_minimo,
-        )
+        ), "stock_minimo")
         btn_guardar_stock_minimo = ft.IconButton(
             icon=ft.Icons.SAVE_OUTLINED, icon_color=accent,
             tooltip="Guardar nuevo stock mínimo parametrizado (ERS 3.6)",
@@ -949,7 +986,16 @@ class DashboardView(BaseView):
         contra el borde de la tarjeta. Este `Row` con scroll AUTO solo aparece
         cuando hace falta. No rompe la regla de "un solo dueño por eje": el
         cuerpo del Inicio es dueño del eje VERTICAL y este Row del HORIZONTAL."""
-        return ft.Row(controls=[tabla], scroll=ft.ScrollMode.AUTO, expand=True)
+        fila = ft.Row(controls=[tabla], scroll=ft.ScrollMode.AUTO, expand=True)
+        # Las flechas horizontales apuntan a la PRIMERA tabla ancha que se
+        # construye en el Inicio, que es la de Auditoria Preventiva (la que el
+        # requisito pide ampliar). Hay dos tablas con eje horizontal propio y
+        # una sola pulsacion no puede desplazar las dos; elegir la de arriba
+        # es predecible, mientras que elegir "la ultima construida" cambiaria
+        # de destino segun el orden de armado.
+        if self._scroll_inicio_h is None:
+            self._scroll_inicio_h = fila
+        return fila
 
     def _fila_auditoria(self, item: dict, accent: str, text_color: str) -> ft.DataRow:
         """Fila de la Auditoría Preventiva al estilo "agrupado" del Inventario.
