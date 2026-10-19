@@ -79,3 +79,48 @@ Tres detalles que son invisibles en una captura de pantalla y fáciles de romper
 El handler es `async` porque `Control.scroll_to(...)` es una corutina: uno síncrono la crearía y la descartaría sin ejecutarla y sin lanzar error, de modo que las flechas no harían nada y no habría rastro de por qué. Y el handler de teclado anterior de la página se guarda y se sigue invocando **siempre**, incluso cuando la vista ya consumió la tecla: estas vistas comparten la página con el Dashboard y otra parte de la aplicación puede tener un atajo legítimo sobre la misma tecla.
 
 La clave del usuario se pide con `ui/components/dialogo_clave.py`, genérico para servir a un ítem, a un lote y a cualquier otra acción sensible. La clave **nunca** va a un log, a un snackbar ni al texto de un error, y el mensaje de fallo es genérico sin distinguir casos.
+
+#### Mapeo por lista
+
+| Lista | F1 | F2 | F3 | F4 | F5 | F6 |
+|---|---|---|---|---|---|---|
+| Inventario | Info | Cobrar | Carrito | Historial (solo admin) | Editar | Borrar (pide clave) |
+| Carrito de Ventas | — | — | — | — | Editar renglón | Quitar del carrito (sin clave) |
+| Deudas por Cobrar | — | Cobrar | — | — | Editar | Borrar (pide clave) |
+| Inicio y Gestión de Datos | — | — | — | — | — | — |
+
+Las teclas sin ícono equivalente quedan **inertes** en vez de recibir una equivalencia inventada: el criterio es que la misma tecla haga lo mismo en todas las listas. Quitar un renglón del carrito no pide clave porque no borra ningún dato del sistema, solo saca un artículo de una venta que todavía no se procesó.
+
+#### Tres defectos del teclado encontrados al cablearlo
+
+Los tres venían del mismo hecho: **el Dashboard reemplaza sus vistas en cada repintado**, y una vista que se fue de la pantalla seguía enganchada al teclado.
+
+- **La cadena de handlers crecía sin tope.** Cada instancia nueva guardaba la anterior como handler previo, así que una sola pulsación recorría todas las instancias pasadas y las viejas seguían actuando sobre controles desmontados. El síntoma concreto: tras un `rebuild_ui()` en Ventas, F5 y F6 se ejecutaban **dos veces**, y la segunda abría un diálogo sobre una tabla fuera de pantalla. Se resolvió dando a cada vista una `identidad` lógica: dos controles con la misma identidad son la misma pantalla reconstruida, de modo que el nuevo **releva** al viejo —heredando su handler previo, para no costarle el teclado al Dashboard que estaba debajo— en lugar de encadenarse a él.
+- **Una vista fuera de pantalla seguía accionando.** En Inventario, una **F2 pulsada mientras el usuario miraba Ventas** la procesaba la vista anterior y mandaba a cobrar un producto que ya no tenía delante (F2 sale de la vista por un callback del Dashboard, así que tenía efecto real; las otras cinco morían calladas al no encontrar página). Ahora la vista suelta el teclado al desmontarse, con una bandera de respaldo que no depende de que el aviso de desmontaje llegue.
+- **El marcador sobrevivía al repintado.** En Ventas se suelta en `rebuild_ui`, y la selección es **de instancia y no de clase** —al revés que las preferencias de columnas de ese archivo—: compartida, el marcador de un vendedor deshabilitaría los botones de otro conectado al mismo proceso.
+
+---
+
+### Correcciones pedidas al revisar el resultado
+
+El usuario revisó el generador de pedidos y pidió dos cambios, ambos con una trampa que vale documentar.
+
+- **El pedido suma al stock existente** en vez de fijarlo (5 unidades + un pedido de 10 = 15). Lo delicado es que **no se podía convertir toda la Carga Masiva en "sumar"**: ese mismo camino se usa para la carga inicial de catálogo y para restaurar un respaldo, de modo que sumar siempre habría **duplicado las existencias de toda la base cada vez que alguien reimporta un respaldo**, en silencio y sin forma fácil de deshacerlo. La distinción es explícita y verificable en el archivo: se exigen **las dos cosas**, la hoja `Resumen del Pedido` y un literal propio en una celda, porque el nombre de una hoja es un indicio débil (cualquiera puede llamar así a una hoja suya) y ese literal no lo escribe nadie por accidente. Criterio fail-closed: cualquier problema para leer el marcador cae en "fijar", que es lo que no multiplica stock. Se decidió **no** hacerlo idempotente, y está documentado: exigiría recordar qué pedidos ya entraron y mentiría cuando el proveedor manda dos veces la misma remesa.
+- **La carga masiva lee los costos y el sub-departamento**, reutilizando `normalizar_costo` y `validar_costo_obligatorio` de `core/models.py` en vez de duplicar las reglas. Una fila con existencia y sin costo se **rechaza** con un mensaje que nombra la hoja, la fila y el código — pero solo cuando el archivo trae la columna de costo, porque un archivo viejo que no la menciona no puede volverse inválido de golpe.
+
+**Defecto colateral que apareció ahí y es el más peligroso de esta tanda:** `INSERT OR REPLACE` borra la fila y la vuelve a insertar, así que **toda columna que no viaje en el archivo queda en NULL**. Sin cuidado, al empezar a leer los costos, reimportar un respaldo viejo habría **borrado en silencio los costos y el sub-departamento de todo el catálogo**. Ahora el valor almacenado se conserva cuando la columna no viaja o viaja en blanco. Lo mismo ocurría ya con `alerta_stock_minimo`, que no viaja en ningún archivo y se perdía en cada carga masiva: defecto preexistente, mismo mecanismo, corregido con su test.
+
+### Acceso a Gestión de Datos y contenido del respaldo
+
+Al revisar lo anterior apareció que **"Gestión de Datos" se listaba en el menú para todos los roles**, y ahí viven la Carga Masiva —que reescribe el stock de todo el catálogo— y la Copia de Seguridad. Es decir: un vendedor podía reescribir el inventario **desde el mismo módulo que existe para que no pudiera**, porque el Generador de Pedido se agregó precisamente para que el empleado registre la mercancía sin tocar el stock. Por decisión del usuario, esas dos tarjetas quedan solo para administradores y el Generador sigue visible para todos. Ocultar la tarjeta no es autorizar, así que los dos handlers vuelven a comprobar el rol en el punto donde la acción ocurre, con criterio fail-closed: una vista construida sin usuario esconde las dos operaciones en lugar de habilitarlas.
+
+La **Copia de Seguridad incluye ahora los costos y el sub-departamento**, con los encabezados exactos que la Carga Masiva reconoce. Antes exportaba doce columnas y ninguna era de costo, de modo que restaurar un respaldo en una base vacía perdía los costos de todo el catálogo: el dato que nadie puede reconstruir de memoria. Un respaldo que no se puede reimportar no es un respaldo, y uno que pierde datos por el camino es peor, porque da la tranquilidad sin el respaldo; por eso el test cierra el círculo completo —exporta, vacía la base e importa el propio archivo por el camino real de la Carga Masiva— en vez de limitarse a comprobar que las columnas están.
+
+---
+
+### Pendientes conocidos
+
+- **`proveedor_id` se pierde en el camino del asistente de mapeo** de la importación: ese camino solo tiene el nombre del proveedor, no su ID. El camino heurístico sí lo preserva, porque el respaldo exporta la columna.
+- **Dos modales de Ventas siguen con el patrón heredado de diálogos** (`abrir_modal_crear_cliente` y `abrir_modal_buscar_inventario`). Sus handlers de cierre ya liberan el foco, así que la migración a la pila nativa es mecánica.
+- **`View.page` es de solo lectura en Flet 0.86**, así que la asignación `vista.page = self.page` que el Dashboard hace dentro de un `try/except` **nunca surte efecto**. Inventario lo resolvió enganchando el teclado al montarse el cuerpo; conviene revisar si alguna otra vista depende de ese `self.page` para algo.
+- `celda_acciones_grid` en `inventario_view.py` es código muerto desde antes de esta actualización.
