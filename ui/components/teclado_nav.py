@@ -268,3 +268,176 @@ def desplazamiento(intencion: IntencionScroll) -> dict:
 
     paso = PASO_VERTICAL if intencion.eje == "vertical" else PASO_HORIZONTAL
     return {"delta": paso * intencion.signo}
+
+
+# ─── Instalación en una página de Flet ───────────────────────────────────────
+
+class ControlTeclado:
+    """Engancha los atajos a la página de Flet de una vista concreta.
+
+    Cada vista le dice qué desplazar y qué accionar; la decisión de qué
+    significa cada tecla queda en `interpretar`, compartida por todas. Así las
+    cuatro listas de la aplicación se comportan igual sin repetir la mecánica.
+
+    Puntos delicados, todos aprendidos a golpes en este proyecto:
+
+    - **La página se comparte.** La vista vive dentro del Dashboard, que puede
+      tener su propio `on_keyboard_event`. El handler anterior se guarda y se
+      sigue invocando siempre, de modo que instalar los atajos de una lista no
+      le roba el teclado al resto de la aplicación.
+    - **La instalación es perezosa.** Al construir la vista todavía no hay
+      `page` (se instancia headless y se monta después), así que `instalar()`
+      se llama desde los puntos donde ya hay evento y es idempotente.
+    - **El handler es `async`.** `Control.scroll_to(...)` es una corutina: un
+      handler síncrono que la llamara sin `await` crearía la corutina y la
+      descartaría sin ejecutarla, sin lanzar error. Las flechas simplemente no
+      harían nada y no habría rastro de por qué.
+    - **Los destinos de scroll son invocables.** La tabla se reconstruye en
+      cada repintado, así que guardar el control desplazaría un control viejo
+      que ya no está en pantalla; guardar una función que lo busca devuelve
+      siempre el vigente.
+    """
+
+    def __init__(
+        self,
+        obtener_pagina,
+        destino_vertical=None,
+        destino_horizontal=None,
+        seleccion=None,
+        ejecutar_accion=None,
+        al_limpiar=None,
+        registro_foco: RegistroFoco | None = None,
+    ):
+        self._obtener_pagina = obtener_pagina
+        self._destino_vertical = destino_vertical
+        self._destino_horizontal = destino_horizontal
+        self._seleccion = seleccion
+        self._ejecutar_accion = ejecutar_accion
+        self._al_limpiar = al_limpiar
+        self.foco = registro_foco or RegistroFoco()
+        self._handler_previo = None
+        self._instalado = False
+        # Referencia ESTABLE al handler. `self.manejar` crea un método ligado
+        # nuevo en cada acceso, así que `pagina.on_keyboard_event is
+        # self.manejar` siempre era falso: la guarda de reinstalación no
+        # disparaba nunca y el control acababa encadenado a sí mismo, con lo
+        # que una sola flecha se procesaba cientos de veces.
+        self._handler = self.manejar
+
+    # ── Instalación ─────────────────────────────────────────────────────────
+    @property
+    def instalado(self) -> bool:
+        return self._instalado
+
+    @property
+    def handler(self):
+        """El invocable que queda en `page.on_keyboard_event`."""
+        return self._handler
+
+    def instalar(self, e=None) -> bool:
+        """Toma el teclado de la página. Idempotente; `False` si no hay página
+        o no soporta teclado (ahí los botones en pantalla suplen a las teclas)."""
+        pagina = self._pagina(e)
+        if pagina is None:
+            return False
+        try:
+            actual = getattr(pagina, "on_keyboard_event", None)
+            if actual is self._handler:
+                self._instalado = True
+                return True
+            self._handler_previo = actual
+            pagina.on_keyboard_event = self._handler
+        except (AttributeError, RuntimeError):
+            return False
+        self._instalado = True
+        return True
+
+    def desinstalar(self, e=None) -> bool:
+        """Devuelve el teclado al handler anterior."""
+        pagina = self._pagina(e)
+        if pagina is None:
+            return False
+        try:
+            if getattr(pagina, "on_keyboard_event", None) is self._handler:
+                pagina.on_keyboard_event = self._handler_previo
+        except (AttributeError, RuntimeError):
+            return False
+        self._instalado = False
+        return True
+
+    def _pagina(self, e=None):
+        try:
+            return self._obtener_pagina(e)
+        except TypeError:
+            return self._obtener_pagina()
+        except (AttributeError, RuntimeError):
+            return None
+
+    # ── Manejo del evento ───────────────────────────────────────────────────
+    async def manejar(self, e=None):
+        """`page.on_keyboard_event`. Siempre cede el evento al handler previo,
+        incluso cuando esta vista ya lo consumió: otra parte de la aplicación
+        puede tener un atajo legítimo sobre la misma tecla."""
+        intencion = interpretar_evento(
+            e,
+            hay_campo_con_foco=self.foco.hay_campo_con_foco,
+            hay_seleccion=self.hay_seleccion,
+        )
+        try:
+            await self._aplicar(intencion, e)
+        finally:
+            await self._ceder(e)
+
+    @property
+    def hay_seleccion(self) -> bool:
+        seleccion = self._seleccion
+        if seleccion is None:
+            return False
+        try:
+            return bool(seleccion.hay_seleccion)
+        except AttributeError:
+            return False
+
+    async def _aplicar(self, intencion, e=None) -> None:
+        if intencion is None:
+            return
+        if isinstance(intencion, IntencionScroll):
+            await self._desplazar(intencion)
+        elif isinstance(intencion, IntencionAccion):
+            if self._ejecutar_accion is not None:
+                self._ejecutar_accion(intencion.accion, e)
+        elif isinstance(intencion, IntencionSimple):
+            # Escape: suelta el foco además de limpiar la selección, para que
+            # las flechas vuelvan a navegar sin tener que buscar un hueco de
+            # la pantalla donde hacer clic.
+            self.foco.limpiar()
+            if self._al_limpiar is not None:
+                self._al_limpiar(e)
+
+    async def _desplazar(self, intencion: IntencionScroll) -> None:
+        obtener = (
+            self._destino_vertical if intencion.eje == "vertical"
+            else self._destino_horizontal
+        )
+        if obtener is None:
+            return
+        destino = obtener() if callable(obtener) else obtener
+        if destino is None:
+            return
+        try:
+            await destino.scroll_to(duration=200, **desplazamiento(intencion))
+        except Exception:
+            # Un destino sin scroll habilitado, o desmontado entre el repintado
+            # y la pulsación, no debe tumbar el teclado de la aplicación.
+            pass
+
+    async def _ceder(self, e=None) -> None:
+        previo = self._handler_previo
+        if previo is None or previo is self._handler:
+            return
+        try:
+            resultado = previo(e)
+            if hasattr(resultado, "__await__"):
+                await resultado
+        except Exception:
+            pass
