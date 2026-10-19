@@ -21,6 +21,7 @@ from services.importacion_service import (
     ejecutar_importacion_completa_mapeada,
 )
 from services.busqueda_service import CRITERIOS_BUSQUEDA, CRITERIO_POR_DEFECTO
+from services.permisos_service import es_admin
 from services import pedidos_service
 
 class GestionDatosView(BaseView):
@@ -58,6 +59,32 @@ class GestionDatosView(BaseView):
             identidad="gestion_datos",
         )
         super().__init__(route="/gestion-datos", title="Gestión de Datos y Respaldos")
+
+    @property
+    def es_admin(self) -> bool:
+        """Criterio fail-closed: sin `user_data` NO es administrador.
+
+        De este rol dependen las dos operaciones que pueden reescribir o
+        llevarse la base entera, así que el valor por omisión tiene que ser el
+        restrictivo: una vista construida sin usuario —por error, o aislada en
+        una prueba— no puede habilitar la Carga Masiva.
+        """
+        return es_admin((self.user_data or {}).get("role"))
+
+    def _exigir_admin(self, e=None) -> bool:
+        """Corta la operación si quien la pide no es administrador.
+
+        Ocultar la tarjeta no es autorizar: el handler sigue siendo invocable
+        por código y estas dos operaciones reescriben o se llevan la base
+        completa. La comprobación se repite aquí a propósito, en el punto
+        donde la acción ocurre y no solo donde se dibuja el botón.
+        """
+        if self.es_admin:
+            return True
+        self.show_alert_error(
+            e, "Esta operación está reservada a los administradores del sistema."
+        )
+        return False
 
     # =========================================================================
     # NAVEGACIÓN CON FLECHAS
@@ -317,6 +344,19 @@ class GestionDatosView(BaseView):
         )
         card_pedido.col = {"sm": 12, "lg": 6}
 
+        # La Carga Masiva REESCRIBE el stock de todo el catálogo y la Copia de
+        # Seguridad se lleva la base completa —incluidos los costos, que son
+        # información reservada a la administración—, así que las dos quedan
+        # solo para administradores. El Generador de Pedido, en cambio, sigue
+        # visible para todos: es el punto de la Nueva Función 6, que el
+        # empleado registre la mercancía recibida SIN poder tocar el
+        # inventario. Sin esta separación, un vendedor podía reescribir el
+        # stock entero desde el mismo módulo que existe para que no pudiera.
+        tarjetas = (
+            [card_importar, card_exportar, card_pedido] if self.es_admin
+            else [card_pedido]
+        )
+
         # Único dueño del eje vertical de la vista, y por eso el destino de las
         # flechas arriba/abajo. No hay scroll horizontal en el cuerpo: las
         # tarjetas se reacomodan con `ResponsiveRow` en vez de desbordarse.
@@ -327,7 +367,7 @@ class GestionDatosView(BaseView):
             ], spacing=10),
             ft.Text("Administre las importaciones masivas y la exportación de copias de seguridad de la base de datos.", color=subtext_color),
             ft.Divider(height=20, color=self.get_border_color()),
-            ft.ResponsiveRow([card_importar, card_exportar, card_pedido], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
+            ft.ResponsiveRow(tarjetas, spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
         ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True)
 
         # Instalación perezosa: al construir la vista todavía no hay `page` (se
@@ -348,6 +388,8 @@ class GestionDatosView(BaseView):
         de mapeo de columnas (el usuario decide a qué campo de la BD
         corresponde cada columna del Excel, sin importar cómo se llame)."""
         self._teclado.instalar(e)
+        if not self._exigir_admin(e):
+            return
         try:
             print("\n>>> [GestionDatosView] Clic en IMPORTAR DESDE EXCEL")
             with open("import_debug.log", "a", encoding="utf-8") as f:
@@ -859,6 +901,8 @@ class GestionDatosView(BaseView):
     def handle_exportar_excel(self, e):
         """Exporta la base de datos completa a un libro Excel (.xlsx) con pestañas separadas (ERS 1.1)."""
         self._teclado.instalar(e)
+        if not self._exigir_admin(e):
+            return
         last_dir = get_setting("last_excel_dir", default=None)
         if last_dir and not os.path.exists(last_dir):
             last_dir = None
@@ -873,15 +917,25 @@ class GestionDatosView(BaseView):
             conn = get_connection()
 
             # 1. Cargar DataFrames de cada tabla
+            # Los encabezados de costo y sub-departamento son EXACTAMENTE los
+            # que la Carga Masiva reconoce (ver `CAMPOS_PRODUCTO_MAPEO` en
+            # `services/importacion_service.py`), porque un respaldo que no se
+            # puede volver a importar no es un respaldo. Antes el respaldo no
+            # los traía, así que restaurarlo en una base vacía perdía los
+            # costos de todo el catálogo: el dato que nadie puede reconstruir
+            # de memoria.
             df_productos = pd.read_sql_query("""
-                SELECT 
+                SELECT
                     codigo AS [Código],
                     referencia AS [Referencia],
                     departamento AS [Departamento],
+                    sub_departamento AS [Sub-Departamento],
                     descripcion_general AS [Descripción General],
                     marca AS [Marca],
                     precio_dolares AS [Precio USD (Efectivo)],
                     precio_bcv AS [Precio USD (BCV)],
+                    costo_usd_efectivo AS [Costo USD (Efectivo)],
+                    costo_usd_bcv AS [Costo USD (BCV)],
                     proveedor_id AS [ID Proveedor],
                     existencia AS [Existencia],
                     codigo_barras AS [Código Barras],

@@ -169,7 +169,11 @@ class DashboardView(BaseView):
             main_content = inv_view.get_body()
 
         elif self.current_section == "Gestión de Datos":
-            gd_view = GestionDatosView()
+            # `user_data` decide aquí quién ve la Carga Masiva y la Copia de
+            # Seguridad, que reescriben o se llevan la base entera. Sin
+            # pasarlo, la vista aplica su criterio fail-closed y las esconde
+            # incluso a un administrador.
+            gd_view = GestionDatosView(user_data=self.user_info)
             try:
                 if self.page:
                     gd_view.page = self.page
