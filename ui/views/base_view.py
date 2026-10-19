@@ -252,6 +252,56 @@ class BaseView(ft.View):
             except (RuntimeError, AttributeError):
                 pass
 
+    def abrir_dialogo(self, dialog: ft.AlertDialog, e=None):
+        """Muestra un `AlertDialog` por la API de pila nativa de Flet 0.86.
+
+        El patrón heredado —meter el control en `page.overlay` y alternar
+        `open`— no llega a dibujar el cierre en esta versión: el diálogo se
+        queda pegado en pantalla, o sigue activo pero invisible recibiendo
+        clics sobre botones que el usuario ya no ve. La vista de Inventario ya
+        pagó ese precio (está documentado en la bitácora de septiembre); estos
+        dos helpers ponen el mismo camino correcto a disposición de cualquier
+        vista que herede de `BaseView`.
+        """
+        if dialog.open:
+            # Ya está arriba. Sin esta guarda, un segundo clic en el botón que
+            # abre el modal lo apila dos veces, y entonces hacen falta dos
+            # cierres para sacarlo de la pantalla: el usuario cancela, el
+            # diálogo sigue ahí y parece que el botón no responde.
+            return
+        dialog.open = True
+        p = self.get_current_page(e)
+        if p is None:
+            return
+        if hasattr(p, "show_dialog"):
+            try:
+                p.show_dialog(dialog)
+            except RuntimeError:
+                pass  # ya estaba montado en la pila de la página
+            return
+        # Respaldo para páginas que no exponen la API de diálogos.
+        if dialog not in getattr(p, "overlay", []):
+            p.overlay.append(dialog)
+        p.update()
+
+    def cerrar_dialogo(self, dialog: ft.AlertDialog, e=None):
+        """Cierra el diálogo del tope de la pila."""
+        p = self.get_current_page(e)
+        if p is not None and hasattr(p, "pop_dialog"):
+            # `pop_dialog()` cierra el diálogo más alto que SIGA abierto, así
+            # que se llama ANTES de bajar la bandera: al revés, el tope que
+            # Flet encuentra es el de abajo y se cierra el equivocado.
+            p.pop_dialog()
+            dialog.open = False
+            return
+
+        dialog.open = False
+        if p is None:
+            return
+        if dialog in getattr(p, "overlay", []):
+            p.overlay.remove(dialog)
+        p.update()
+
     def mostrar_modal_tasa_bcv(self, e=None, callback_al_guardar=None):
         """Despliega un modal global para actualizar la Tasa BCV desde cualquier vista."""
         p = self.get_current_page(e)
@@ -280,8 +330,7 @@ class BaseView(ft.View):
                 if val <= 0:
                     raise ValueError()
                 actualizar_tasa(val)
-                dialog.open = False
-                p.update()
+                self.cerrar_dialogo(dialog, e_save)
                 
                 # Notificación de éxito
                 s = ft.SnackBar(
@@ -302,8 +351,7 @@ class BaseView(ft.View):
                 p.update()
 
         def cerrar(e_close):
-            dialog.open = False
-            p.update()
+            self.cerrar_dialogo(dialog, e_close)
 
         dialog = ft.AlertDialog(
             title=ft.Row([
@@ -332,10 +380,7 @@ class BaseView(ft.View):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN
         )
 
-        if dialog not in p.overlay:
-            p.overlay.append(dialog)
-        dialog.open = True
-        p.update()
+        self.abrir_dialogo(dialog, e)
 
     def show_alert_success(self, msg_or_e, e_or_msg=None):
         """Muestra una notificación flotante de éxito."""
