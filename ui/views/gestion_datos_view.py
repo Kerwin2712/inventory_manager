@@ -10,6 +10,8 @@ from core.database import get_connection, get_setting, set_setting
 from services.importacion_service import (
     procesar_importacion_excel,
     CAMPOS_PRODUCTO_MAPEO,
+    MODO_SUMAR,
+    detectar_modo_existencia,
     listar_hojas_excel,
     detectar_hoja_productos,
     obtener_columnas_y_muestra,
@@ -207,6 +209,16 @@ class GestionDatosView(BaseView):
                     "Cantidad, y al cerrar indique Proveedor y Fecha de Recepción. El archivo NO modifica "
                     "el inventario: se le entrega al Administrador para que lo cargue supervisado.",
                     size=13, color=subtext_color,
+                ),
+                # El archivo es una ENTRADA de mercancía, no un catálogo: al
+                # cargarlo suma las cantidades al stock. Se dice acá, en el
+                # diálogo del pedido y otra vez al cerrarlo, porque es la
+                # diferencia entre registrar lo que llegó y reemplazar el
+                # inventario — y quien lo carga no es quien armó el pedido.
+                ft.Text(
+                    "Al cargarlo, las cantidades SE SUMAN al stock que cada producto ya tiene "
+                    "(no lo reemplazan).",
+                    size=13, weight=ft.FontWeight.BOLD, color=accent,
                 ),
                 ft.Container(height=10),
                 ft.Button(
@@ -410,6 +422,29 @@ class GestionDatosView(BaseView):
                 size=12, color=self.get_subtext_color(),
             ),
         ]
+
+        # El otro lado del aviso que se le da a quien exporta el pedido: quien
+        # CARGA el archivo tiene que saber, antes de confirmar, si lo que tiene
+        # en la mano es una entrada de mercancía (las cantidades se suman) o un
+        # catálogo/respaldo (la existencia queda en el número del archivo). Es
+        # la diferencia entre registrar lo que llegó y reemplazar el inventario,
+        # y mirando las columnas no se distingue.
+        if detectar_modo_existencia(ruta_archivo) == MODO_SUMAR:
+            contenido.append(ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED, color=self.get_accent_color(), size=22),
+                    ft.Text(
+                        "Este archivo es una ENTRADA DE MERCANCÍA generada por el asistente de "
+                        "pedidos: la columna Existencia es la cantidad recibida y SE SUMARÁ al "
+                        "stock actual de cada producto, no lo reemplazará.",
+                        size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color(),
+                        expand=True, no_wrap=False,
+                    ),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+                padding=10, border_radius=10,
+                bgcolor=self.get_card_bg(),
+                border=ft.Border.all(1, self.get_accent_color()),
+            ))
 
         if len(hojas) > 1:
             dd_hoja = ft.Dropdown(
@@ -881,7 +916,8 @@ class GestionDatosView(BaseView):
         contenido = ft.Column([
             ft.Text(
                 "El archivo que genere este asistente NO modifica el inventario: es el pedido que se le "
-                "entrega al Administrador para que lo cargue por Carga Masiva de Datos una vez supervisado.",
+                "entrega al Administrador para que lo cargue por Carga Masiva de Datos una vez supervisado. "
+                "Al cargarlo, la Cantidad recibida SE SUMA al stock que cada producto ya tiene.",
                 size=12, color=self.get_subtext_color(),
             ),
             ft.Row([
@@ -1262,6 +1298,26 @@ class GestionDatosView(BaseView):
                         f"{pedidos_service.total_unidades(sid):g} unidades",
                         size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color(),
                     ),
+                    # Último aviso antes de generar el archivo, y el más
+                    # importante de los tres: el Administrador que lo reciba
+                    # tiene que saber que está cargando una ENTRADA DE
+                    # MERCANCÍA y no un catálogo. Si lo confundiera con un
+                    # catálogo esperaría que el stock quedara en estos números,
+                    # cuando en realidad se van a sumar a los actuales.
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED, color=self.get_accent_color(), size=20),
+                            ft.Text(
+                                "Este archivo es una ENTRADA DE MERCANCÍA: al cargarlo por Carga "
+                                "Masiva, las cantidades SE SUMAN al stock existente de cada producto. "
+                                "No es un catálogo ni una copia de seguridad.",
+                                size=12, color=self.get_text_color(), expand=True, no_wrap=False,
+                            ),
+                        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+                        padding=10, border_radius=10,
+                        bgcolor=self.get_card_bg(),
+                        border=ft.Border.all(1, self.get_accent_color()),
+                    ),
                     lbl_err,
                 ], spacing=12, tight=True),
                 width=420,
@@ -1311,4 +1367,9 @@ class GestionDatosView(BaseView):
         pedidos_service.vaciar_pedido(self.get_session_id(e))
         self._cerrar_generador(e)
         self._refrescar_pedido(e)
-        self.show_alert_success(e, f"{resultado['mensaje']}\nGuardado en: {resultado['ruta']}")
+        self.show_alert_success(
+            e,
+            f"{resultado['mensaje']}\nGuardado en: {resultado['ruta']}\n"
+            "Es una ENTRADA DE MERCANCÍA: al cargarla por Carga Masiva, las cantidades "
+            "se SUMAN al stock existente.",
+        )
