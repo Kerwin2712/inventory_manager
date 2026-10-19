@@ -68,8 +68,16 @@ def _fila(vista, indice: int):
     return vista.dt_deudas.rows[indice]
 
 
+# La lista lleva delante una columna "marcador" (la casilla de selección), que
+# es ESTRUCTURAL y no forma parte del boceto del PDF. Los índices que usan
+# estas pruebas son los del boceto, y el desplazamiento se suma en un solo
+# sitio para que agregar o quitar una columna estructural no obligue a tocar
+# treinta asserts.
+OFFSET_MARCADOR = 1
+
+
 def _textos_celda(fila, columna: int) -> list[str]:
-    return _textos(fila.cells[columna].content)
+    return _textos(fila.cells[columna + OFFSET_MARCADOR].content)
 
 
 def _boton_fila(fila, fragmento_tooltip: str):
@@ -247,7 +255,7 @@ def test_el_orden_de_columnas_sigue_el_boceto_del_pdf(vista):
     v = vista()
     etiquetas = _etiquetas_columnas(v)
 
-    assert etiquetas[:7] == [
+    assert etiquetas[OFFSET_MARCADOR:OFFSET_MARCADOR + 7] == [
         "Fecha Límite",
         "Monto a Cobrar",
         "Cédula/RIF / Nombre o Razón Social",

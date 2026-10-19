@@ -1,5 +1,12 @@
 import flet as ft
 from ui.views.base_view import BaseView
+from ui.components.seleccion_lista import SeleccionLista
+from ui.components.teclado_nav import (
+    ControlTeclado,
+    RegistroFoco,
+    etiqueta_atajo,
+    tooltip_con_atajo,
+)
 from services.cartera_service import (
     crear_cliente, obtener_cliente, buscar_cliente_por_cedula, actualizar_cliente, eliminar_cliente, listar_clientes,
     crear_proveedor, obtener_proveedor, buscar_proveedores, actualizar_proveedor, eliminar_proveedor, listar_proveedores,
@@ -29,6 +36,20 @@ class CarteraView(BaseView):
         "Creada / Usuario",
     )
 
+    # Encabezado de la casilla marcadora de la izquierda. Vive aparte de
+    # COLUMNAS_DEUDAS porque es ESTRUCTURAL: no es un dato del boceto del PDF,
+    # es el control con el que el usuario señala el renglón sobre el que va a
+    # trabajar.
+    ENCABEZADO_MARCADOR = "Sel."
+
+    # Las tres acciones que tiene un renglón de esta lista. Los nombres son los
+    # del mapeo canónico de `teclado_nav.ATAJOS_ITEM`, así que la misma tecla
+    # hace lo mismo aquí y en el Inventario. Las acciones del mapeo que esta
+    # lista no tiene ("info", "carrito", "historial") quedan INERTES: no se les
+    # inventa un equivalente, porque una tecla que significa una cosa en una
+    # lista y otra en la de al lado es una trampa para quien aprende los atajos.
+    ACCIONES_DEUDA = ("cobrar", "editar", "borrar")
+
     def __init__(self, on_back_callback=None, on_iniciar_venta=None, user_data=None):
         self.on_back_callback = on_back_callback
         # Callback (ERS 3.3): recibe el cliente seleccionado y navega
@@ -56,6 +77,37 @@ class CarteraView(BaseView):
         # heredado (`page.overlay` + bandera `open`) no llega a dibujar el
         # cierre y el diálogo queda pegado —o activo pero invisible—.
         self._dialog_stack: list[ft.AlertDialog] = []
+
+        # ── Marcador de la lista de Deudas por Cobrar ───────────────────────
+        # El sombreado y el permiso para accionar los botones se derivan de
+        # ESTE modelo y no de una bandera guardada en el control que recibió el
+        # clic: la tabla se reconstruye en cada repintado y al desplazarse en
+        # horizontal, y un flag local se perdería en el camino. La clave de
+        # selección es el `id` de la deuda.
+        self._seleccion_deudas = SeleccionLista(on_cambio=self._al_cambiar_seleccion_deudas)
+
+        # Contabilidad del foco: las flechas navegan SOLO si ningún campo de
+        # texto tiene el cursor. Flet no expone un "¿quién tiene el foco?"
+        # global, así que cada `TextField` de la vista avisa al tomarlo y al
+        # soltarlo (ver `_enlazar_foco`).
+        self._registro_foco = RegistroFoco()
+
+        # Atajos de teclado. Se instancia headless —al construir la vista
+        # todavía no hay `page`— y se monta en `_asegurar_teclado()`, que es
+        # idempotente y respeta el handler que ya tuviera la página: esta vista
+        # comparte la página con el Dashboard y no debe quedarse el teclado.
+        self._teclado = ControlTeclado(
+            obtener_pagina=self.get_current_page,
+            # Invocables, no controles: la pestaña visible cambia y la tabla se
+            # reconstruye, así que el destino se resuelve en el momento de la
+            # pulsación (ver `_destinos_scroll_pestana`).
+            destino_vertical=lambda: self._destinos_scroll_pestana()[0],
+            destino_horizontal=lambda: self._destinos_scroll_pestana()[1],
+            seleccion=self._seleccion_deudas,
+            ejecutar_accion=self.ejecutar_accion_sobre_seleccionada,
+            al_limpiar=self.limpiar_seleccion_deuda,
+            registro_foco=self._registro_foco,
+        )
 
         super().__init__(route="/cartera", title="Cartera de Clientes y Proveedores")
 
@@ -99,7 +151,188 @@ class CarteraView(BaseView):
                 self._clientes_area.visible = self.current_tab == "clientes"
                 self._proveedores_area.visible = self.current_tab == "proveedores"
                 self._deudas_area.visible = self.current_tab == "deudas"
+                # Cambiar de pestaña es el primer evento que casi siempre llega
+                # con `page`: buen momento para tomar el teclado.
+                self._asegurar_teclado(e)
                 self.safe_update(e)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ATAJOS DE TECLADO (flechas para navegar, F1–F6 sobre el renglón marcado)
+    # ─────────────────────────────────────────────────────────────────────────
+    def did_mount(self):
+        """Flet avisa cuando la vista ya está montada: es el primer instante en
+        que existe `self.page`, así que es el sitio natural para enganchar el
+        teclado. Se envuelve porque no todas las versiones de `ft.View` lo
+        definen, y porque una vista headless (pruebas) nunca lo recibe."""
+        try:
+            super().did_mount()
+        except AttributeError:
+            pass
+        self._asegurar_teclado()
+
+    def _asegurar_teclado(self, e=None) -> bool:
+        """Instala los atajos si todavía no lo están. Idempotente.
+
+        No se hace en `__init__` porque ahí no hay `page` (la vista se
+        instancia y se monta después), y se llama desde varios puntos —montaje,
+        cambio de pestaña, búsqueda, clic en un renglón— porque cualquiera de
+        ellos puede ser el primer evento que traiga la página.
+        """
+        return self._teclado.instalar(e)
+
+    def _destinos_scroll_pestana(self):
+        """Controles con scroll de la pestaña ACTIVA, como `(vertical, horizontal)`.
+
+        Se resuelven en el momento de la pulsación: la pestaña visible cambia y
+        la lista se reconstruye en cada repintado, así que un control guardado
+        al instalar el teclado desplazaría algo que el usuario ya no mira. Si
+        una pestaña no tiene dueño de un eje se devuelve `None` para ese eje —
+        una flecha que no hace nada es preferible a una que desplaza el
+        contenedor equivocado.
+        """
+        por_pestana = {
+            "clientes": ("_cli_scroll_vertical", "_cli_scroll_horizontal"),
+            "proveedores": ("_prov_scroll_vertical", "_prov_scroll_horizontal"),
+            "deudas": ("_deu_scroll_vertical", "_deu_scroll_horizontal"),
+        }
+        nombres = por_pestana.get(self.current_tab)
+        if nombres is None:
+            return None, None
+        return getattr(self, nombres[0], None), getattr(self, nombres[1], None)
+
+    def _enlazar_foco(self, campo, nombre):
+        """Conecta un `TextField` al registro de foco y lo devuelve.
+
+        TODOS los campos de texto de la vista pasan por aquí. Si uno se queda
+        sin enlazar, al usuario se le desplaza la pantalla mientras escribe en
+        él, que es exactamente lo que la regla del foco evita.
+        """
+        return self._registro_foco.enlazar(campo, nombre)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # MARCADOR Y SOMBREADO DE LA LISTA DE DEUDAS POR COBRAR
+    # ─────────────────────────────────────────────────────────────────────────
+    # Mecánica pedida por el usuario del proyecto (Nueva Función 3 del PDF,
+    # extendida a esta lista):
+    #   - Un clic en cualquier parte del renglón lo marca: se sombrea y la
+    #     casilla de la izquierda queda marcada, y sigue marcado al desplazarse
+    #     a la derecha de la lista.
+    #   - Solo hay DOS formas de deseleccionar: volver a la izquierda y hacer
+    #     clic DENTRO de la casilla marcada (`alternar`), o pulsar [Esc]
+    #     (`limpiar`).
+    #   - Con un renglón marcado, solo ese renglón puede accionar sus botones;
+    #     los de los demás quedan deshabilitados VISIBLEMENTE.
+    #   - SIN NADA MARCADO TODO FUNCIONA COMO ANTES: los tres botones de todos
+    #     los renglones siguen activos. Es la regla más fácil de romper al
+    #     cablear la vista, y la que `SeleccionLista.puede_accionar` garantiza.
+    def _al_cambiar_seleccion_deudas(self):
+        """Repinta la lista cuando la selección cambió de verdad.
+
+        Lo llama el modelo (`SeleccionLista.on_cambio`), así que cualquier
+        camino que altere la selección —clic, casilla, [Esc], una deuda
+        borrada— termina repintando por aquí y no hay que acordarse en cada
+        handler.
+        """
+        if not hasattr(self, "dt_deudas"):
+            return  # vista aún sin construir (durante `__init__`)
+        self.cargar_tabla_deudas(
+            self.get_text_color(), self.get_accent_color(), self.get_subtext_color()
+        )
+        self.safe_update()
+
+    def seleccionar_deuda(self, deuda_id, e=None):
+        """Clic en cualquier parte del renglón: marca (nunca desmarca)."""
+        self._asegurar_teclado(e)
+        self._seleccion_deudas.seleccionar(deuda_id)
+
+    def alternar_deuda(self, deuda_id, e=None):
+        """Clic DENTRO de la casilla marcadora: marca o desmarca."""
+        self._asegurar_teclado(e)
+        self._seleccion_deudas.alternar(deuda_id)
+
+    def limpiar_seleccion_deuda(self, e=None):
+        """Quita la marca (tecla [Esc]). El repintado lo dispara el modelo."""
+        self._seleccion_deudas.limpiar()
+        self.safe_update(e)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ACCIONES DE UN RENGLÓN DE DEUDAS (los tres botones y F2 / F5 / F6)
+    # ─────────────────────────────────────────────────────────────────────────
+    def _handlers_accion_deuda(self) -> dict:
+        """Mapeo canónico → handler de esta lista. Las claves ausentes son las
+        teclas inertes aquí (F1 info, F3 carrito, F4 historial)."""
+        return {
+            "cobrar": self.handle_abrir_cobro,
+            "editar": self.handle_abrir_edicion_deuda,
+            "borrar": self.handle_confirmar_borrado_deuda,
+        }
+
+    def _deuda_por_id(self, deuda_id) -> dict | None:
+        """Relee la deuda del servicio por su `id`.
+
+        La clave del marcador viaja como texto (`SeleccionLista` normaliza a
+        `str` para que `1` y `"1"` no sean dos renglones), así que aquí se
+        devuelve al entero que entiende SQLite. Releer —en vez de confiar en el
+        `dict` de la fila— es lo que hace que una deuda ya cobrada o ya borrada
+        por otra ventana no rompa la vista.
+        """
+        try:
+            clave = int(str(deuda_id).strip())
+        except (TypeError, ValueError):
+            return None
+        return deudas_service.obtener_deuda(clave)
+
+    def ejecutar_accion_deuda(self, accion: str, deuda_id, e=None) -> bool:
+        """Punto de entrada ÚNICO de los tres botones del renglón y de F2/F5/F6.
+
+        Que la tecla y el ratón recorran exactamente el mismo camino es
+        deliberado: con dos caminos, un día uno valida algo que el otro no.
+        Devuelve `False` —sin efecto visible salvo el aviso— cuando la acción
+        no aplica: tecla sin equivalente en esta lista, renglón distinto del
+        marcado, deuda ya pagada o deuda que ya no existe.
+
+        `puede_accionar` se vuelve a consultar aunque el botón llegue ya
+        deshabilitado: la regla del marcador tiene que valer también para quien
+        entre por teclado o por código.
+        """
+        handler = self._handlers_accion_deuda().get(accion)
+        if handler is None:
+            return False
+
+        if not self._seleccion_deudas.puede_accionar(deuda_id):
+            self.show_alert_info(
+                "Hay otra deuda marcada. Haga clic en su casilla o pulse Esc para liberarla.",
+                e,
+            )
+            return False
+
+        actual = self._deuda_por_id(deuda_id)
+        if actual is None:
+            # Otra ventana la borró entre el repintado y la pulsación.
+            self.show_alert_error("Esta deuda ya no existe. Actualice la lista.", e)
+            self._seleccion_deudas.descartar([deuda_id])
+            self.refrescar_deudas(e)
+            return False
+
+        if accion == "cobrar" and (actual.get("estado") or "") == deudas_service.ESTADO_PAGADA:
+            # El servicio lo rechazaría con ERR_DEUDA_PAGADA; se avisa antes de
+            # abrir un diálogo de cobro que no puede terminar en nada.
+            self.show_alert_info("Esta deuda ya está pagada por completo.", e)
+            return False
+
+        handler(actual, e)
+        return True
+
+    def ejecutar_accion_sobre_seleccionada(self, accion: str, e=None) -> bool:
+        """La misma acción, aplicada a la deuda MARCADA (base de F2/F5/F6).
+
+        Sin nada marcado no hace nada: adivinar un renglón sería disparar una
+        acción —incluido un borrado— sobre algo que el usuario no eligió.
+        """
+        deuda_id = self._seleccion_deudas.seleccionado
+        if not deuda_id:
+            return False
+        return self.ejecutar_accion_deuda(accion, deuda_id, e)
 
     def get_body(self) -> ft.Control:
         accent = self.get_accent_color()
@@ -172,7 +405,10 @@ class CarteraView(BaseView):
                 ft.dropdown.Option("P"),
             ],
         )
-        self.cli_search_numero = ft.TextField(
+        # Todos los campos de texto de la vista se enlazan al registro de foco:
+        # mientras el cursor esté en uno, las flechas mueven el cursor y no la
+        # pantalla.
+        self.cli_search_numero = self._enlazar_foco(ft.TextField(
             label="Número de Cédula / RIF",
             hint_text="Ej: 12345678",
             width=220,
@@ -182,7 +418,7 @@ class CarteraView(BaseView):
             focused_border_color=accent,
             border_radius=12,
             on_submit=self.handle_buscar_cliente,
-        )
+        ), "cli_busqueda")
 
         btn_buscar_cli = ft.Button(
             content="Buscar",
@@ -233,7 +469,7 @@ class CarteraView(BaseView):
                 ft.dropdown.Option("P"),
             ],
         )
-        self.cli_num_doc = ft.TextField(
+        self.cli_num_doc = self._enlazar_foco(ft.TextField(
             label="Número de Cédula / RIF *",
             hint_text="Solo números",
             width=200,
@@ -242,11 +478,11 @@ class CarteraView(BaseView):
             border_color=border_color,
             focused_border_color=accent,
             border_radius=12,
-        )
-        self.cli_nombre = ft.TextField(label="Nombre / Razón Social *", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.cli_telefono = ft.TextField(label="Teléfono", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.cli_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.cli_direccion = ft.TextField(label="Dirección", width=595, multiline=True, max_lines=2, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        ), "cli_num_doc")
+        self.cli_nombre = self._enlazar_foco(ft.TextField(label="Nombre / Razón Social *", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "cli_nombre")
+        self.cli_telefono = self._enlazar_foco(ft.TextField(label="Teléfono", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "cli_telefono")
+        self.cli_correo = self._enlazar_foco(ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "cli_correo")
+        self.cli_direccion = self._enlazar_foco(ft.TextField(label="Dirección", width=595, multiline=True, max_lines=2, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "cli_direccion")
 
         self.btn_guardar_cli_label = ft.Text("Guardar Cliente", color=ft.Colors.WHITE)
         btn_guardar_cli = ft.Button(
@@ -310,7 +546,14 @@ class CarteraView(BaseView):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
-        return ft.Column(
+        # Fila con scroll horizontal: evita columnas recortadas (p.ej.
+        # Nombre/Correo) cuando la sidebar expandida reduce el ancho
+        # disponible, y ft.Row nunca corta filas a la mitad como sí ocurría con
+        # ft.ListView de altura no acotada. Queda con nombre porque es el
+        # destino de las flechas izquierda/derecha en esta pestaña (un solo
+        # dueño por eje).
+        self._cli_scroll_horizontal = ft.Row(controls=[self.dt_clientes], scroll=ft.ScrollMode.AUTO)
+        self._cli_scroll_vertical = ft.Column(
             controls=[
                 search_bar,
                 self.cli_result_container,
@@ -320,11 +563,7 @@ class CarteraView(BaseView):
                 self.create_card(
                     content=ft.Column(
                         controls=[
-                            # Fila con scroll horizontal: evita columnas recortadas
-                            # (p.ej. Nombre/Correo) cuando la sidebar expandida reduce
-                            # el ancho disponible, y ft.Row nunca corta filas a la mitad
-                            # como sí ocurría con ft.ListView de altura no acotada.
-                            ft.Row(controls=[self.dt_clientes], scroll=ft.ScrollMode.AUTO),
+                            self._cli_scroll_horizontal,
                             pagination_bar,
                         ],
                     ),
@@ -336,6 +575,7 @@ class CarteraView(BaseView):
             spacing=10,
             expand=True,
         )
+        return self._cli_scroll_vertical
 
     # ==========================================
     # PESTAÑA PROVEEDORES
@@ -357,7 +597,7 @@ class CarteraView(BaseView):
                 ft.dropdown.Option("P"),
             ],
         )
-        self.prov_search_input = ft.TextField(
+        self.prov_search_input = self._enlazar_foco(ft.TextField(
             label="Buscar por RIF / Empresa / Teléfono",
             hint_text="Ej: 12345678 o TecnoCorp",
             width=250,
@@ -366,7 +606,7 @@ class CarteraView(BaseView):
             focused_border_color=accent,
             border_radius=12,
             on_submit=self.handle_buscar_proveedor,
-        )
+        ), "prov_busqueda")
 
         btn_buscar_prov = ft.Button(
             content="Buscar",
@@ -417,7 +657,7 @@ class CarteraView(BaseView):
                 ft.dropdown.Option("P"),
             ],
         )
-        self.prov_num_doc = ft.TextField(
+        self.prov_num_doc = self._enlazar_foco(ft.TextField(
             label="Número RIF / Cédula *",
             hint_text="Solo números",
             width=200,
@@ -426,13 +666,13 @@ class CarteraView(BaseView):
             border_color=border_color,
             focused_border_color=accent,
             border_radius=12,
-        )
+        ), "prov_num_doc")
 
-        self.prov_empresa = ft.TextField(label="Nombre de la Empresa *", width=290, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.prov_contacto = ft.TextField(label="Agente de Contacto", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.prov_telefono = ft.TextField(label="Teléfono *", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.prov_correo = ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
-        self.prov_desc = ft.TextField(label="Descripción / Categoría", width=595, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12)
+        self.prov_empresa = self._enlazar_foco(ft.TextField(label="Nombre de la Empresa *", width=290, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "prov_empresa")
+        self.prov_contacto = self._enlazar_foco(ft.TextField(label="Agente de Contacto", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "prov_contacto")
+        self.prov_telefono = self._enlazar_foco(ft.TextField(label="Teléfono *", width=250, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "prov_telefono")
+        self.prov_correo = self._enlazar_foco(ft.TextField(label="Correo", width=300, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "prov_correo")
+        self.prov_desc = self._enlazar_foco(ft.TextField(label="Descripción / Categoría", width=595, color=text_color, border_color=border_color, focused_border_color=accent, border_radius=12), "prov_desc")
 
         self.txt_adjuntos_status = ft.Text("Sin archivos adjuntos", size=12, color=subtext_color)
         btn_adjuntar = ft.OutlinedButton(
@@ -508,7 +748,12 @@ class CarteraView(BaseView):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
-        return ft.Column(
+        # Dueños de cada eje de esta pestaña, con nombre para que las flechas
+        # sepan a quién desplazar.
+        self._prov_scroll_horizontal = ft.Row(
+            controls=[self.dt_proveedores], scroll=ft.ScrollMode.AUTO
+        )
+        self._prov_scroll_vertical = ft.Column(
             controls=[
                 search_bar,
                 self.prov_result_container,
@@ -518,7 +763,7 @@ class CarteraView(BaseView):
                 self.create_card(
                     content=ft.Column(
                         controls=[
-                            ft.Row(controls=[self.dt_proveedores], scroll=ft.ScrollMode.AUTO),
+                            self._prov_scroll_horizontal,
                             pagination_bar,
                         ],
                     ),
@@ -530,6 +775,7 @@ class CarteraView(BaseView):
             spacing=10,
             expand=True,
         )
+        return self._prov_scroll_vertical
 
     # ==========================================
     # PESTAÑA DEUDAS POR COBRAR
@@ -546,7 +792,7 @@ class CarteraView(BaseView):
         # 1. Barra de búsqueda y filtro. La búsqueda la resuelve el servicio
         # (cédula, nombre o ítem acreditado en una sola consulta), de modo que
         # la vista nunca filtra listas en memoria.
-        self.deu_search = ft.TextField(
+        self.deu_search = self._enlazar_foco(ft.TextField(
             label="Buscar por Cédula/RIF, nombre o ítem acreditado",
             hint_text="Ej: 12345678, Fulano o Filtro de aceite",
             width=340,
@@ -555,7 +801,7 @@ class CarteraView(BaseView):
             focused_border_color=accent,
             border_radius=12,
             on_submit=self.handle_buscar_deudas,
-        )
+        ), "deu_busqueda")
         btn_buscar_deu = ft.Button(
             content="Buscar",
             icon=ft.Icons.SEARCH,
@@ -616,6 +862,11 @@ class CarteraView(BaseView):
             rows=[],
             data_row_min_height=72,
             data_row_max_height=110,
+            # Explícito aunque sea el valor por omisión: todos los renglones
+            # llevan `on_select_change` (el clic en cualquier parte del
+            # renglón), y con la columna de casillas propia de la tabla
+            # activada Flet dibujaría una SEGUNDA casilla junto al marcador.
+            show_checkbox_column=False,
         )
         self.txt_deu_pagination = ft.Text("", color=subtext_color, size=13)
         self.cargar_tabla_deudas(text_color, accent, subtext_color)
@@ -631,7 +882,13 @@ class CarteraView(BaseView):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
-        return ft.Column(
+        # La tabla ya agrupa los datos por celda para que entre a lo ancho; el
+        # `ScrollMode.AUTO` queda como red de seguridad para pantallas muy
+        # angostas. Los dos controles llevan nombre porque son los destinos de
+        # las flechas: la Row es la única dueña del eje HORIZONTAL y la Column
+        # externa la del VERTICAL.
+        self._deu_scroll_horizontal = ft.Row(controls=[self.dt_deudas], scroll=ft.ScrollMode.AUTO)
+        self._deu_scroll_vertical = ft.Column(
             controls=[
                 search_bar,
                 total_card,
@@ -640,10 +897,7 @@ class CarteraView(BaseView):
                 self.create_card(
                     content=ft.Column(
                         controls=[
-                            # La tabla ya agrupa los datos por celda para que
-                            # entre a lo ancho; el `ScrollMode.AUTO` queda como
-                            # red de seguridad para pantallas muy angostas.
-                            ft.Row(controls=[self.dt_deudas], scroll=ft.ScrollMode.AUTO),
+                            self._deu_scroll_horizontal,
                             pagination_bar,
                         ],
                     ),
@@ -655,44 +909,131 @@ class CarteraView(BaseView):
             spacing=10,
             expand=True,
         )
+        return self._deu_scroll_vertical
 
     def _columnas_deudas(self, accent, text_color) -> list[ft.DataColumn]:
-        """Encabezados en el orden exacto del boceto del PDF, con la columna de
-        acciones al final."""
+        """Encabezados en el orden exacto del boceto del PDF, con la casilla
+        marcadora delante y la columna de acciones al final."""
         return [
+            ft.DataColumn(
+                label=ft.Text(self.ENCABEZADO_MARCADOR, weight=ft.FontWeight.BOLD, color=accent)
+            )
+        ] + [
             ft.DataColumn(label=ft.Text(titulo, weight=ft.FontWeight.BOLD, color=text_color))
             for titulo in self.COLUMNAS_DEUDAS
         ] + [
             ft.DataColumn(label=ft.Text("Acciones", weight=ft.FontWeight.BOLD, color=accent))
         ]
 
-    def _celda_acciones_deuda(self, deuda: dict, accent) -> ft.Control:
-        """Botones de la fila. Una deuda ya pagada no admite otro cobro (el
-        servicio lo rechaza con ERR_DEUDA_PAGADA), así que el botón se
-        deshabilita en vez de ofrecer una acción que va a fallar."""
+    def _celda_marcador_deuda(self, deuda: dict, accent, subtext_color) -> ft.Control:
+        """La casilla de la izquierda, dibujada a partir del ESTADO DEL MODELO.
+
+        Por eso la marca sobrevive al repintado y al desplazamiento horizontal:
+        no hay ninguna bandera guardada en el control que recibió el clic.
+        """
+        marcada = self._seleccion_deudas.esta_seleccionado(deuda.get("id"))
+        return ft.Container(
+            content=ft.Icon(
+                ft.Icons.RADIO_BUTTON_CHECKED if marcada else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                color=accent if marcada else subtext_color,
+                size=20,
+            ),
+            width=34,
+            alignment=ft.Alignment.CENTER,
+            tooltip=(
+                "Clic para quitar la marca de esta deuda (o pulse Esc)"
+                if marcada else "Clic para marcar esta deuda"
+            ),
+        )
+
+    def _celda_marcador_deuda_dc(self, deuda: dict, accent, subtext_color) -> ft.DataCell:
+        """La casilla atiende su propio toque: es la única celda del renglón que
+        DESMARCA (`alternar`), mientras el resto del renglón solo marca."""
+        return ft.DataCell(
+            self._celda_marcador_deuda(deuda, accent, subtext_color),
+            on_tap=lambda ev, i=deuda.get("id"): self.alternar_deuda(i, ev),
+        )
+
+    def _boton_accion_deuda(
+        self, accion: str, deuda: dict, icono, color, descripcion: str,
+        subtext_color, bloqueado: bool = False, motivo_bloqueo: str = "",
+    ) -> ft.Control:
+        """Un botón del renglón, con su atajo A LA VISTA y cableado al punto de
+        entrada único.
+
+        Dos razones para la etiqueta en pantalla y no solo en el tooltip: el
+        PDF pide que los atajos estén visibles "para siempre ser consciente de
+        ellos", y un tooltip hay que ir a buscarlo con el ratón.
+
+        `disabled` es la mitad VISIBLE de la regla del marcador: con otra deuda
+        marcada el botón se ve apagado y el tooltip dice por qué, en vez de
+        aceptar el clic y no hacer nada (un botón que ignora en silencio se lee
+        como un cuelgue de la aplicación).
+        """
+        deuda_id = deuda.get("id")
+        habilitado = self._seleccion_deudas.puede_accionar(deuda_id)
+        activo = habilitado and not bloqueado
+
+        if bloqueado:
+            tooltip = motivo_bloqueo
+        elif habilitado:
+            tooltip = tooltip_con_atajo(descripcion, accion)
+        else:
+            tooltip = (
+                f"{tooltip_con_atajo(descripcion, accion)} — hay otra deuda marcada; "
+                "haga clic en su casilla o pulse Esc para liberarla"
+            )
+
+        return ft.Column([
+            ft.IconButton(
+                icono,
+                icon_color=color,
+                icon_size=20,
+                tooltip=tooltip,
+                disabled=not activo,
+                on_click=lambda ev, a=accion, i=deuda_id: self.ejecutar_accion_deuda(a, i, ev),
+            ),
+            # El color del icono funciona en claro y en oscuro (son tonos medios
+            # de la paleta de Material); apagado cae al gris de texto
+            # secundario, que también está definido para los dos temas.
+            ft.Text(
+                etiqueta_atajo(accion),
+                size=9,
+                weight=ft.FontWeight.BOLD,
+                color=color if activo else subtext_color,
+                text_align=ft.TextAlign.CENTER,
+            ),
+        ], spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+    def _celda_acciones_deuda(self, deuda: dict, accent, subtext_color=None) -> ft.Control:
+        """Los tres botones del renglón: Cobrar (F2), Editar (F5) y Borrar (F6).
+
+        Una deuda ya pagada no admite otro cobro (el servicio lo rechaza con
+        ERR_DEUDA_PAGADA), así que ese botón se deshabilita en vez de ofrecer
+        una acción que va a fallar.
+
+        El ancho sigue acotado y los botones van con `icon_size` reducido para
+        que el renglón entre sin deslizable horizontal, que es un requisito
+        explícito de esta lista.
+        """
+        subtext_color = subtext_color or self.get_subtext_color()
         pagada = (deuda.get("estado") or "") == deudas_service.ESTADO_PAGADA
         return ft.Container(
             content=ft.Row([
-                ft.IconButton(
-                    ft.Icons.PAYMENTS_OUTLINED,
-                    icon_color=ft.Colors.GREEN_500,
-                    tooltip="Deuda ya pagada por completo" if pagada else "Cobrar (registrar abono)",
-                    disabled=pagada,
-                    on_click=lambda ev, item=deuda: self.handle_abrir_cobro(item, ev),
+                self._boton_accion_deuda(
+                    "cobrar", deuda, ft.Icons.PAYMENTS_OUTLINED, ft.Colors.GREEN_500,
+                    "Cobrar (registrar abono)", subtext_color,
+                    bloqueado=pagada, motivo_bloqueo="Deuda ya pagada por completo",
                 ),
-                ft.IconButton(
-                    ft.Icons.EDIT_OUTLINED,
-                    icon_color=accent,
-                    tooltip="Editar fecha límite y monto total",
-                    on_click=lambda ev, item=deuda: self.handle_abrir_edicion_deuda(item, ev),
+                self._boton_accion_deuda(
+                    "editar", deuda, ft.Icons.EDIT_OUTLINED, accent,
+                    "Editar fecha límite y monto total", subtext_color,
                 ),
-                ft.IconButton(
-                    ft.Icons.DELETE_OUTLINED,
-                    icon_color=ft.Colors.RED_400,
-                    tooltip="Borrar la deuda con sus renglones y abonos",
-                    on_click=lambda ev, item=deuda: self.handle_confirmar_borrado_deuda(item, ev),
+                self._boton_accion_deuda(
+                    "borrar", deuda, ft.Icons.DELETE_OUTLINED, ft.Colors.RED_400,
+                    "Borrar la deuda con sus renglones y abonos", subtext_color,
                 ),
-            ], spacing=0),
+            ], spacing=0, tight=True),
             width=160,
             padding=ft.Padding.symmetric(vertical=6),
         )
@@ -738,6 +1079,12 @@ class CarteraView(BaseView):
         if dialog in self._dialog_stack:
             self._dialog_stack.remove(dialog)
 
+        # Un campo de texto que desaparece con su diálogo NO recibe `on_blur`,
+        # así que su foco quedaría registrado para siempre y las flechas no
+        # volverían a navegar nunca. Al cerrar un diálogo no hay nada
+        # enfocado, así que soltar todo es exacto además de seguro.
+        self._registro_foco.limpiar()
+
         p = self.get_current_page(e)
         if p is not None and hasattr(p, "pop_dialog"):
             # `pop_dialog()` cierra el diálogo más alto que siga abierto, así
@@ -776,7 +1123,7 @@ class CarteraView(BaseView):
         subtext_color = self.get_subtext_color()
         saldo = float(actual.get("saldo_usd") or 0)
 
-        campo_monto = ft.TextField(
+        campo_monto = self._enlazar_foco(ft.TextField(
             label="Monto a Abonar (USD) *",
             # Sin pre-cargar el saldo a propósito: un campo ya lleno con el
             # total invita a confirmar de un clic y cerrar como "pagada" una
@@ -789,7 +1136,7 @@ class CarteraView(BaseView):
             keyboard_type=ft.KeyboardType.NUMBER,
             color=text_color,
             border_radius=12,
-        )
+        ), "cobro_monto")
         dd_metodo = ft.Dropdown(
             label="Método de Pago",
             value="Efectivo",
@@ -803,13 +1150,13 @@ class CarteraView(BaseView):
                 ft.dropdown.Option("Punto", "Punto de Venta (Bs)"),
             ],
         )
-        campo_referencia = ft.TextField(
+        campo_referencia = self._enlazar_foco(ft.TextField(
             label="Referencia del Pago (opcional)",
             hint_text="Nº de confirmación, últimos dígitos…",
             width=250,
             color=text_color,
             border_radius=12,
-        )
+        ), "cobro_referencia")
 
         def abonar_todo(ev):
             campo_monto.value = f"{float(deudas_service.obtener_deuda(actual['id'])['saldo_usd']):.2f}"
@@ -946,7 +1293,7 @@ class CarteraView(BaseView):
         text_color = self.get_text_color()
         subtext_color = self.get_subtext_color()
 
-        campo_fecha = ft.TextField(
+        campo_fecha = self._enlazar_foco(ft.TextField(
             label="Fecha Límite de Pago *",
             # Se muestra y se acepta en Día/Mes/Año, que es como la escribe el
             # usuario; `normalizar_fecha` del servicio la lleva al ISO.
@@ -956,15 +1303,15 @@ class CarteraView(BaseView):
             autofocus=True,
             color=text_color,
             border_radius=12,
-        )
-        campo_total = ft.TextField(
+        ), "edicion_fecha")
+        campo_total = self._enlazar_foco(ft.TextField(
             label="Monto Total de la Deuda (USD) *",
             value=f"{float(actual.get('monto_total_usd') or 0):.2f}",
             width=230,
             keyboard_type=ft.KeyboardType.NUMBER,
             color=text_color,
             border_radius=12,
-        )
+        ), "edicion_total")
 
         def guardar(ev):
             try:
@@ -1052,8 +1399,12 @@ class CarteraView(BaseView):
         cantidad_abonos = len(actual.get("abonos", []))
 
         def borrar(ev):
+            """El id borrado se descarta del modelo de selección: si quedara
+            marcado, una selección fantasma dejaría inertes los botones de
+            todos los renglones vivos."""
             borrada = deudas_service.eliminar_deuda(actual["id"])
             self._cerrar_dialogo(ev, dialog=dlg)
+            self._seleccion_deudas.descartar([actual["id"]])
             if borrada:
                 self.show_alert_success("Deuda eliminada con sus renglones y abonos.", ev)
             else:
@@ -1245,7 +1596,11 @@ class CarteraView(BaseView):
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
                     ),
                 ], spacing=2, tight=True),
-                width=200,
+                # 166 y no 200: la casilla marcadora añadió ancho al renglón y
+                # el requisito de esta lista es que entre sin deslizable
+                # horizontal. Esta celda es la que mejor lo tolera porque sus
+                # dos líneas ya venían recortadas con elipsis.
+                width=166,
                 padding=ft.Padding.symmetric(vertical=6),
             )
 
@@ -1271,17 +1626,30 @@ class CarteraView(BaseView):
                 padding=ft.Padding.symmetric(vertical=6),
             )
 
+            marcada = self._seleccion_deudas.esta_seleccionado(d.get("id"))
             rows.append(
-                ft.DataRow(cells=[
-                    ft.DataCell(self._celda_fecha_limite(d, text_color, subtext_color)),
-                    ft.DataCell(celda_monto),
-                    ft.DataCell(celda_cliente),
-                    ft.DataCell(celda_contacto),
-                    ft.DataCell(celda_ubicacion),
-                    ft.DataCell(celda_item),
-                    ft.DataCell(celda_origen),
-                    ft.DataCell(self._celda_acciones_deuda(d, accent)),
-                ])
+                ft.DataRow(
+                    cells=[
+                        self._celda_marcador_deuda_dc(d, accent, subtext_color),
+                        ft.DataCell(self._celda_fecha_limite(d, text_color, subtext_color)),
+                        ft.DataCell(celda_monto),
+                        ft.DataCell(celda_cliente),
+                        ft.DataCell(celda_contacto),
+                        ft.DataCell(celda_ubicacion),
+                        ft.DataCell(celda_item),
+                        ft.DataCell(celda_origen),
+                        ft.DataCell(self._celda_acciones_deuda(d, accent, subtext_color)),
+                    ],
+                    selected=marcada,
+                    # Sombreado derivado del modelo: sobrevive a los repintados
+                    # y al desplazamiento horizontal de la lista.
+                    color=ft.Colors.with_opacity(0.22, accent) if marcada else None,
+                    # Hace sensible al clic el renglón COMPLETO ("no importa si
+                    # es fuera de la casilla"); la celda del marcador tiene su
+                    # propio `on_tap` y por eso no cae aquí.
+                    on_select_change=lambda ev, i=d.get("id"): self.seleccionar_deuda(i, ev),
+                    data=d.get("id"),
+                )
             )
 
         self.dt_deudas.rows = rows
@@ -1311,6 +1679,9 @@ class CarteraView(BaseView):
 
     def refrescar_deudas(self, e=None):
         """Recarga solo la lista de deudas, sin reconstruir ningún control."""
+        # Casi todo lo que pasa en esta pestaña termina aquí, así que es el
+        # punto más barato para asegurar que el teclado ya esté enganchado.
+        self._asegurar_teclado(e)
         self.cargar_tabla_deudas(self.get_text_color(), self.get_accent_color(), self.get_subtext_color())
         self.safe_update(e)
 
