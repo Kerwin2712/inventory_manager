@@ -6,7 +6,14 @@ from ui.views.base_view import BaseView
 from ui.components.scroll_nav import build_scroll_nav
 from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
-from services.cartera_service import buscar_cliente_por_cedula, crear_cliente, parse_documento, format_documento
+from services.cartera_service import (
+    actualizar_cliente,
+    buscar_cliente_por_cedula,
+    crear_cliente,
+    parse_documento,
+    format_documento,
+)
+from services.permisos_service import puede_ver_costos
 from services.inventario_service import listar_productos
 from services.busqueda_service import (
     CRITERIOS_BUSQUEDA,
@@ -14,7 +21,11 @@ from services.busqueda_service import (
     buscar_productos,
     resolver_coincidencia_exacta,
 )
-from services.ventas_service import procesar_venta
+from services.ventas_service import (
+    calcular_porcentaje_descuento,
+    formatear_porcentaje_descuento,
+    procesar_venta,
+)
 from services.pdf_service import generar_nota_entrega_pdf, enviar_a_impresora
 from services.cart_manager import (
     obtener_todos_los_carritos,
@@ -30,8 +41,14 @@ from services.cart_manager import (
     remover_item_de_carrito,
     vaciar_carrito_activo,
     establecer_metodo_pago,
+    establecer_tipo_venta,
+    calcular_monto_predeterminado,
+    calcular_suma_costos,
+    moneda_de_cobro,
     METODOS_PAGO,
     METODOS_PAGO_BS,
+    METODOS_PAGO_CREDITO,
+    TIPO_VENTA_FORMAL,
 )
 
 class VentasView(BaseView):
@@ -60,6 +77,26 @@ class VentasView(BaseView):
         # BaseView no actualiza nada visible en pantalla (mutaría una instancia
         # "huérfana" que nunca queda adjunta a la página). Ver bitácora 10/08/2026.
         self.on_update_callback = on_update_callback
+
+        # Rol nombrado del usuario conectado. NO autoriza nada por sí mismo:
+        # solo decide si el hint con la suma de costos del carrito se dibuja
+        # (los costos son información reservada a la administración, ver
+        # `services/permisos_service`). El piso del descuento lo valida
+        # igualmente `ventas_service` para todos los roles.
+        self._rol_usuario = self.user_data.get("role")
+
+        # ── Pila de diálogos abiertos (el tope es el que se ve) ──────────────
+        # Es una PILA porque el diálogo de cobro abre otros encima (la
+        # confirmación de omitir la referencia, la ventana de crédito): al
+        # cerrar el de arriba hay que volver a apuntar al de abajo y no
+        # perderlo. Ver `ui/views/inventario_view.py`, donde una sola
+        # referencia dejaba al usuario atrapado.
+        self._dialog_stack: list[ft.AlertDialog] = []
+
+        # Datos capturados en la ventana de crédito (fecha límite y contacto).
+        # Viven en la vista y no en el carrito porque son del COBRO, no de la
+        # mercancía: cambiar de método de pago los descarta.
+        self._datos_credito: dict | None = None
 
         self._columnas_carrito_ocultables = VentasView._COLUMNAS_CARRITO_OCULTABLES
         self._columnas_carrito_labels = {
@@ -129,17 +166,19 @@ class VentasView(BaseView):
         # si no, cambiar el método en el Dropdown no se refleja visualmente.
         metodo_pago_actual = c_activo.get("metodo_pago", "Efectivo")
         cobra_en_bs = metodo_pago_actual in METODOS_PAGO_BS
-        color_metodo = ft.Colors.AMBER_800 if cobra_en_bs else ft.Colors.GREEN_700
+        monto_str, color_metodo, sub_texto = self._estilo_metodo_pago(
+            metodo_pago_actual, tot_usd, tot_bcv, tot_usd_bcv_equivalente
+        )
 
         if hasattr(self, "lbl_monto_a_pagar"):
-            self.lbl_monto_a_pagar.value = f"Bs. {tot_bcv:,.2f}" if cobra_en_bs else f"$ {tot_usd:,.2f}"
+            self.lbl_monto_a_pagar.value = monto_str
             self.lbl_monto_a_pagar.color = color_metodo
 
         if hasattr(self, "lbl_monto_titulo"):
             self.lbl_monto_titulo.value = f"MONTO A COBRAR ({metodo_pago_actual}):"
 
         if hasattr(self, "txt_sub_metodo_ref"):
-            self.txt_sub_metodo_ref.value = f"Ref: $ {tot_usd_bcv_equivalente:,.2f} BCV" if cobra_en_bs else "Dólares en Efectivo"
+            self.txt_sub_metodo_ref.value = sub_texto
             self.txt_sub_metodo_ref.color = color_metodo
 
         if hasattr(self, "container_monto_a_pagar"):
@@ -183,6 +222,25 @@ class VentasView(BaseView):
         else:
             self.safe_update(e)
 
+    def _estilo_metodo_pago(
+        self, metodo_pago: str, tot_usd: float, tot_bcv: float, tot_usd_bcv_equivalente: float
+    ) -> tuple[str, str, str]:
+        """Monto, color y subtítulo de la caja "MONTO A COBRAR" según el método.
+
+        Son tres casos con lecturas distintas y por eso no comparten color:
+        Bolívares (ámbar), dólares en efectivo (verde) y Crédito (morado), que
+        no cobra nada ahora y por eso dice explícitamente que genera una deuda
+        — confundirlo con un cobro en dólares es el error caro."""
+        if metodo_pago in METODOS_PAGO_CREDITO:
+            return f"$ {tot_usd:,.2f}", ft.Colors.PURPLE_400, "A crédito: genera Deuda por Cobrar"
+        if metodo_pago in METODOS_PAGO_BS:
+            return (
+                f"Bs. {tot_bcv:,.2f}",
+                ft.Colors.AMBER_800,
+                f"Ref: $ {tot_usd_bcv_equivalente:,.2f} BCV",
+            )
+        return f"$ {tot_usd:,.2f}", ft.Colors.GREEN_700, "Dólares en Efectivo"
+
     def _calcular_sid(self, e=None) -> str:
         """Resuelve el ID de sesión de Flet (page.session.id) para aislar los
         carritos por usuario/pestaña. Prioriza el evento de clic (siempre
@@ -200,6 +258,67 @@ class VentasView(BaseView):
             except (RuntimeError, AttributeError):
                 pass
         return self.get_session_id(e)
+
+    # ── Pila de diálogos (API nativa de Flet 0.86) ──────────────────────────
+
+    @property
+    def _dialog(self) -> "ft.AlertDialog | None":
+        """Diálogo activo (tope de la pila) o `None` si no hay ninguno."""
+        return self._dialog_stack[-1] if self._dialog_stack else None
+
+    def _open_dialog(self, dialog: ft.AlertDialog, e=None):
+        """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
+        if dialog not in self._dialog_stack:
+            self._dialog_stack.append(dialog)
+        dialog.open = True
+
+        p = self.get_current_page(e) or self._page_ref
+        if p is None:
+            return
+        if hasattr(p, "show_dialog"):
+            try:
+                p.show_dialog(dialog)
+            except RuntimeError:
+                pass  # ya estaba montado en la pila de la página
+        else:  # respaldo para páginas que no exponen la API de diálogos
+            if dialog not in p.overlay:
+                p.overlay.append(dialog)
+            p.update()
+
+    def _close_dialog(self, e=None, dialog: ft.AlertDialog = None):
+        """Descarta el diálogo del tope y deja activo el que estaba debajo.
+
+        El cierre se delega en `page.pop_dialog()`: con el patrón heredado
+        (`page.overlay` + bandera `open`) Flet 0.86 no llega a dibujar el
+        cierre y el diálogo se queda pegado —o activo pero invisible,
+        recibiendo clics sobre botones que ya no se ven—. `pop_dialog()`
+        cierra el diálogo más alto que siga abierto, así que se invoca ANTES
+        de bajar la bandera: al revés cerraría el de abajo.
+        """
+        if dialog is None:
+            dialog = self._dialog
+        if dialog is None:
+            return
+        if dialog in self._dialog_stack:
+            self._dialog_stack.remove(dialog)
+
+        p = self.get_current_page(e) or self._page_ref
+        if p is not None and hasattr(p, "pop_dialog"):
+            p.pop_dialog()
+            dialog.open = False
+            return
+
+        dialog.open = False
+        if p is None:
+            return
+        if dialog in getattr(p, "overlay", []):
+            p.overlay.remove(dialog)
+        p.update()
+
+    def _cerrar_todos_los_dialogos(self, e=None):
+        """Vacía la pila cerrando de arriba hacia abajo (cancelación total)."""
+        while self._dialog_stack:
+            self._close_dialog(e, dialog=self._dialog_stack[-1])
 
     def actualizar_estado_tasa_local(self):
         """Actualiza el estado de la tasa BCV desde la persistencia SQLite."""
@@ -535,25 +654,14 @@ class VentasView(BaseView):
             value=metodo_pago_actual,
             width=230,
             border_radius=12,
-            options=[
-                ft.dropdown.Option("Efectivo", "Efectivo ($)"),
-                ft.dropdown.Option("Binance", "Binance ($)"),
-                ft.dropdown.Option("Pago Móvil", "Pago Móvil (Bs)"),
-                ft.dropdown.Option("Transferencia", "Transferencia (Bs)"),
-                ft.dropdown.Option("Punto", "Punto de Venta (Bs)"),
-            ],
+            options=self._opciones_metodo_pago(carrito_activo),
         )
         self.dd_metodo_pago.on_change = self.handle_cambio_metodo_pago
 
         cobra_en_bs = metodo_pago_actual in METODOS_PAGO_BS
-        if cobra_en_bs:
-            monto_a_pagar_str = f"Bs. {tot_bcv:,.2f}"
-            lbl_monto_color = ft.Colors.AMBER_800
-            txt_sub_metodo = f"Ref: $ {tot_usd_bcv_equivalente:,.2f} BCV"
-        else:
-            monto_a_pagar_str = f"$ {tot_usd:,.2f}"
-            lbl_monto_color = ft.Colors.GREEN_700
-            txt_sub_metodo = "Dólares en Efectivo"
+        monto_a_pagar_str, lbl_monto_color, txt_sub_metodo = self._estilo_metodo_pago(
+            metodo_pago_actual, tot_usd, tot_bcv, tot_usd_bcv_equivalente
+        )
 
         self.lbl_monto_a_pagar = ft.Text(monto_a_pagar_str, size=18, weight=ft.FontWeight.BOLD, color=lbl_monto_color)
         self.lbl_monto_titulo = ft.Text(f"MONTO A COBRAR ({metodo_pago_actual}):", size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color())
@@ -754,16 +862,63 @@ class VentasView(BaseView):
     def handle_eliminar_carrito_activo(self, e):
         self.handle_eliminar_carrito(e, obtener_id_carrito_activo(self._sid))
 
+    def _opciones_metodo_pago(self, carrito: dict) -> list[ft.dropdown.Option]:
+        """Opciones del selector de método de pago para un carrito concreto.
+
+        "Crédito" se OFRECE solo en Venta Formal: la deuda por cobrar se
+        registra contra la Cédula/RIF del cliente, así que en una venta de
+        mostrador no es una opción válida y no debe aparecer (mejor no
+        ofrecerla que ofrecerla y rechazarla al cobrar)."""
+        opciones = [
+            ft.dropdown.Option("Efectivo", "Efectivo ($)"),
+            ft.dropdown.Option("Binance", "Binance ($)"),
+            ft.dropdown.Option("Pago Móvil", "Pago Móvil (Bs)"),
+            ft.dropdown.Option("Transferencia", "Transferencia (Bs)"),
+            ft.dropdown.Option("Punto", "Punto de Venta (Bs)"),
+        ]
+        if (carrito or {}).get("tipo_venta") == TIPO_VENTA_FORMAL:
+            opciones.append(ft.dropdown.Option("Credito", "Crédito (Deuda por Cobrar)"))
+        return opciones
+
     def handle_cambio_metodo_pago(self, e):
-        establecer_metodo_pago(self._sid, e.control.value)
+        metodo = e.control.value
+        try:
+            establecer_metodo_pago(self._sid, metodo)
+        except ValueError as ex:
+            # Defensa en profundidad: el Dropdown no ofrece Crédito fuera de
+            # Venta Formal, pero si llegara igual se vuelve a Efectivo en vez
+            # de dejar el carrito en un estado que el cobro rechazaría.
+            establecer_metodo_pago(self._sid, "Efectivo")
+            e.control.value = "Efectivo"
+            self.show_alert_error(e, str(ex))
+            self._refrescar_carrito_y_resumen(e)
+            return
+
+        if metodo not in METODOS_PAGO_CREDITO:
+            # Cambiar de método descarta lo capturado para el crédito: esos
+            # datos (fecha límite, contacto) son del compromiso de pago, no
+            # de la mercancía, y reusarlos más tarde sería inventar un dato.
+            self._datos_credito = None
+
         self._refrescar_carrito_y_resumen(e)
+
+        # "Si se selecciona el método crédito se abrirá una ventana con las
+        # casillas obligatorias": se pide al elegirlo, no al cobrar, para que
+        # el vendedor no descubra al final que le falta la fecha límite.
+        if metodo in METODOS_PAGO_CREDITO:
+            self.abrir_ventana_credito(e)
 
     def handle_cambio_tipo_venta(self, e):
         val = list(e.control.selected)[0] if e.control.selected else "Formal"
-        c = obtener_carrito_activo(self._sid)
-        c["tipo_venta"] = val
+        # `establecer_tipo_venta` repara el método de pago: Crédito no existe
+        # en Venta Mostrador y volvería inválido el carrito.
+        c = establecer_tipo_venta(self._sid, val)
         if val == "Informal":
             desvincular_cliente(self._sid)
+            self._datos_credito = None
+        if hasattr(self, "dd_metodo_pago"):
+            self.dd_metodo_pago.options = self._opciones_metodo_pago(c)
+            self.dd_metodo_pago.value = c.get("metodo_pago", "Efectivo")
         self.rebuild_ui()
 
     def handle_desvincular_cliente(self, e):
@@ -1795,6 +1950,12 @@ class VentasView(BaseView):
     # ── Procesamiento de Venta & Diálogo PDF (ERS 3.5) ─────────────────────
 
     def handle_procesar_venta(self, e):
+        """Pulsar "Procesar Venta" ya NO cobra: abre el diálogo de cobro.
+
+        "Preguntar siempre antes de procesar la compra": el cobro necesita la
+        referencia del pago y el monto definitivo, y ninguno de los dos se
+        puede adivinar desde el carrito. Aquí solo se verifica lo que haría
+        inútil abrir el diálogo (carrito vacío, Venta Formal sin cliente)."""
         c_activo = obtener_carrito_activo(self._sid)
         items = c_activo["items"]
 
@@ -1802,43 +1963,504 @@ class VentasView(BaseView):
             self.show_alert_error(e, "No puede procesar una venta sin artículos en el carrito.")
             return
 
+        if c_activo.get("tipo_venta") == TIPO_VENTA_FORMAL and not c_activo.get("cliente"):
+            self.show_alert_error(e, "Debe buscar y seleccionar un cliente registrado para realizar una Venta Formal.")
+            return
+
+        self.abrir_dialogo_cobro(e)
+
+    # ── Diálogo ÚNICO de cobro: referencia + monto + descuento ──────────────
+    # Un solo diálogo y no dos encadenados: la referencia y el descuento son
+    # dos datos del MISMO acto (cerrar el cobro), y el monto con descuento
+    # aplicado es justamente lo que el vendedor necesita ver mientras anota la
+    # referencia del pago que acaba de recibir por ese monto.
+
+    def _piso_descuento(self, items: list, metodo_pago: str) -> dict:
+        """Piso del descuento para este carrito, en la moneda del cobro.
+
+        Réplica exacta del cálculo de `ventas_service` (costos en dólares
+        llevados a la moneda del cobro con la proporción del total de lista).
+        Aquí es solo informativo: la validación autoritativa vive en el
+        servicio, para todos los roles, y esta copia nunca la reemplaza."""
+        resumen = calcular_suma_costos(items)
+        total_usd = sum(float(i.get("subtotal_usd") or 0.0) for i in items)
+        predeterminado = calcular_monto_predeterminado(items, metodo_pago)
+        factor = (predeterminado / total_usd) if total_usd else 1.0
+        return {
+            "monto": round(resumen["suma"] * factor, 2),
+            "parcial": resumen["parcial"],
+        }
+
+    def abrir_dialogo_cobro(self, e=None):
+        c_activo = obtener_carrito_activo(self._sid)
+        items = c_activo["items"]
+        metodo = c_activo.get("metodo_pago", "Efectivo")
+        es_credito = metodo in METODOS_PAGO_CREDITO
+        # El efectivo no deja rastro bancario: es el único método sin
+        # referencia que anotar. Crédito sí la exige (ahí es el documento del
+        # compromiso), con la misma vía de omisión confirmada.
+        exige_referencia = metodo != "Efectivo"
+
+        self._monto_predeterminado = calcular_monto_predeterminado(items, metodo)
+        simbolo = "Bs." if moneda_de_cobro(metodo) == "BCV" else "$"
+        piso = self._piso_descuento(items, metodo)
+
+        # Fuga de información a cuidar: la suma de costos es información
+        # reservada a la administración (`permisos_service.puede_ver_costos`).
+        # Al vendedor la casilla "Descuento" le aparece VACÍA y sin hint; el
+        # piso se valida igual para él en el servicio, pero el rechazo no
+        # nombra el costo.
+        self._hint_costo_descuento = (
+            f"Costo: {simbolo} {piso['monto']:,.2f}"
+            if puede_ver_costos(self._rol_usuario) else None
+        )
+
+        self.txt_referencia_pago = ft.TextField(
+            label="Número de Referencia del Pago *",
+            hint_text=f"Referencia de {metodo}",
+            prefix_icon=ft.Icons.RECEIPT_LONG,
+            border_radius=12,
+            autofocus=True,
+            visible=exige_referencia,
+        )
+        self.txt_monto_cobrar = ft.TextField(
+            label=f"Monto a Cobrar ({simbolo})",
+            value=f"{self._monto_predeterminado:.2f}",
+            # Auto-rellenado y de solo lectura: el monto predeterminado sale
+            # del método de pago, y cambiarlo es exactamente lo que hace la
+            # casilla gemela "Descuento" (así queda a la vista de cuánto se
+            # bajó o se subió respecto de la lista).
+            read_only=True,
+            border_radius=12,
+            expand=True,
+        )
+        self.txt_descuento = ft.TextField(
+            label="Descuento",
+            hint_text=self._hint_costo_descuento,
+            border_radius=12,
+            expand=True,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            on_change=self._actualizar_porcentaje_descuento,
+        )
+        self.lbl_pct_descuento = ft.Text("", size=14, weight=ft.FontWeight.BOLD)
+        self._lbl_err_cobro = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        avisos: list[ft.Control] = []
+        if piso["parcial"] and puede_ver_costos(self._rol_usuario):
+            avisos.append(ft.Text(
+                "Aviso: hay productos sin costo registrado, el piso del "
+                "descuento es parcial (más bajo que el real).",
+                size=11, color=ft.Colors.AMBER_700, no_wrap=False,
+            ))
+        if es_credito:
+            avisos.append(ft.Text(
+                "A crédito el descuento tiene un límite del -5%; por encima "
+                "del precio de lista no hay tope.",
+                size=11, color=ft.Colors.PURPLE_300, no_wrap=False,
+            ))
+
+        acciones = [ft.TextButton("Cancelar", on_click=self._cancelar_cobro)]
+        if exige_referencia:
+            acciones.append(ft.TextButton(
+                "Omitir referencia",
+                on_click=self.abrir_confirmacion_omitir_referencia,
+            ))
+        acciones.append(ft.Button(
+            content=ft.Row([ft.Icon(ft.Icons.POINT_OF_SALE), ft.Text("Confirmar Cobro")], tight=True),
+            bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+            on_click=self._confirmar_cobro,
+        ))
+
+        self._dlg_cobro = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.POINT_OF_SALE, color=self.get_accent_color()),
+                ft.Text("Cobro de la Venta", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"Método de pago: {metodo} · "
+                        f"{'Venta Formal' if c_activo.get('tipo_venta') == TIPO_VENTA_FORMAL else 'Venta Mostrador'}",
+                        size=12, color=self.get_subtext_color(), weight=ft.FontWeight.W_600,
+                    ),
+                    self.txt_referencia_pago,
+                    ft.Row([self.txt_monto_cobrar, self.txt_descuento], spacing=10),
+                    ft.Row([self.lbl_pct_descuento], alignment=ft.MainAxisAlignment.END),
+                    *avisos,
+                    self._lbl_err_cobro,
+                ], spacing=10, tight=True),
+                width=480,
+            ),
+            actions=acciones,
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._open_dialog(self._dlg_cobro, e)
+
+    def _actualizar_porcentaje_descuento(self, e=None):
+        """Recalcula el porcentaje mientras se escribe en "Descuento".
+
+        Vacía → no se muestra porcentaje y el costo vuelve a asomarse como
+        hint; con algo escrito el hint desaparece (es el monto del usuario el
+        que manda) y el porcentaje sale en ROJO si cobra por debajo de la
+        lista (`-33,75% OFF`) o en VERDE si cobra por encima (`+11,23% ON`).
+        """
+        crudo = (self.txt_descuento.value or "").strip()
+        if not crudo:
+            self.txt_descuento.hint_text = self._hint_costo_descuento
+            self.lbl_pct_descuento.value = ""
+            self.safe_update(e)
+            return
+
+        self.txt_descuento.hint_text = None
+        try:
+            monto = float(crudo.replace(",", "."))
+        except ValueError:
+            self.lbl_pct_descuento.value = "Monto inválido"
+            self.lbl_pct_descuento.color = ft.Colors.RED_500
+            self.safe_update(e)
+            return
+
+        porcentaje = calcular_porcentaje_descuento(monto, self._monto_predeterminado)
+        self.lbl_pct_descuento.value = formatear_porcentaje_descuento(porcentaje)
+        self.lbl_pct_descuento.color = ft.Colors.RED_500 if porcentaje < 0 else ft.Colors.GREEN_600
+        self.safe_update(e)
+
+    def _cancelar_cobro(self, e=None):
+        """Descarta el cobro sin tocar el carrito (la venta no se registró)."""
+        self._cerrar_todos_los_dialogos(e)
+
+    def _leer_monto_descuento(self) -> tuple[float | None, str | None]:
+        """Monto escrito en "Descuento" o `(None, None)` si quedó vacía.
+
+        Vacía significa "cobrar el precio de lista": se devuelve `None` para
+        que `procesar_venta` use el predeterminado y registre 0% de descuento,
+        en vez de mandar un número que podría venir de un redondeo de pantalla.
+        """
+        crudo = (self.txt_descuento.value or "").strip()
+        if not crudo:
+            return None, None
+        try:
+            return float(crudo.replace(",", ".")), None
+        except ValueError:
+            return None, "El descuento debe ser un monto numérico válido."
+
+    def abrir_confirmacion_omitir_referencia(self, e=None):
+        """Pregunta de confirmación apilada SOBRE el diálogo de cobro.
+
+        Omitir la referencia queda registrado en la venta
+        (`ventas.referencia_omitida`), así que no puede ser un clic suelto:
+        se confirma con [Sí] / [NO] y el [NO] devuelve al cobro intacto."""
+        def _si(ev):
+            self._close_dialog(ev, dialog=dlg_confirmar)
+            self._ejecutar_venta(ev, referencia=None, omitida=True)
+
+        def _no(ev):
+            self._close_dialog(ev, dialog=dlg_confirmar)
+
+        dlg_confirmar = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.AMBER_700),
+                ft.Text("¿Omitir la referencia?", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Text(
+                    "¿Está seguro de omitir el número de referencia? La venta "
+                    "quedará registrada sin referencia del pago.",
+                    size=13, no_wrap=False,
+                ),
+                width=380,
+            ),
+            actions=[
+                ft.TextButton("NO", on_click=_no),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.CHECK), ft.Text("Sí, omitir")], tight=True),
+                    bgcolor=ft.Colors.AMBER_800, color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=_si,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._dlg_omitir_referencia = dlg_confirmar
+        self._open_dialog(dlg_confirmar, e)
+
+    def _confirmar_cobro(self, e=None):
+        """Botón "Confirmar Cobro": exige la referencia cuando corresponde."""
+        c_activo = obtener_carrito_activo(self._sid)
+        metodo = c_activo.get("metodo_pago", "Efectivo")
+        referencia = (self.txt_referencia_pago.value or "").strip()
+
+        if metodo != "Efectivo" and not referencia:
+            self._mostrar_error_cobro(
+                "Ingrese el número de referencia del pago, o use «Omitir "
+                "referencia» si no lo tiene.", e,
+            )
+            return
+
+        self._ejecutar_venta(e, referencia=referencia or None, omitida=False)
+
+    def _mostrar_error_cobro(self, mensaje: str, e=None):
+        """Muestra el error DENTRO del diálogo de cobro (no en un snackbar):
+        el vendedor tiene que poder corregir el dato sin perder lo escrito."""
+        if hasattr(self, "_lbl_err_cobro") and self._lbl_err_cobro is not None:
+            self._lbl_err_cobro.value = mensaje
+            self.safe_update(e)
+        else:
+            self.show_alert_error(e, mensaje)
+
+    def _ejecutar_venta(self, e=None, referencia: str = None, omitida: bool = False):
+        """Registra la venta con los datos del cobro ya confirmados."""
+        c_activo = obtener_carrito_activo(self._sid)
+        items = c_activo["items"]
+        metodo = c_activo.get("metodo_pago", "Efectivo")
+        es_credito = metodo in METODOS_PAGO_CREDITO
+
+        # Crédito sin los datos del compromiso: se vuelve a pedir la ventana
+        # en vez de dejar que el servicio rechace la venta por fecha límite
+        # faltante (el vendedor no sabría qué le falta).
+        if es_credito and not self._datos_credito:
+            self.abrir_ventana_credito(e)
+            return
+
+        monto_cobrado, error_monto = self._leer_monto_descuento()
+        if error_monto:
+            self._mostrar_error_cobro(error_monto, e)
+            return
+
         cliente_id = None
-        if c_activo.get("tipo_venta") == "Formal":
+        if c_activo.get("tipo_venta") == TIPO_VENTA_FORMAL:
             cliente = c_activo.get("cliente")
             if not cliente:
-                self.show_alert_error(e, "Debe buscar y seleccionar un cliente registrado para realizar una Venta Formal.")
+                self._mostrar_error_cobro(
+                    "Debe vincular un cliente registrado para una Venta Formal.", e,
+                )
                 return
             cliente_id = cliente["cedula_rif"]
 
-        lineas = []
-        for item in items:
-            lineas.append({
+        lineas = [
+            {
                 "producto_codigo": item["codigo"],
+                # Viaja solo a los renglones de la deuda (el "repuesto fiado").
+                "nombre_corto": item.get("nombre_corto", ""),
                 "cantidad": item["cantidad"],
                 "precio_unitario_usd": item["precio_usd"],
                 "precio_unitario_bcv": item["precio_bcv"],
                 "subtotal_usd": item["subtotal_usd"],
-                "subtotal_bcv": item["subtotal_bcv"]
-            })
+                "subtotal_bcv": item["subtotal_bcv"],
+            }
+            for item in items
+        ]
 
         try:
             resultado = procesar_venta(
                 tipo_venta=c_activo.get("tipo_venta", "Formal"),
                 cliente_id=cliente_id,
                 lineas=lineas,
-                metodo_pago=c_activo.get("metodo_pago", "Efectivo")
+                metodo_pago=metodo,
+                referencia_pago=referencia,
+                referencia_omitida=omitida,
+                monto_cobrado=monto_cobrado,
+                usuario_nombre=self.user_data.get("username"),
+                fecha_limite_pago=(self._datos_credito or {}).get("fecha_limite_pago"),
+                rol_usuario=self._rol_usuario,
+            )
+        except ValueError as ve:
+            self._mostrar_error_cobro(str(ve), e)
+            return
+        except Exception as ex:
+            self._mostrar_error_cobro(f"Error al procesar la venta: {ex}", e)
+            return
+
+        self._cerrar_todos_los_dialogos(e)
+        self.venta_id_reciente = resultado["venta_id"]
+        vaciar_carrito_activo(self._sid)
+        # El carrito vacío ya no tiene cliente, así que Crédito dejaría de ser
+        # un método válido: se vuelve a Efectivo para no arrancar la próxima
+        # venta en una combinación que el cobro rechazaría.
+        if es_credito:
+            establecer_metodo_pago(self._sid, "Efectivo")
+            self._datos_credito = None
+
+        mensaje = f"¡Venta N° {self.venta_id_reciente:06d} registrada exitosamente!"
+        if resultado.get("deuda_id"):
+            mensaje += f" Deuda por cobrar N° {resultado['deuda_id']} creada."
+        self.show_alert_success(e, mensaje)
+        self.rebuild_ui()
+        self.mostrar_dialogo_pdf(e)
+
+    # ── Ventana del método de pago "Crédito" ────────────────────────────────
+
+    def abrir_ventana_credito(self, e=None):
+        """Casillas del compromiso de pago a crédito.
+
+        Teléfono, dirección, contacto secundario y correo se auto-rellenan con
+        lo que ya tenga el cliente de la cartera y quedan en blanco cuando no
+        había nada (no eran campos obligatorios al registrarlo). La fecha
+        límite siempre se escribe: es lo que vuelve cobrable a la deuda.
+        """
+        c_activo = obtener_carrito_activo(self._sid)
+        cliente = c_activo.get("cliente") or {}
+        hay_cliente = bool(cliente.get("cedula_rif"))
+
+        self.txt_credito_fecha = ft.TextField(
+            label="Fecha Límite de Pago (Día/Mes/Año) *",
+            hint_text="31/12/2026",
+            value=(self._datos_credito or {}).get("fecha_limite_pago", ""),
+            prefix_icon=ft.Icons.EVENT,
+            border_radius=12,
+            autofocus=True,
+        )
+        self.txt_credito_telefono = ft.TextField(
+            label="Número de Contacto *",
+            value=cliente.get("telefono") or "",
+            prefix_icon=ft.Icons.PHONE,
+            border_radius=12,
+        )
+        self.txt_credito_direccion = ft.TextField(
+            label="Dirección *",
+            value=cliente.get("direccion") or "",
+            prefix_icon=ft.Icons.HOME_OUTLINED,
+            border_radius=12,
+        )
+        self.txt_credito_contacto2 = ft.TextField(
+            label="Contacto Secundario (opcional)",
+            value=cliente.get("contacto_secundario") or "",
+            prefix_icon=ft.Icons.CONTACT_PHONE_OUTLINED,
+            border_radius=12,
+        )
+        self.txt_credito_correo = ft.TextField(
+            label="Correo (opcional)",
+            value=cliente.get("correo") or "",
+            prefix_icon=ft.Icons.ALTERNATE_EMAIL,
+            border_radius=12,
+        )
+        self._lbl_err_credito = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
+
+        if not hay_cliente:
+            # Sin cliente la ventana NO se puede completar: la deuda se
+            # registra contra su Cédula/RIF. Se dice con claridad en vez de
+            # dejar confirmar y fallar después.
+            self._lbl_err_credito.value = (
+                "Esta venta no tiene cliente vinculado. La deuda a crédito se "
+                "registra contra la Cédula/RIF del cliente: busque o registre "
+                "el cliente antes de cobrar a crédito."
             )
 
-            self.venta_id_reciente = resultado["venta_id"]
-            vaciar_carrito_activo(self._sid)
-            self.show_alert_success(e, f"¡Venta N° {self.venta_id_reciente:06d} registrada exitosamente!")
-            self.rebuild_ui()
-            self.mostrar_dialogo_pdf(e)
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.CREDIT_SCORE, color=ft.Colors.PURPLE_400),
+                ft.Text("Venta a Crédito — Compromiso de Pago", weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"Cliente: {cliente.get('nombre', '—')} ({cliente.get('cedula_rif', 'sin Cédula/RIF')})",
+                        size=12, color=self.get_subtext_color(), weight=ft.FontWeight.W_600,
+                    ),
+                    self.txt_credito_fecha,
+                    ft.Row([self.txt_credito_telefono, self.txt_credito_contacto2], spacing=10),
+                    self.txt_credito_direccion,
+                    self.txt_credito_correo,
+                    self._lbl_err_credito,
+                ], spacing=10, tight=True),
+                width=520,
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=self._cancelar_credito),
+                ft.Button(
+                    content=ft.Row([ft.Icon(ft.Icons.SAVE), ft.Text("Guardar Compromiso")], tight=True),
+                    bgcolor=ft.Colors.PURPLE_400, color=ft.Colors.WHITE,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    disabled=not hay_cliente,
+                    on_click=self._confirmar_credito,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        self._dlg_credito = dlg
+        self._open_dialog(dlg, e)
 
-        except ValueError as ve:
-            self.show_alert_error(e, str(ve))
-        except Exception as ex:
-            self.show_alert_error(e, f"Error al procesar la venta: {ex}")
+    def _cancelar_credito(self, e=None):
+        """Cancelar el compromiso cancela el crédito: el método vuelve a
+        Efectivo para que el carrito no quede a crédito sin fecha límite."""
+        self._close_dialog(e, dialog=self._dlg_credito)
+        self._datos_credito = None
+        # Si la ventana se había abierto desde el cobro, ese diálogo quedó
+        # mostrando un método de pago que ya no es el del carrito: se cierra
+        # también en vez de dejarlo cobrar con datos viejos.
+        if getattr(self, "_dlg_cobro", None) in self._dialog_stack:
+            self._close_dialog(e, dialog=self._dlg_cobro)
+        establecer_metodo_pago(self._sid, "Efectivo")
+        if hasattr(self, "dd_metodo_pago"):
+            self.dd_metodo_pago.value = "Efectivo"
+        self._refrescar_carrito_y_resumen(e)
+
+    def _confirmar_credito(self, e=None):
+        c_activo = obtener_carrito_activo(self._sid)
+        cliente = c_activo.get("cliente") or {}
+        cedula = cliente.get("cedula_rif")
+        if not cedula:
+            self._lbl_err_credito.value = (
+                "No hay cliente vinculado: la deuda no tendría contra quién registrarse."
+            )
+            self.safe_update(e)
+            return
+
+        try:
+            # Se normaliza con el mismo servicio que guardará la deuda, para
+            # no aceptar aquí una fecha que después rechace el registro.
+            from services.deudas_service import normalizar_fecha
+            fecha_normalizada = normalizar_fecha(self.txt_credito_fecha.value)
+        except ValueError as ex:
+            self._lbl_err_credito.value = str(ex)
+            self.safe_update(e)
+            return
+
+        telefono = (self.txt_credito_telefono.value or "").strip()
+        direccion = (self.txt_credito_direccion.value or "").strip()
+        if not telefono or not direccion:
+            self._lbl_err_credito.value = (
+                "El número de contacto y la dirección son obligatorios para una "
+                "venta a crédito: son los datos con los que se sale a cobrar."
+            )
+            self.safe_update(e)
+            return
+
+        correo = (self.txt_credito_correo.value or "").strip()
+        contacto_secundario = (self.txt_credito_contacto2.value or "").strip()
+
+        # Se completa la ficha del cliente con lo que el vendedor acaba de
+        # recoger: estos campos no eran obligatorios al registrarlo y la
+        # cartera es el lugar donde tienen que quedar.
+        # NOTA: `cartera_service.actualizar_cliente` no acepta todavía
+        # `contacto_secundario` (la columna existe en `clientes` pero ningún
+        # servicio público la escribe), así que ese dato queda solo en el
+        # compromiso de esta venta y no se persiste en la cartera.
+        try:
+            actualizar_cliente(
+                cedula_rif=cedula, telefono=telefono, direccion=direccion,
+                correo=correo,
+            )
+            cliente.update({"telefono": telefono, "direccion": direccion, "correo": correo})
+        except ValueError as ex:
+            self._lbl_err_credito.value = f"No se pudo actualizar la ficha del cliente: {ex}"
+            self.safe_update(e)
+            return
+
+        self._datos_credito = {
+            "fecha_limite_pago": fecha_normalizada,
+            "telefono": telefono,
+            "direccion": direccion,
+            "contacto_secundario": contacto_secundario,
+            "correo": correo,
+        }
+        self._close_dialog(e, dialog=self._dlg_credito)
+        self.show_alert_success(e, "Compromiso de pago registrado para esta venta a crédito.")
+        self._refrescar_carrito_y_resumen(e)
 
     def mostrar_dialogo_pdf(self, e):
         dd_divisa = ft.Dropdown(
@@ -1863,14 +2485,12 @@ class VentasView(BaseView):
         )
 
         def cerrar_dialogo(e_dialog):
-            dialog.open = False
-            self.safe_update(e_dialog)
+            self._close_dialog(e_dialog, dialog=dialog)
 
         def confirmar_generar_pdf(e_dialog):
             self.divisa_impresion_pdf = dd_divisa.value or "USD"
             formato_papel = dd_formato_papel.value or "carta"
-            dialog.open = False
-            self.safe_update(e_dialog)
+            self._close_dialog(e_dialog, dialog=dialog)
 
             last_pdf_dir = get_setting("last_pdf_dir", default=None)
             if last_pdf_dir and not os.path.exists(last_pdf_dir):
@@ -1926,9 +2546,8 @@ class VentasView(BaseView):
             actions_alignment=ft.MainAxisAlignment.END
         )
 
-        p = self.get_current_page(e)
-        if p:
-            if dialog not in p.overlay:
-                p.overlay.append(dialog)
-            dialog.open = True
-            p.update()
+        # Por la pila nativa de Flet 0.86 (`show_dialog`/`pop_dialog`): este
+        # diálogo se abre justo después de cerrar el de cobro, y con el patrón
+        # heredado de `page.overlay` el cierre no se dibujaba y quedaba pegado.
+        self._dlg_pdf = dialog
+        self._open_dialog(dialog, e)
