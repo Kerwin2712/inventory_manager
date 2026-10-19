@@ -1,5 +1,6 @@
 import flet as ft
 from ui.views.base_view import BaseView
+from ui.components.dialogo_clave import DialogoClave
 from ui.components.seleccion_lista import SeleccionLista
 from ui.components.teclado_nav import (
     ControlTeclado,
@@ -13,6 +14,12 @@ from services.cartera_service import (
     parse_documento, format_documento,
 )
 from services import deudas_service
+# La clave que autoriza el borrado de una deuda es la de la cuenta con la
+# sesión abierta. `authenticate_user` ya la compara con
+# `core.security.verify_password` contra el `password_hash` almacenado: aquí no
+# se vuelve a comparar ningún hash, para que exista una sola implementación de
+# esa comprobación en todo el proyecto.
+from services.user_service import authenticate_user
 
 
 class CarteraView(BaseView):
@@ -1377,15 +1384,90 @@ class CarteraView(BaseView):
         self._abrir_dialogo(dlg, e)
         return dlg
 
-    # ─── Botón Borrar: confirmación previa obligatoria ───────────────────────
+    # ─── Botón Borrar: confirmación de la cascada y DESPUÉS la clave ─────────
+    # Decisión del usuario del proyecto: borrar una deuda exige la clave de la
+    # cuenta con la sesión abierta, igual que borrar un ítem del inventario. El
+    # criterio es que el borrado arrastra en cascada el historial de abonos, o
+    # sea destruye el registro de cuánto se cobró y quién cobró.
+    #
+    # El ORDEN de los dos pasos también es deliberado: primero la confirmación
+    # que enuncia la cascada y recién después la clave. Primero se entiende qué
+    # se va a destruir y entonces se firma; pedir la clave antes de explicar
+    # qué se pierde invierte el orden natural de la decisión.
+    def _paleta_dialogo(self) -> dict:
+        return {
+            "texto": self.get_text_color(),
+            "subtexto": self.get_subtext_color(),
+            "acento": self.get_accent_color(),
+            "fondo": self.get_card_bg(),
+            "borde": self.get_border_color(),
+        }
+
+    def _verificar_clave_sesion(self, clave: str) -> bool:
+        """¿`clave` es la de la cuenta con la que está abierta la sesión?
+
+        Delega en `authenticate_user`, que la compara con
+        `core.security.verify_password` contra el `password_hash` almacenado:
+        aquí no se duplica ninguna comparación de hashes. Sin usuario en sesión
+        devuelve False (fail-closed): es preferible no poder borrar a borrar sin
+        autorización comprobable.
+
+        La clave tecleada NO se registra en ningún lado —ni log, ni snackbar,
+        ni texto de error— y el mensaje de fallo es el genérico de
+        `DialogoClave` ("Clave incorrecta"), sin distinguir casos: cada
+        distinción le dice algo a quien está probando claves ajenas.
+        """
+        if not self.usuario_nombre or not clave:
+            return False
+        return authenticate_user(self.usuario_nombre, clave) is not None
+
+    def _pedir_clave_para_borrar_deuda(self, deuda: dict, e=None):
+        """Segundo paso: la firma. Apila el diálogo de clave genérico
+        (`DialogoClave`), que es quien verifica y quien decide el texto del
+        error."""
+        comp = DialogoClave(
+            titulo="Autorizar el Borrado",
+            # El mensaje nombra el objeto exacto para que nadie entregue su
+            # clave a ciegas.
+            mensaje=(
+                f"Se borrará la deuda de {deuda.get('cliente_nombre') or '-'} "
+                f"({deuda.get('cliente_id') or '-'}) por "
+                f"${float(deuda.get('monto_total_usd') or 0):,.2f}, con sus renglones "
+                "acreditados y todo su historial de abonos."
+            ),
+            verificar_clave=self._verificar_clave_sesion,
+            on_exito=lambda ev=None: self._borrar_deuda_autorizada(deuda, ev),
+            on_cerrar=lambda ev=None: self._cerrar_dialogo(ev, dialog=comp.dialogo),
+            paleta=self._paleta_dialogo(),
+            etiqueta_confirmar="Borrar Deuda",
+            icono=ft.Icons.DELETE_FOREVER_OUTLINED,
+        )
+        self._abrir_dialogo(comp.dialogo, e)
+        return comp
+
+    def _borrar_deuda_autorizada(self, deuda: dict, e=None) -> bool:
+        """Borrado ya autorizado por la clave.
+
+        El id borrado se descarta del modelo de selección: si quedara marcado,
+        una selección fantasma dejaría inertes los botones de todos los
+        renglones vivos.
+        """
+        borrada = deudas_service.eliminar_deuda(deuda.get("id"))
+        self._seleccion_deudas.descartar([deuda.get("id")])
+        if borrada:
+            self.show_alert_success("Deuda eliminada con sus renglones y abonos.", e)
+        else:
+            self.show_alert_error("La deuda ya no existía.", e)
+        self.refrescar_deudas(e)
+        return bool(borrada)
+
     def handle_confirmar_borrado_deuda(self, deuda: dict, e=None):
-        """Pide confirmación ANTES de borrar.
+        """Primer paso: pide confirmación ANTES de pedir la clave.
 
         El borrado arrastra en cascada los renglones acreditados y todo el
         historial de abonos de la deuda: destruye la constancia de los cobros
-        ya hechos y no hay forma de reconstruirla. El único resguardo posible
-        es que el usuario lo lea antes de confirmar, así que el texto nombra
-        lo que se va a perder y la cifra ya abonada.
+        ya hechos y no hay forma de reconstruirla. El texto nombra lo que se va
+        a perder y la cifra ya abonada, y solo después se pide la firma.
         """
         actual = deudas_service.obtener_deuda(deuda.get("id"))
         if actual is None:
@@ -1398,18 +1480,10 @@ class CarteraView(BaseView):
         abonado = float(actual.get("total_abonado_usd") or 0)
         cantidad_abonos = len(actual.get("abonos", []))
 
-        def borrar(ev):
-            """El id borrado se descarta del modelo de selección: si quedara
-            marcado, una selección fantasma dejaría inertes los botones de
-            todos los renglones vivos."""
-            borrada = deudas_service.eliminar_deuda(actual["id"])
+        def confirmar(ev):
+            """Confirmar NO borra: cierra este diálogo y pide la clave."""
             self._cerrar_dialogo(ev, dialog=dlg)
-            self._seleccion_deudas.descartar([actual["id"]])
-            if borrada:
-                self.show_alert_success("Deuda eliminada con sus renglones y abonos.", ev)
-            else:
-                self.show_alert_error("La deuda ya no existía.", ev)
-            self.refrescar_deudas(ev)
+            self._pedir_clave_para_borrar_deuda(actual, ev)
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -1437,6 +1511,11 @@ class CarteraView(BaseView):
                         "No se puede deshacer.",
                         size=13, weight=ft.FontWeight.W_600, color=ft.Colors.RED_400,
                     ),
+                    ft.Text(
+                        "Al confirmar se le pedirá la clave de su usuario para autorizar "
+                        "el borrado.",
+                        size=12, color=subtext_color,
+                    ),
                 ], spacing=8, tight=True),
                 width=480,
                 padding=10,
@@ -1451,7 +1530,7 @@ class CarteraView(BaseView):
                         color=ft.Colors.WHITE,
                         shape=ft.RoundedRectangleBorder(radius=12),
                     ),
-                    on_click=borrar,
+                    on_click=confirmar,
                 ),
             ],
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,

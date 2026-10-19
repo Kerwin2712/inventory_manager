@@ -675,19 +675,25 @@ def test_la_confirmacion_avisa_que_arrastra_renglones_y_abonos(vista, pagina, ev
     assert "No se puede deshacer" in textos
 
 
-def test_confirmar_borra_la_deuda_y_la_saca_de_la_lista(vista, pagina, evento):
+def test_confirmar_la_cascada_no_borra_todavia_sino_que_pide_la_clave(vista, pagina, evento):
+    """Dos pasos, en este orden: primero se entiende qué se va a destruir y
+    recién entonces se firma. Confirmar la cascada cierra ese diálogo y abre el
+    de clave; el borrado en sí lo cubre `test_cartera_borrado_clave.py`."""
+    from ui.components.dialogo_clave import DialogoClave
+
     deuda = crear_deuda("V-12345678", 100.0, FUTURO, items=ITEMS)
     registrar_abono(deuda["id"], 40.0)
     v = vista()
 
     _boton_fila(_fila(v, 0), "Borrar").on_click(evento)
-    dlg = v._dialog
-    _click(dlg, "Sí, Borrar", evento)
+    confirmacion = v._dialog
+    _click(confirmacion, "Sí, Borrar", evento)
 
-    assert obtener_deuda(deuda["id"]) is None
-    assert dlg.open is False
-    assert pagina.visible is None
-    assert v.dt_deudas.rows == []
+    assert obtener_deuda(deuda["id"]) is not None, "confirmar la cascada no debe borrar"
+    assert confirmacion.open is False, "la confirmación cede su lugar al diálogo de clave"
+    assert isinstance(v._dialog.data, DialogoClave)
+    assert pagina.visible is v._dialog
+    assert len(v.dt_deudas.rows) == 1
 
 
 def test_cancelar_la_confirmacion_no_borra_nada(vista, pagina, evento):
