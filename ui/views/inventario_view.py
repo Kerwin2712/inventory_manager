@@ -877,7 +877,7 @@ class InventarioView(BaseView):
         }
 
     def ejecutar_accion_item(self, accion: str, codigo: str, e=None) -> bool:
-        """Punto de entrada único de los seis botones (y de los futuros atajos).
+        """Punto de entrada único de los seis botones y de los atajos F1..F6.
 
         Vuelve a comprobar `puede_accionar` aunque el botón ya venga
         deshabilitado: la regla tiene que valer también para quien invoque la
@@ -1068,8 +1068,8 @@ class InventarioView(BaseView):
         self._lbl_pag.value = f"Página {self._page_num} de {total_pags} | {total} productos"
 
         # Índice por código de lo que hay en pantalla: las acciones por nombre
-        # (y los atajos de teclado que vienen después) reciben un código y
-        # resuelven el producto aquí, sin depender del `dict` de un clic.
+        # y los atajos F1..F6 reciben un código y resuelven el producto aquí,
+        # sin depender del `dict` de un clic (una tecla no tiene ninguno).
         self._productos_en_pantalla = {p["codigo"]: p for p in todos}
 
         # Selector de columnas visible solo en modo separado
