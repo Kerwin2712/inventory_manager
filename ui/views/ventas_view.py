@@ -4,6 +4,7 @@ from tkinter import filedialog
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.scroll_nav import build_scroll_nav
+from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.seleccion_lista import SeleccionLista
 from ui.components.teclado_nav import (
     ATAJOS_ITEM,
@@ -401,6 +402,10 @@ class VentasView(BaseView):
 
     def _open_dialog(self, dialog: ft.AlertDialog, e=None):
         """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
+        # Un diálogo que Flet descarte solo (tocando fuera, si no es modal)
+        # dejaría un fantasma en esta pila y el siguiente cierre descartaría
+        # el diálogo equivocado. Ver `ui/components/pila_dialogos.py`.
+        sincronizar_al_descartar(dialog, self._dialog_stack)
         if dialog not in self._dialog_stack:
             self._dialog_stack.append(dialog)
         dialog.open = True

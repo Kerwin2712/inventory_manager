@@ -1,6 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
+from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
 from ui.components.selector_departamentos import SelectorDepartamentos
 from ui.components.producto_detalle_modal import construir_modal_detalle_producto
@@ -322,6 +323,10 @@ class InventarioView(BaseView):
 
     def _open_dialog(self, dialog: ft.AlertDialog, e=None):
         """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
+        # Un diálogo que Flet descarte solo (tocando fuera, si no es modal)
+        # dejaría un fantasma en esta pila y el siguiente cierre descartaría
+        # el diálogo equivocado. Ver `ui/components/pila_dialogos.py`.
+        sincronizar_al_descartar(dialog, self._dialog_stack)
         if dialog not in self._dialog_stack:
             self._dialog_stack.append(dialog)
         dialog.open = True
@@ -783,10 +788,27 @@ class InventarioView(BaseView):
         self._lbl_seleccion = ft.Text(
             self._seleccion.descripcion_estado(), size=11, color=subtext,
         )
-        self._btn_modo_seleccion = ft.IconButton(
-            ft.Icons.CHECKLIST_ROUNDED,
-            icon_color=subtext,
-            tooltip="Activar selección múltiple (para borrar varios ítems)",
+        # Botón CON ETIQUETA, no un ícono suelto. Verificando en la aplicación
+        # real, el usuario no encontró la selección múltiple: un ícono gris sin
+        # texto, pegado a la leyenda "Sin selección", se lee como un indicador
+        # de estado y no como algo que se pueda pulsar. Una función que existe
+        # pero nadie descubre es una función que no existe.
+        self._btn_modo_seleccion = ft.Button(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.CHECKLIST_ROUNDED, size=16),
+                    ft.Text("Selección múltiple", size=11, weight=ft.FontWeight.W_600),
+                ],
+                spacing=6, tight=True,
+            ),
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.TRANSPARENT,
+                color=subtext,
+                shape=ft.RoundedRectangleBorder(radius=12),
+                side=ft.BorderSide(1, subtext),
+                padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+            ),
+            tooltip="Marcar varios ítems a la vez para borrarlos juntos",
             on_click=self.alternar_modo_seleccion,
         )
         self._btn_limpiar_seleccion = ft.IconButton(
@@ -827,11 +849,34 @@ class InventarioView(BaseView):
 
         self._lbl_seleccion.value = self._seleccion.descripcion_estado()
         self._lbl_seleccion.color = accent if self._seleccion.hay_seleccion else subtext
-        self._btn_modo_seleccion.icon_color = accent if multiple else subtext
+        # El botón dice en qué modo está y qué hace el próximo clic, en vez de
+        # limitarse a cambiar de color: un botón que solo se tiñe deja al
+        # usuario adivinando si ya lo pulsó.
+        color_modo = accent if multiple else subtext
+        self._btn_modo_seleccion.content = ft.Row(
+            [
+                ft.Icon(
+                    ft.Icons.CHECKLIST_RTL_ROUNDED if multiple else ft.Icons.CHECKLIST_ROUNDED,
+                    size=16,
+                ),
+                ft.Text(
+                    "Salir de selección múltiple" if multiple else "Selección múltiple",
+                    size=11, weight=ft.FontWeight.W_600,
+                ),
+            ],
+            spacing=6, tight=True,
+        )
+        self._btn_modo_seleccion.style = ft.ButtonStyle(
+            bgcolor=ft.Colors.with_opacity(0.14, accent) if multiple else ft.Colors.TRANSPARENT,
+            color=color_modo,
+            shape=ft.RoundedRectangleBorder(radius=12),
+            side=ft.BorderSide(1, color_modo),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+        )
         self._btn_modo_seleccion.tooltip = (
-            "Salir de la selección múltiple"
+            "Volver a marcar un solo ítem"
             if multiple
-            else "Activar selección múltiple (para borrar varios ítems)"
+            else "Marcar varios ítems a la vez para borrarlos juntos"
         )
         self._btn_limpiar_seleccion.visible = self._seleccion.hay_seleccion
         # Borrar en lote solo se ofrece en el modo múltiple: en modo marcador,

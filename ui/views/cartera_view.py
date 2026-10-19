@@ -1,6 +1,7 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.dialogo_clave import DialogoClave
+from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.seleccion_lista import SeleccionLista
 from ui.components.teclado_nav import (
     ControlTeclado,
@@ -1059,6 +1060,10 @@ class CarteraView(BaseView):
 
     def _abrir_dialogo(self, dialog: ft.AlertDialog, e=None):
         """Apila un diálogo y lo muestra sobre el que hubiera debajo."""
+        # Un diálogo que Flet descarte solo (tocando fuera, si no es modal)
+        # dejaría un fantasma en esta pila y el siguiente cierre descartaría
+        # el diálogo equivocado. Ver `ui/components/pila_dialogos.py`.
+        sincronizar_al_descartar(dialog, self._dialog_stack)
         if dialog not in self._dialog_stack:
             self._dialog_stack.append(dialog)
         dialog.open = True
