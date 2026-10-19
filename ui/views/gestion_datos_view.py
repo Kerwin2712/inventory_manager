@@ -6,10 +6,13 @@ import pandas as pd
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.scroll_nav import build_scroll_nav
+from ui.components.teclado_nav import ControlTeclado, RegistroFoco
 from core.database import get_connection, get_setting, set_setting
 from services.importacion_service import (
     procesar_importacion_excel,
     CAMPOS_PRODUCTO_MAPEO,
+    MODO_SUMAR,
+    detectar_modo_existencia,
     listar_hojas_excel,
     detectar_hoja_productos,
     obtener_columnas_y_muestra,
@@ -33,7 +36,78 @@ class GestionDatosView(BaseView):
         self._pedido_lista_col: ft.Column | None = None
         self._pedido_resumen_lbl: ft.Text | None = None
         self._pedido_resultados_col: ft.Column | None = None
+        # Navegación con flechas. En Gestión de Datos NO hay ítems con íconos,
+        # así que no se le pasan ni `seleccion` ni `ejecutar_accion`: sin modelo
+        # de selección `ControlTeclado` nunca dispara acciones de ítem, que es
+        # justo lo que se quiere acá — las teclas de función no hacen nada.
+        self._cuerpo_scroll: ft.Column | None = None
+        self._scrolls_dialogo: list[tuple] = []
+        self._teclado = ControlTeclado(
+            # Lambda y no `self.get_current_page` directo: así la página se
+            # resuelve a través de la instancia en cada pulsación, y no queda
+            # congelado el método ligado del momento de construir la vista.
+            obtener_pagina=lambda e=None: self.get_current_page(e),
+            destino_vertical=self._destino_vertical,
+            destino_horizontal=self._destino_horizontal,
+            registro_foco=RegistroFoco(),
+        )
         super().__init__(route="/gestion-datos", title="Gestión de Datos y Respaldos")
+
+    # =========================================================================
+    # NAVEGACIÓN CON FLECHAS
+    # =========================================================================
+    # Con solo las flechas se desplaza la vista según los scrolls que haya, y
+    # con Ctrl+flecha se va hasta el final de ese eje. Las flechas navegan solo
+    # cuando ningún campo de texto tiene el foco: si el cursor está en un campo,
+    # mueven el cursor como en cualquier programa (esa regla la aplica
+    # `ControlTeclado` consultando el `RegistroFoco` que se le pasó).
+    #
+    # Los destinos son MÉTODOS, no controles guardados, porque `ControlTeclado`
+    # los resuelve en el momento de la pulsación: los diálogos se construyen y
+    # se destruyen, y un control guardado al instalar sería un control que ya no
+    # está en pantalla.
+
+    def _destinos_activos(self) -> tuple:
+        """Los dos destinos de scroll vigentes AHORA: `(vertical, horizontal)`.
+
+        Con un modal arriba se desplaza lo que ese modal registró, y nada si no
+        registró nada: mover la pantalla que está DETRÁS de un modal mientras el
+        usuario lo lee es desorientador, y el modal tapa el resultado.
+        """
+        activo = self._dialog
+        if activo is not None:
+            # Comparación por identidad a propósito: son controles de Flet y no
+            # hace falta suponer nada sobre su igualdad ni su hash.
+            for dialogo, vertical, horizontal in self._scrolls_dialogo:
+                if dialogo is activo:
+                    return vertical, horizontal
+            return None, None
+        return self._cuerpo_scroll, None
+
+    def _destino_vertical(self):
+        return self._destinos_activos()[0]
+
+    def _destino_horizontal(self):
+        return self._destinos_activos()[1]
+
+    def _registrar_scrolls(self, dialog, vertical=None, horizontal=None) -> None:
+        """Anota qué controles desplazan las flechas mientras `dialog` sea el
+        modal de arriba. Un diálogo sin scroll propio simplemente no llama acá."""
+        self._scrolls_dialogo = [
+            entrada for entrada in self._scrolls_dialogo if entrada[0] is not dialog
+        ]
+        self._scrolls_dialogo.append((dialog, vertical, horizontal))
+
+    def _enlazar_foco(self, campo, nombre: str):
+        """Conecta un `TextField` al registro de foco del teclado.
+
+        Todos los campos de texto de la vista pasan por acá —los del asistente
+        de mapeo, los del alta de proveedores y los del flujo del pedido—
+        porque el registro es contabilidad explícita: Flet no expone un "¿quién
+        tiene el foco?" global, así que un campo que no avise deja las flechas
+        moviendo la pantalla mientras el usuario escribe dentro de él.
+        """
+        return self._teclado.foco.enlazar(campo, nombre)
 
     # =========================================================================
     # PILA DE DIÁLOGOS (API nativa de Flet 0.86)
@@ -77,6 +151,10 @@ class GestionDatosView(BaseView):
             return
         if dialog in self._dialog_stack:
             self._dialog_stack.remove(dialog)
+        # El diálogo se va: sus scrolls dejan de ser destino de las flechas.
+        self._scrolls_dialogo = [
+            entrada for entrada in self._scrolls_dialogo if entrada[0] is not dialog
+        ]
 
         p = self.get_current_page(e)
         if p is not None and hasattr(p, "pop_dialog"):
@@ -208,6 +286,16 @@ class GestionDatosView(BaseView):
                     "el inventario: se le entrega al Administrador para que lo cargue supervisado.",
                     size=13, color=subtext_color,
                 ),
+                # El archivo es una ENTRADA de mercancía, no un catálogo: al
+                # cargarlo suma las cantidades al stock. Se dice acá, en el
+                # diálogo del pedido y otra vez al cerrarlo, porque es la
+                # diferencia entre registrar lo que llegó y reemplazar el
+                # inventario — y quien lo carga no es quien armó el pedido.
+                ft.Text(
+                    "Al cargarlo, las cantidades SE SUMAN al stock que cada producto ya tiene "
+                    "(no lo reemplazan).",
+                    size=13, weight=ft.FontWeight.BOLD, color=accent,
+                ),
                 ft.Container(height=10),
                 ft.Button(
                     content=ft.Row([
@@ -223,16 +311,28 @@ class GestionDatosView(BaseView):
         )
         card_pedido.col = {"sm": 12, "lg": 6}
 
+        # Único dueño del eje vertical de la vista, y por eso el destino de las
+        # flechas arriba/abajo. No hay scroll horizontal en el cuerpo: las
+        # tarjetas se reacomodan con `ResponsiveRow` en vez de desbordarse.
+        self._cuerpo_scroll = ft.Column([
+            ft.Row([
+                ft.Icon(ft.Icons.DATASET_ROUNDED, size=28, color=accent),
+                ft.Text("Módulo de Gestión de Datos y Respaldos", size=20, weight=ft.FontWeight.BOLD, color=text_color)
+            ], spacing=10),
+            ft.Text("Administre las importaciones masivas y la exportación de copias de seguridad de la base de datos.", color=subtext_color),
+            ft.Divider(height=20, color=self.get_border_color()),
+            ft.ResponsiveRow([card_importar, card_exportar, card_pedido], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
+        ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True)
+
+        # Instalación perezosa: al construir la vista todavía no hay `page` (se
+        # instancia headless y el Dashboard le asigna la página antes de pedirle
+        # el cuerpo), así que se intenta acá y en cada handler que trae evento.
+        # `instalar()` es idempotente y respeta el handler anterior de la
+        # página, que la vista comparte con el Dashboard.
+        self._teclado.instalar()
+
         return ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    ft.Icon(ft.Icons.DATASET_ROUNDED, size=28, color=accent),
-                    ft.Text("Módulo de Gestión de Datos y Respaldos", size=20, weight=ft.FontWeight.BOLD, color=text_color)
-                ], spacing=10),
-                ft.Text("Administre las importaciones masivas y la exportación de copias de seguridad de la base de datos.", color=subtext_color),
-                ft.Divider(height=20, color=self.get_border_color()),
-                ft.ResponsiveRow([card_importar, card_exportar, card_pedido], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
-            ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True),
+            content=self._cuerpo_scroll,
             padding=15,
             expand=True
         )
@@ -241,6 +341,7 @@ class GestionDatosView(BaseView):
         """Ejecuta la Carga Masiva: selecciona el archivo y abre el asistente
         de mapeo de columnas (el usuario decide a qué campo de la BD
         corresponde cada columna del Excel, sin importar cómo se llame)."""
+        self._teclado.instalar(e)
         try:
             print("\n>>> [GestionDatosView] Clic en IMPORTAR DESDE EXCEL")
             with open("import_debug.log", "a", encoding="utf-8") as f:
@@ -411,6 +512,29 @@ class GestionDatosView(BaseView):
             ),
         ]
 
+        # El otro lado del aviso que se le da a quien exporta el pedido: quien
+        # CARGA el archivo tiene que saber, antes de confirmar, si lo que tiene
+        # en la mano es una entrada de mercancía (las cantidades se suman) o un
+        # catálogo/respaldo (la existencia queda en el número del archivo). Es
+        # la diferencia entre registrar lo que llegó y reemplazar el inventario,
+        # y mirando las columnas no se distingue.
+        if detectar_modo_existencia(ruta_archivo) == MODO_SUMAR:
+            contenido.append(ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED, color=self.get_accent_color(), size=22),
+                    ft.Text(
+                        "Este archivo es una ENTRADA DE MERCANCÍA generada por el asistente de "
+                        "pedidos: la columna Existencia es la cantidad recibida y SE SUMARÁ al "
+                        "stock actual de cada producto, no lo reemplazará.",
+                        size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color(),
+                        expand=True, no_wrap=False,
+                    ),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+                padding=10, border_radius=10,
+                bgcolor=self.get_card_bg(),
+                border=ft.Border.all(1, self.get_accent_color()),
+            ))
+
         if len(hojas) > 1:
             dd_hoja = ft.Dropdown(
                 label="Hoja del archivo a importar como Productos",
@@ -447,6 +571,8 @@ class GestionDatosView(BaseView):
             lbl_err,
         ]
 
+        col_contenido = ft.Column(contenido, spacing=10, tight=True, scroll=ft.ScrollMode.AUTO)
+
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Row([
@@ -454,7 +580,7 @@ class GestionDatosView(BaseView):
                 ft.Text(f"Mapeo de Columnas — Hoja '{hoja_actual}'", weight=ft.FontWeight.BOLD),
             ], spacing=10),
             content=ft.Container(
-                content=ft.Column(contenido, spacing=10, tight=True, scroll=ft.ScrollMode.AUTO),
+                content=col_contenido,
                 # Diálogo amplio: hay 11 campos a mapear + una vista previa
                 # tabular del archivo, no caben cómodos en un modal chico.
                 width=900,
@@ -471,6 +597,10 @@ class GestionDatosView(BaseView):
             ],
         )
 
+        # Este diálogo tiene los dos ejes: su contenido se desplaza en vertical
+        # y la vista previa del archivo en horizontal (es una tabla ancha, y es
+        # justo el caso donde las flechas ahorran arrastrar una barra fina).
+        self._registrar_scrolls(dlg, vertical=col_contenido, horizontal=preview_row)
         self._open_dialog(dlg, e)
 
     def mostrar_asistente_proveedores_faltantes(self, e, ruta_archivo, faltantes, idx=0, on_completado=None):
@@ -488,38 +618,40 @@ class GestionDatosView(BaseView):
         total_faltantes = len(faltantes)
         print(f">>> [mostrar_asistente_proveedores_faltantes] Abriendo modal para proveedor '{nombre_prov}' ({idx + 1} de {total_faltantes})...")
 
-        # Controles del formulario
-        txt_empresa = ft.TextField(
-            label="Razón Social / Empresa (Obligatorio)*", 
-            value=nombre_prov, 
-            disabled=True, 
+        # Controles del formulario. Todos van al registro de foco: mientras el
+        # usuario escribe el RIF o el teléfono, las flechas tienen que mover el
+        # cursor dentro del campo y no la pantalla de atrás.
+        txt_empresa = self._enlazar_foco(ft.TextField(
+            label="Razón Social / Empresa (Obligatorio)*",
+            value=nombre_prov,
+            disabled=True,
             prefix_icon=ft.Icons.BUSINESS
-        )
-        txt_rif = ft.TextField(
-            label="Cédula / RIF (Obligatorio)*", 
+        ), "prov_empresa")
+        txt_rif = self._enlazar_foco(ft.TextField(
+            label="Cédula / RIF (Obligatorio)*",
             prefix_icon=ft.Icons.BADGE
-        )
-        txt_contacto = ft.TextField(
-            label="Persona de Contacto (Opcional)", 
+        ), "prov_rif")
+        txt_contacto = self._enlazar_foco(ft.TextField(
+            label="Persona de Contacto (Opcional)",
             prefix_icon=ft.Icons.PERSON
-        )
-        txt_telefono = ft.TextField(
-            label="Teléfono de Contacto (Obligatorio)*", 
+        ), "prov_contacto")
+        txt_telefono = self._enlazar_foco(ft.TextField(
+            label="Teléfono de Contacto (Obligatorio)*",
             prefix_icon=ft.Icons.PHONE,
             keyboard_type=ft.KeyboardType.PHONE
-        )
-        txt_correo = ft.TextField(
-            label="Correo Electrónico (Opcional)", 
+        ), "prov_telefono")
+        txt_correo = self._enlazar_foco(ft.TextField(
+            label="Correo Electrónico (Opcional)",
             prefix_icon=ft.Icons.EMAIL,
             keyboard_type=ft.KeyboardType.EMAIL
-        )
-        txt_descripcion = ft.TextField(
-            label="Descripción / Notas (Opcional)", 
-            multiline=True, 
-            min_lines=2, 
+        ), "prov_correo")
+        txt_descripcion = self._enlazar_foco(ft.TextField(
+            label="Descripción / Notas (Opcional)",
+            multiline=True,
+            min_lines=2,
             max_lines=3,
             prefix_icon=ft.Icons.NOTE
-        )
+        ), "prov_descripcion")
         lbl_error = ft.Text(
             "", 
             color=ft.Colors.RED_500, 
@@ -720,6 +852,7 @@ class GestionDatosView(BaseView):
 
     def handle_exportar_excel(self, e):
         """Exporta la base de datos completa a un libro Excel (.xlsx) con pestañas separadas (ERS 1.1)."""
+        self._teclado.instalar(e)
         last_dir = get_setting("last_excel_dir", default=None)
         if last_dir and not os.path.exists(last_dir):
             last_dir = None
@@ -862,12 +995,13 @@ class GestionDatosView(BaseView):
         p = self.get_current_page(e)
         if not p:
             return
+        self._teclado.instalar(e)
 
-        txt_busqueda = ft.TextField(
+        txt_busqueda = self._enlazar_foco(ft.TextField(
             label="Buscar item registrado (código, descripción o referencia)",
             prefix_icon=ft.Icons.SEARCH, dense=True, border_radius=10, expand=True,
             on_submit=lambda ev: self._buscar_items(ev, txt_busqueda, dd_criterio),
-        )
+        ), "pedido_busqueda")
         dd_criterio = ft.Dropdown(
             label="Buscar por",
             value=CRITERIO_POR_DEFECTO,
@@ -881,7 +1015,8 @@ class GestionDatosView(BaseView):
         contenido = ft.Column([
             ft.Text(
                 "El archivo que genere este asistente NO modifica el inventario: es el pedido que se le "
-                "entrega al Administrador para que lo cargue por Carga Masiva de Datos una vez supervisado.",
+                "entrega al Administrador para que lo cargue por Carga Masiva de Datos una vez supervisado. "
+                "Al cargarlo, la Cantidad recibida SE SUMA al stock que cada producto ya tiene.",
                 size=12, color=self.get_subtext_color(),
             ),
             ft.Row([
@@ -942,6 +1077,9 @@ class GestionDatosView(BaseView):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
         self._pedido_dlg = dlg
+        # Mientras este modal esté arriba, las flechas arriba/abajo desplazan su
+        # contenido (el único dueño del eje vertical del diálogo).
+        self._registrar_scrolls(dlg, vertical=contenido)
         self._open_dialog(dlg, e)
         self._refrescar_pedido(e)
 
@@ -986,7 +1124,7 @@ class GestionDatosView(BaseView):
         """Las pocas casillas que el PDF pide por renglón: Costo $/BCV, Precio
         Venta $/BCV, Marca y Cantidad. Todo lo demás lo trae el sistema."""
         v = valores or {}
-        return {
+        campos = {
             "costo_usd_efectivo": ft.TextField(
                 label="Costo USD Efectivo", value=self._valor_texto(v.get("costo_usd_efectivo")),
                 dense=True, border_radius=10, width=200),
@@ -1006,6 +1144,11 @@ class GestionDatosView(BaseView):
                 label="Cantidad recibida", value=self._valor_texto(v.get("cantidad")),
                 dense=True, border_radius=10, width=200),
         }
+        # Son casillas numéricas que se corrigen con las flechas: si no
+        # avisaran del foco, cada corrección movería la pantalla de atrás.
+        for nombre, campo in campos.items():
+            self._enlazar_foco(campo, f"renglon_{nombre}")
+        return campos
 
     @staticmethod
     def _valor_texto(valor) -> str:
@@ -1083,12 +1226,18 @@ class GestionDatosView(BaseView):
         necesita para poder abrir la ficha al importar.
         """
         campos = self._campos_casillas_renglon()
-        txt_codigo = ft.TextField(label="Código (obligatorio)", dense=True, border_radius=10, width=200)
-        txt_desc = ft.TextField(label="Descripción General (obligatoria)", dense=True, border_radius=10, expand=True)
-        txt_ref = ft.TextField(label="Referencia", dense=True, border_radius=10, width=200)
-        txt_depto = ft.TextField(label="Departamento", dense=True, border_radius=10, width=200)
-        txt_subdepto = ft.TextField(label="Sub-Departamento", dense=True, border_radius=10, width=200)
-        txt_barras = ft.TextField(label="Código de Barras", dense=True, border_radius=10, width=200)
+        txt_codigo = self._enlazar_foco(
+            ft.TextField(label="Código (obligatorio)", dense=True, border_radius=10, width=200), "manual_codigo")
+        txt_desc = self._enlazar_foco(
+            ft.TextField(label="Descripción General (obligatoria)", dense=True, border_radius=10, expand=True), "manual_desc")
+        txt_ref = self._enlazar_foco(
+            ft.TextField(label="Referencia", dense=True, border_radius=10, width=200), "manual_ref")
+        txt_depto = self._enlazar_foco(
+            ft.TextField(label="Departamento", dense=True, border_radius=10, width=200), "manual_depto")
+        txt_subdepto = self._enlazar_foco(
+            ft.TextField(label="Sub-Departamento", dense=True, border_radius=10, width=200), "manual_subdepto")
+        txt_barras = self._enlazar_foco(
+            ft.TextField(label="Código de Barras", dense=True, border_radius=10, width=200), "manual_barras")
         lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
 
         def _agregar(ev):
@@ -1224,11 +1373,11 @@ class GestionDatosView(BaseView):
             options=[ft.dropdown.Option(pr["empresa"]) for pr in proveedores if pr.get("empresa")],
             width=360, border_radius=10,
         )
-        txt_fecha = ft.TextField(
+        txt_fecha = self._enlazar_foco(ft.TextField(
             label=f"Fecha de Recepción ({pedidos_service.FORMATO_FECHA_RECEPCION})",
             value=datetime.now().strftime("%d/%m/%Y"),
             dense=True, border_radius=10, width=200,
-        )
+        ), "cierre_fecha")
         lbl_err = ft.Text("", color=ft.Colors.RED_500, size=12, weight=ft.FontWeight.BOLD)
 
         def _exportar(ev):
@@ -1261,6 +1410,26 @@ class GestionDatosView(BaseView):
                         f"{len(pedidos_service.obtener_renglones(sid))} renglón(es) · "
                         f"{pedidos_service.total_unidades(sid):g} unidades",
                         size=12, weight=ft.FontWeight.BOLD, color=self.get_text_color(),
+                    ),
+                    # Último aviso antes de generar el archivo, y el más
+                    # importante de los tres: el Administrador que lo reciba
+                    # tiene que saber que está cargando una ENTRADA DE
+                    # MERCANCÍA y no un catálogo. Si lo confundiera con un
+                    # catálogo esperaría que el stock quedara en estos números,
+                    # cuando en realidad se van a sumar a los actuales.
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED, color=self.get_accent_color(), size=20),
+                            ft.Text(
+                                "Este archivo es una ENTRADA DE MERCANCÍA: al cargarlo por Carga "
+                                "Masiva, las cantidades SE SUMAN al stock existente de cada producto. "
+                                "No es un catálogo ni una copia de seguridad.",
+                                size=12, color=self.get_text_color(), expand=True, no_wrap=False,
+                            ),
+                        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+                        padding=10, border_radius=10,
+                        bgcolor=self.get_card_bg(),
+                        border=ft.Border.all(1, self.get_accent_color()),
                     ),
                     lbl_err,
                 ], spacing=12, tight=True),
@@ -1311,4 +1480,9 @@ class GestionDatosView(BaseView):
         pedidos_service.vaciar_pedido(self.get_session_id(e))
         self._cerrar_generador(e)
         self._refrescar_pedido(e)
-        self.show_alert_success(e, f"{resultado['mensaje']}\nGuardado en: {resultado['ruta']}")
+        self.show_alert_success(
+            e,
+            f"{resultado['mensaje']}\nGuardado en: {resultado['ruta']}\n"
+            "Es una ENTRADA DE MERCANCÍA: al cargarla por Carga Masiva, las cantidades "
+            "se SUMAN al stock existente.",
+        )

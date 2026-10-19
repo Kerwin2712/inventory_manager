@@ -102,12 +102,38 @@ def test_cada_encabezado_generado_es_un_alias_que_la_importacion_reconoce():
 
 
 def test_las_columnas_informativas_no_colisionan_con_ningun_campo_de_la_importacion():
-    """Costos, sub-departamento y fecha de recepción viajan para que el
-    Administrador supervise; no deben ser leídas como otro campo."""
+    """Lo que queda informativo (hoy solo la Fecha de Recepción) viaja para que
+    el Administrador supervise el pedido; no debe ser leído como otro campo."""
     alias_conocidos = {a for alias in _ALIAS_CAMPO_PRODUCTO.values() for a in alias}
 
     for encabezado in pedidos_service.ENCABEZADOS_INFORMATIVOS:
         assert limpiar_clave(encabezado) not in alias_conocidos
+
+
+def test_los_costos_y_el_sub_departamento_viajan_como_columnas_derivadas():
+    """Dejaron de ser informativas: la Carga Masiva ya declara esos tres campos,
+    así que el encabezado se deriva de ella y el dato entra en la ficha del
+    producto en vez de quedar como información para retipear a mano."""
+    for campo in ("sub_departamento", "costo_usd_efectivo", "costo_usd_bcv"):
+        assert campo in pedidos_service.ENCABEZADO_POR_CAMPO
+        assert pedidos_service.ENCABEZADO_POR_CAMPO[campo] in pedidos_service.ENCABEZADOS_PEDIDO
+        assert pedidos_service.ENCABEZADO_POR_CAMPO[campo] not in pedidos_service.ENCABEZADOS_INFORMATIVOS
+
+
+def test_el_encabezado_de_las_tres_columnas_nuevas_no_cambio():
+    """Los archivos de pedido ya generados y guardados por ahí tienen que
+    seguir entrando —y ahora además con sus costos—, así que el encabezado
+    derivado debe ser el mismo texto que se emitía cuando era informativo."""
+    assert pedidos_service.ENCABEZADO_POR_CAMPO["sub_departamento"] == "Sub-Departamento"
+    assert pedidos_service.ENCABEZADO_POR_CAMPO["costo_usd_efectivo"] == "Costo USD (Efectivo)"
+    assert pedidos_service.ENCABEZADO_POR_CAMPO["costo_usd_bcv"] == "Costo USD (BCV)"
+
+
+def test_el_pedido_no_duplica_ninguna_columna():
+    """Un encabezado repetido haría que pandas escribiera dos columnas con el
+    mismo nombre y la importación leyera una sola, perdiendo datos en silencio."""
+    encabezados = list(pedidos_service.ENCABEZADOS_PEDIDO)
+    assert len(encabezados) == len(set(encabezados))
 
 
 def test_la_hoja_del_pedido_es_la_que_detecta_la_importacion(archivo_pedido):
@@ -149,13 +175,20 @@ def test_el_archivo_generado_entra_por_la_carga_masiva_con_los_valores_intactos(
     tubo = obtener_producto("TUB-001", rol_usuario="administrador")
     assert tubo["precio_dolares"] == 35.5
     assert tubo["precio_bcv"] == 38.25
-    assert tubo["existencia"] == 6
+    # Entrada de mercancía: las 6 unidades recibidas se SUMAN a las 4 que el
+    # producto ya tenía (ver `tests/test_importacion_entrada_mercancia.py`).
+    assert tubo["existencia"] == 10
     assert tubo["marca"] == "Monroe"
     assert tubo["referencia"] == "REF-TUB-001"
     assert tubo["departamento"] == "Repuestos"
     assert tubo["descripcion_general"] == "Tubo de escape universal"
     assert tubo["nombre_referencia_corto"] == "Tubo escape"
     assert tubo["codigo_barras"] == "7591234567890"
+    # Los costos del pedido ya no son informativos: quedan en la ficha, que es
+    # lo que evita que el Administrador los retipee uno por uno.
+    assert tubo["costo_usd_efectivo"] == 21.5
+    assert tubo["costo_usd_bcv"] == 23.0
+    assert tubo["sub_departamento"] == "Escape"
 
 
 def test_el_proveedor_del_pedido_queda_enlazado_al_importar(archivo_pedido, banco_de_datos):

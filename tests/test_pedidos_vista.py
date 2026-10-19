@@ -399,7 +399,9 @@ def test_el_archivo_generado_desde_la_vista_entra_por_la_carga_masiva(
     resultado = procesar_importacion_excel(str(ruta))
 
     assert resultado["exito"] is True, resultado["mensaje"]
-    assert obtener_producto("TUB-001")["existencia"] == 6
+    # 4 que ya tenía + 6 recibidas: el archivo del pedido es una entrada de
+    # mercancía y SUMA al stock, no lo reemplaza.
+    assert obtener_producto("TUB-001")["existencia"] == 10
 
 
 def test_armar_y_exportar_desde_la_vista_no_toca_el_inventario(
@@ -427,6 +429,89 @@ def test_armar_y_exportar_desde_la_vista_no_toca_el_inventario(
 
     assert foto() == antes
     assert antes == [("TUB-001", 4.0, 30.0, "Bosch")]
+
+
+# ── El archivo SUMA al stock, y la interfaz lo dice ──────────────────────────
+# Quien arma el pedido no es quien lo carga. Si el Administrador confundiera
+# este archivo con un catálogo, esperaría que el stock quedara en las cantidades
+# del archivo, cuando en realidad se van a sumar a las actuales. Por eso el
+# aviso aparece en la tarjeta, en el asistente, al cerrar el pedido, en el
+# mensaje de éxito y —del otro lado— al mapear las columnas para importarlo.
+
+@pytest.mark.parametrize("rol", ["administrador", "vendedor"])
+def test_la_tarjeta_avisa_que_el_archivo_suma_al_stock(banco_de_datos, rol):
+    textos = " ".join(_textos(_nueva_vista(rol).get_body())).upper()
+
+    assert "SE SUMAN AL STOCK" in textos
+
+
+def test_el_asistente_avisa_que_la_cantidad_se_suma(vista, pagina, evento):
+    dlg = _abrir_generador(vista, evento)
+
+    assert "SE SUMA al stock" in " ".join(_textos(dlg))
+
+
+def test_el_cierre_avisa_que_es_una_entrada_de_mercancia(vista, pagina, evento):
+    _agregar_item_desde_la_vista(vista, evento)
+
+    _click(vista._pedido_dlg, "CERRAR PEDIDO Y EXPORTAR", evento)
+
+    textos = " ".join(_textos(vista._dialog))
+    assert "ENTRADA DE MERCANCÍA" in textos
+    assert "SE SUMAN al stock existente" in textos
+
+
+def test_el_mensaje_de_exito_recuerda_que_suma_al_stock(
+    vista, pagina, evento, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(vista, "abrir_dialogo_guardado", lambda *a, **k: str(tmp_path / "p.xlsx"))
+    _agregar_item_desde_la_vista(vista, evento, cantidad="6")
+    _click(vista._pedido_dlg, "CERRAR PEDIDO Y EXPORTAR", evento)
+    dlg_cierre = vista._dialog
+    _campo(dlg_cierre, "Proveedor").value = PROVEEDOR
+    _campo(dlg_cierre, "Fecha de Recepción").value = "17/10/2026"
+
+    _click(dlg_cierre, "GENERAR ARCHIVO EXCEL", evento)
+
+    avisos = " ".join(t for s in pagina.overlay for t in _textos(s))
+    assert "ENTRADA DE MERCANCÍA" in avisos
+    assert "se SUMAN al stock existente" in avisos
+
+
+def test_el_asistente_de_mapeo_avisa_al_cargar_una_entrada_de_mercancia(
+    vista, pagina, evento, monkeypatch, tmp_path
+):
+    """El otro lado del aviso: mirando las columnas no se distingue un pedido de
+    un catálogo, y la diferencia es si el stock se suma o se reemplaza."""
+    ruta = tmp_path / "pedido.xlsx"
+    monkeypatch.setattr(vista, "abrir_dialogo_guardado", lambda *a, **k: str(ruta))
+    _agregar_item_desde_la_vista(vista, evento, cantidad="6")
+    _click(vista._pedido_dlg, "CERRAR PEDIDO Y EXPORTAR", evento)
+    _campo(vista._dialog, "Proveedor").value = PROVEEDOR
+    _campo(vista._dialog, "Fecha de Recepción").value = "17/10/2026"
+    _click(vista._dialog, "GENERAR ARCHIVO EXCEL", evento)
+
+    vista.mostrar_asistente_mapeo(evento, str(ruta))
+
+    textos = " ".join(_textos(vista._dialog))
+    assert "ENTRADA DE MERCANCÍA" in textos
+    assert "SE SUMARÁ al stock actual" in textos
+
+
+def test_el_asistente_de_mapeo_no_avisa_con_un_archivo_normal(vista, pagina, evento, tmp_path):
+    """Un catálogo armado a mano no lleva el aviso: fija la existencia, como
+    siempre, y un aviso falso ahí entrenaría a ignorarlo."""
+    import pandas as pd
+
+    ruta = tmp_path / "catalogo.xlsx"
+    with pd.ExcelWriter(str(ruta), engine="openpyxl") as writer:
+        pd.DataFrame([{"Código": "TUB-001", "Existencia": 3}]).to_excel(
+            writer, sheet_name="Productos", index=False
+        )
+
+    vista.mostrar_asistente_mapeo(evento, str(ruta))
+
+    assert "ENTRADA DE MERCANCÍA" not in " ".join(_textos(vista._dialog))
 
 
 # ── Aislamiento entre sesiones desde la vista ────────────────────────────────
