@@ -4,6 +4,8 @@ from tkinter import filedialog
 import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.scroll_nav import build_scroll_nav
+from ui.components.seleccion_lista import SeleccionLista
+from ui.components.teclado_nav import ATAJOS_ITEM
 from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
 from services.cartera_service import (
@@ -56,7 +58,10 @@ class VentasView(BaseView):
     # Estado a nivel de clase (no de instancia): el Dashboard reconstruye una
     # instancia nueva de VentasView en cada re-render (ver DashboardView.get_body),
     # así que si esto viviera solo en self se perdería con cada actualización.
-    # "acciones" es estructural (íconos de editar/remover) y no se puede ocultar.
+    # "marcador" (casilla de selección) y "acciones" (íconos de editar/remover)
+    # son estructurales y NO figuran aquí: ocultar el marcador dejaría el
+    # sombreado sin forma de quitarse con el mouse, y ocultar las acciones
+    # escondería los únicos botones del renglón.
     _COLUMNAS_CARRITO_OCULTABLES = ["codigo", "producto", "cantidad", "precio_usd", "precio_bs", "subtotal"]
     _columnas_carrito_visibles_estaticas = {k: True for k in _COLUMNAS_CARRITO_OCULTABLES}
     _modo_vista_carrito_estatico = "separado"
@@ -98,8 +103,25 @@ class VentasView(BaseView):
         # mercancía: cambiar de método de pago los descarta.
         self._datos_credito: dict | None = None
 
+        # ── Marcador del renglón del carrito (Nueva Función 3) ───────────────
+        # DELIBERADAMENTE de instancia y no de clase, al revés de las
+        # preferencias de columnas de arriba. El marcador es un puntero
+        # efímero a "el renglón sobre el que estoy trabajando ahora", y
+        # compartirlo tendría dos consecuencias graves:
+        #   - Entre sesiones (dos vendedores en dos pestañas) el marcador de
+        #     uno dejaría los botones del otro deshabilitados, porque
+        #     `puede_accionar` solo habilita lo marcado.
+        #   - Entre las instancias que el Dashboard reconstruye en cada
+        #     render, una instancia muerta seguiría viendo selección y
+        #     ejecutaría los atajos por segunda vez.
+        # Las interacciones que importan (marcar, editar, quitar, +/-) pasan
+        # por `_refrescar_carrito_y_resumen`, que NO reconstruye el Dashboard,
+        # así que la marca sobrevive a todo el uso normal del carrito.
+        self._seleccion = SeleccionLista()
+
         self._columnas_carrito_ocultables = VentasView._COLUMNAS_CARRITO_OCULTABLES
         self._columnas_carrito_labels = {
+            "marcador": "Sel.",
             "codigo": "Código",
             "producto": "Producto",
             "cantidad": "Cant.",
@@ -1532,6 +1554,12 @@ class VentasView(BaseView):
         """Stepper +/- en línea de la tabla del carrito: suma/resta 1 unidad
         sin necesidad de abrir el diálogo de edición. Si la cantidad llega a
         0 o menos, remueve el renglón."""
+        # Revalidación de la regla del marcador: el botón ya viene
+        # deshabilitado, pero la regla también tiene que valer para quien
+        # llegue por código (y los +/- son de lo que el renglón acciona).
+        if not self._seleccion.puede_accionar(item["codigo"]):
+            self.show_alert_info(e, self._AVISO_OTRO_MARCADO)
+            return
         nueva_cant = item["cantidad"] + delta
         if nueva_cant <= 0:
             self.handle_remover_item(e, item["codigo"])
@@ -1633,10 +1661,157 @@ class VentasView(BaseView):
         dlg.open = True
         p.update()
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # MARCADOR DEL RENGLÓN DEL CARRITO (Nueva Función 3, extendida a Ventas)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Mecánica pedida por el usuario del proyecto, idéntica a la del
+    # Inventario para que la misma lista se comporte igual en los dos módulos:
+    #   - Un clic en cualquier parte del renglón lo marca: se sombrea y la
+    #     casilla de la izquierda queda marcada, y sigue marcado al
+    #     desplazarse a la derecha de la tabla (el sombreado se deriva del
+    #     modelo, no de una bandera local, así que sobrevive al repintado).
+    #   - Solo hay DOS formas de desmarcar: el clic DENTRO de la casilla
+    #     marcada y la tecla [Esc].
+    #   - Con un renglón marcado, solo ese renglón puede accionar sus botones;
+    #     los de los demás quedan deshabilitados VISIBLEMENTE.
+    #   - SIN NADA MARCADO TODO FUNCIONA COMO ANTES: los botones de todos los
+    #     renglones siguen activos. Es la regla "Importante" del PDF y la más
+    #     fácil de romper al cablear la vista.
+
+    def _sincronizar_seleccion(self, items: list) -> None:
+        """Olvida los códigos marcados que ya no están en el carrito.
+
+        Sin esto, quitar el renglón marcado (o cambiar de carrito activo)
+        dejaría una selección FANTASMA: un código que no se puede desmarcar
+        con el mouse porque su casilla ya no se dibuja, y que mientras exista
+        deshabilita los botones de todos los renglones vivos.
+        """
+        codigos = {str(item["codigo"]).strip() for item in items}
+        fantasmas = [c for c in self._seleccion.seleccionados if c not in codigos]
+        if fantasmas:
+            self._seleccion.descartar(fantasmas)
+
+    def seleccionar_item(self, codigo: str, e=None):
+        """Clic en cualquier parte del renglón: marca (nunca desmarca)."""
+        if self._seleccion.seleccionar(codigo):
+            self._refrescar_carrito_y_resumen(e)
+
+    def alternar_item(self, codigo: str, e=None):
+        """Clic DENTRO de la casilla marcadora: marca o desmarca.
+
+        Es la primera de las dos únicas formas de deseleccionar que admite la
+        especificación (la otra es [Esc], que entra por `limpiar_seleccion`).
+        """
+        if self._seleccion.alternar(codigo):
+            self._refrescar_carrito_y_resumen(e)
+
+    def limpiar_seleccion(self, e=None):
+        """Quita la marca (tecla [Esc]). Es el `al_limpiar` del control de
+        teclado, así que recibe el evento de teclado como `e`."""
+        if self._seleccion.limpiar():
+            self._refrescar_carrito_y_resumen(e)
+
+    # El repintado NO se cuelga de `SeleccionLista.on_cambio` (como sí hace el
+    # Inventario) porque ese callback no recibe argumentos y aquí el repintado
+    # necesita el evento: `_refrescar_carrito_y_resumen` resuelve la página a
+    # partir de `e` y sin ella no llama a `page.update()` — los cálculos
+    # quedarían bien y la pantalla no mostraría ningún cambio. Los tres
+    # métodos de arriba son los únicos que mutan la selección, así que
+    # repintar en ellos cubre todos los caminos.
+
+    _AVISO_OTRO_MARCADO = (
+        "Hay otro renglón marcado. Haga clic en su casilla o pulse Esc para liberarlo."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ACCIONES DEL RENGLÓN (los botones de la fila y los atajos F1–F6)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Mapeo CANÓNICO (`ATAJOS_ITEM`), por decisión explícita del usuario del
+    # proyecto: la misma tecla hace lo mismo en todas las listas, y las teclas
+    # que no tienen un ícono equivalente en el carrito quedan INERTES. Se
+    # prefirió eso a inventarle un mapeo propio al carrito (se descartó
+    # expresamente mapear F3/F4 a subir/bajar cantidad): una tecla que cambia
+    # de significado según la lista en la que esté el usuario no se aprende.
+    #   F5 = editar el renglón · F6 = quitarlo del carrito
+    #   F1 (info), F2 (cobrar), F3 (carrito) y F4 (historial) no hacen nada.
+    #
+    # Por qué F6 NO pide la clave del usuario, aunque "borrar" figure en
+    # `teclado_nav.ACCIONES_CON_CLAVE`: quitar un renglón de un carrito no
+    # borra ningún dato del sistema, solo saca un artículo de una venta que
+    # todavía no se procesó (nada se registró, nada se puede perder). La clave
+    # quedó reservada al borrado de ítems del inventario y de deudas, que sí
+    # destruyen información persistida.
+    ACCIONES_RENGLON = ("editar", "borrar")
+
+    def _item_del_carrito(self, codigo: str) -> dict | None:
+        """Renglón del carrito activo por su código, o `None` si ya no está.
+
+        Se relee el carrito en vez de usar el `dict` que capturó el clic: un
+        atajo de teclado actúa sobre el código marcado y la copia que tuviera
+        la fila pintada puede ser de antes del último repintado.
+        """
+        codigo = str(codigo or "").strip()
+        if not codigo:
+            return None
+        items = obtener_carrito_activo(self._sid)["items"]
+        return next((i for i in items if str(i["codigo"]).strip() == codigo), None)
+
+    def accion_editar(self, item: dict, e=None):
+        self.handle_abrir_modal_editar_item(item, e)
+
+    def accion_borrar(self, item: dict, e=None):
+        self.handle_remover_item(e, item["codigo"])
+
+    def _handlers_accion_renglon(self) -> dict:
+        return {
+            "editar": self.accion_editar,
+            "borrar": self.accion_borrar,
+        }
+
+    def ejecutar_accion_item(self, accion: str, codigo: str, e=None) -> bool:
+        """Punto de entrada ÚNICO de los botones del renglón y de los atajos.
+
+        Que el mouse y el teclado recorran exactamente el mismo camino no es
+        elegancia: dos caminos distintos para la misma acción divergen en
+        cuanto alguien toque uno de los dos (una validación nueva en el botón
+        que la tecla se saltea, por ejemplo).
+
+        Revalida `puede_accionar` aunque el botón ya venga deshabilitado,
+        porque la regla también tiene que valer para quien llegue por teclado
+        o por código. Devuelve `False` cuando la acción no aplica.
+        """
+        if accion not in ATAJOS_ITEM.values():
+            raise ValueError(f"Acción de renglón desconocida: {accion!r}")
+        handler = self._handlers_accion_renglon().get(accion)
+        if handler is None:
+            return False  # F1–F4: inertes en el carrito (ver nota de arriba).
+        item = self._item_del_carrito(codigo)
+        if item is None:
+            return False
+        if not self._seleccion.puede_accionar(codigo):
+            self.show_alert_info(e, self._AVISO_OTRO_MARCADO)
+            return False
+        handler(item, e)
+        return True
+
+    def ejecutar_accion_sobre_seleccionado(self, accion: str, e=None) -> bool:
+        """La misma acción, aplicada al renglón marcado: es lo que invocan
+        F1–F6. Sin nada marcado no hace nada (y no adivina un renglón: una
+        tecla que actúa sobre algo que el usuario no eligió es una trampa)."""
+        codigo = self._seleccion.seleccionado
+        if not codigo:
+            return False
+        return self.ejecutar_accion_item(accion, codigo, e)
+
     def _columnas_carrito_orden_visible(self) -> list[str]:
-        """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó."""
+        """Orden fijo de columnas, filtrando las ocultables que el usuario desactivó.
+
+        "marcador" va SIEMPRE primero y "acciones" siempre al final: ninguna
+        de las dos es ocultable (ver `_COLUMNAS_CARRITO_OCULTABLES`).
+        """
         return (
-            [k for k in self._columnas_carrito_ocultables if self._columnas_carrito_visibles.get(k, True)]
+            ["marcador"]
+            + [k for k in self._columnas_carrito_ocultables if self._columnas_carrito_visibles.get(k, True)]
             + ["acciones"]
         )
 
@@ -1665,7 +1840,16 @@ class VentasView(BaseView):
         )
 
     def build_tabla_carrito(self, items: list) -> ft.Control:
+        # Antes de dibujar: la marca tiene que referirse a un renglón que
+        # exista (ver `_sincronizar_seleccion`).
+        self._sincronizar_seleccion(items)
+
         if not items:
+            # Carrito vacío: no hay tabla, así que tampoco destinos de scroll.
+            # Dejarlos apuntando a los controles del pintado anterior haría
+            # que las flechas desplazaran un control ya desmontado.
+            self._carrito_scroll_h = None
+            self._carrito_scroll_v = None
             return self.create_card(
                 content=ft.Column([
                     ft.Icon(ft.Icons.SHOPPING_CART_OUTLINED, size=64, color=self.get_accent_color()),
@@ -1683,40 +1867,100 @@ class VentasView(BaseView):
         border = self.get_border_color()
         card_bg = self.get_card_bg()
 
+        def boton_accion(accion: str, item: dict, icono, color, descripcion: str):
+            """Botón del renglón, cableado al punto de entrada único
+            (`ejecutar_accion_item`) para que la tecla y el mouse recorran
+            exactamente el mismo camino.
+
+            `disabled` es la mitad VISIBLE de la regla del marcador: con otro
+            renglón marcado el botón se ve apagado y el tooltip dice por qué,
+            en vez de aceptar el clic y no hacer nada (un botón que ignora en
+            silencio se lee como un cuelgue de la aplicación).
+            """
+            cod = item["codigo"]
+            habilitado = self._seleccion.puede_accionar(cod)
+            return ft.IconButton(
+                icon=icono,
+                icon_color=color if habilitado else subtext,
+                disabled=not habilitado,
+                tooltip=descripcion if habilitado else f"{descripcion} — {self._AVISO_OTRO_MARCADO}",
+                on_click=lambda e, a=accion, c=cod: self.ejecutar_accion_item(a, c, e),
+            )
+
         def celda_acciones(item, cod):
             return ft.Row([
-                ft.IconButton(
-                    icon=ft.Icons.EDIT_OUTLINED,
-                    icon_color=accent,
-                    tooltip="Editar cantidad o precio",
-                    on_click=lambda e, it=item: self.handle_abrir_modal_editar_item(it, e)
-                ),
-                ft.IconButton(
-                    icon=ft.Icons.DELETE_OUTLINED,
-                    icon_color=ft.Colors.RED_400,
-                    tooltip="Remover ítem",
-                    on_click=lambda e, c=cod: self.handle_remover_item(e, c)
-                )
+                boton_accion("editar", item, ft.Icons.EDIT_OUTLINED, accent, "Editar cantidad o precio"),
+                boton_accion("borrar", item, ft.Icons.DELETE_OUTLINED, ft.Colors.RED_400, "Remover ítem"),
             ], spacing=0)
 
         def celda_cantidad(item):
+            # Los +/- son parte de lo que el renglón puede accionar, así que
+            # siguen la misma regla que los botones de la columna "Acciones":
+            # con otro renglón marcado quedan apagados y explicados.
+            habilitado = self._seleccion.puede_accionar(item["codigo"])
+            sufijo = "" if habilitado else f" — {self._AVISO_OTRO_MARCADO}"
             return ft.Row([
                 ft.IconButton(
                     icon=ft.Icons.REMOVE_CIRCLE_OUTLINE, icon_size=18,
                     icon_color=subtext,
-                    tooltip="Restar 1",
+                    tooltip=f"Restar 1{sufijo}",
+                    disabled=not habilitado,
                     style=ft.ButtonStyle(padding=2),
                     on_click=lambda e, it=item: self.handle_ajustar_cantidad(e, it, -1),
                 ),
                 ft.Text(f"{item['cantidad']:.2f}", color=text_color, weight=ft.FontWeight.W_600, width=48, text_align=ft.TextAlign.CENTER),
                 ft.IconButton(
                     icon=ft.Icons.ADD_CIRCLE_OUTLINE, icon_size=18,
-                    icon_color=accent,
-                    tooltip="Sumar 1",
+                    icon_color=accent if habilitado else subtext,
+                    tooltip=f"Sumar 1{sufijo}",
+                    disabled=not habilitado,
                     style=ft.ButtonStyle(padding=2),
                     on_click=lambda e, it=item: self.handle_ajustar_cantidad(e, it, 1),
                 ),
             ], spacing=0, tight=True)
+
+        # ── Casilla marcadora y sombreado del renglón ────────────────────────
+        def celda_marcador(item) -> ft.Control:
+            marcado = self._seleccion.esta_seleccionado(item["codigo"])
+            return ft.Container(
+                content=ft.Icon(
+                    ft.Icons.RADIO_BUTTON_CHECKED if marcado else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                    color=accent if marcado else subtext,
+                    size=20,
+                ),
+                width=34,
+                alignment=ft.Alignment.CENTER,
+                tooltip=(
+                    "Clic para quitar la marca de este renglón"
+                    if marcado else "Clic para marcar este renglón"
+                ),
+            )
+
+        def celda_marcador_dc(item) -> ft.DataCell:
+            """La casilla atiende su propio toque: es la única celda de la fila
+            que DESMARCA (`alternar`), mientras el resto del renglón solo
+            marca."""
+            return ft.DataCell(
+                celda_marcador(item),
+                on_tap=lambda e, cod=item["codigo"]: self.alternar_item(cod, e),
+            )
+
+        def construir_fila(item, celdas: list[ft.DataCell], color_base=None) -> ft.DataRow:
+            marcado = self._seleccion.esta_seleccionado(item["codigo"])
+            return ft.DataRow(
+                cells=celdas,
+                selected=marcado,
+                # Sombreado derivado del MODELO y no de una bandera local: por
+                # eso sobrevive al repintado de la tabla y al desplazamiento
+                # horizontal (el renglón sigue sombreado al llegar a la
+                # columna de acciones).
+                color=ft.Colors.with_opacity(0.22, accent) if marcado else color_base,
+                # Hace sensible al clic el renglón COMPLETO ("no importa si es
+                # fuera de la casilla"); la celda del marcador tiene su propio
+                # `on_tap` y por eso no cae aquí.
+                on_select_change=lambda e, cod=item["codigo"]: self.seleccionar_item(cod, e),
+                data=item["codigo"],
+            )
 
         modo = VentasView._modo_vista_carrito_estatico
 
@@ -1745,6 +1989,7 @@ class VentasView(BaseView):
         if modo == "separado":
             columnas_clave = self._columnas_carrito_orden_visible()
             constructores_celda = {
+                "marcador": celda_marcador,
                 "codigo": lambda item: ft.Text(item["codigo"], weight=ft.FontWeight.BOLD, color=text_color),
                 "producto": lambda item: ft.Text(item["nombre_corto"], color=text_color),
                 "cantidad": celda_cantidad,
@@ -1762,9 +2007,16 @@ class VentasView(BaseView):
 
             zebra_bg = "#1B2331" if self.is_dark else "#F8FAFC"
             filas = [
-                ft.DataRow(
-                    cells=[ft.DataCell(constructores_celda[k](item)) for k in columnas_clave],
-                    color=zebra_bg if idx % 2 == 1 else None,
+                construir_fila(
+                    item,
+                    [
+                        celda_marcador_dc(item) if k == "marcador"
+                        else ft.DataCell(constructores_celda[k](item))
+                        for k in columnas_clave
+                    ],
+                    # El cebreado es el fondo por omisión del renglón: el
+                    # sombreado del marcador lo reemplaza cuando está marcado.
+                    color_base=zebra_bg if idx % 2 == 1 else None,
                 )
                 for idx, item in enumerate(items)
             ]
@@ -1779,6 +2031,10 @@ class VentasView(BaseView):
                 heading_row_color=header_color,
                 divider_thickness=1,
                 horizontal_lines=ft.BorderSide(1, border),
+                # Explícito: todas las filas llevan `on_select_change`, y con
+                # la columna de casillas propia de la tabla activada Flet
+                # dibujaría una SEGUNDA casilla junto a nuestro marcador.
+                show_checkbox_column=False,
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
             tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=304)
@@ -1835,7 +2091,8 @@ class VentasView(BaseView):
                 celda_acc = ft.Container(content=celda_acciones(item, item["codigo"]), width=90, padding=ft.Padding.symmetric(vertical=4))
 
                 filas.append(
-                    ft.DataRow(cells=[
+                    construir_fila(item, [
+                        celda_marcador_dc(item),
                         ft.DataCell(celda_prod),
                         ft.DataCell(celda_precios),
                         ft.DataCell(celda_cant),
@@ -1846,6 +2103,7 @@ class VentasView(BaseView):
 
             dt = ft.DataTable(
                 columns=[
+                    ft.DataColumn(ft.Text(self._columnas_carrito_labels["marcador"], color=text_color, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Producto", color=text_color, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Precios Unit.", color=text_color, weight=ft.FontWeight.BOLD)),
                     ft.DataColumn(ft.Text("Cant.", color=text_color, weight=ft.FontWeight.BOLD)),
@@ -1855,6 +2113,9 @@ class VentasView(BaseView):
                 rows=filas,
                 data_row_min_height=72,
                 data_row_max_height=95,
+                # Ver la nota del modo "separado": con `on_select_change` en
+                # las filas, Flet añadiría su propia columna de casillas.
+                show_checkbox_column=False,
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
             tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=304)
@@ -1871,9 +2132,18 @@ class VentasView(BaseView):
             for item in items:
                 precio_bcv_ref = item.get("precio_usd_bcv_ref", item["precio_usd"])
                 subtotal_bcv_usd = round(item["cantidad"] * precio_bcv_ref, 2)
+                marcado = self._seleccion.esta_seleccionado(item["codigo"])
                 t = ft.Container(
                     content=ft.Column([
                         ft.Row([
+                            # La casilla también va en las tarjetas: sin ella,
+                            # en este modo el renglón solo se podría desmarcar
+                            # con [Esc] y la mitad de la mecánica quedaría
+                            # fuera del alcance del mouse.
+                            ft.Container(
+                                content=celda_marcador(item),
+                                on_click=lambda e, cod=item["codigo"]: self.alternar_item(cod, e),
+                            ),
                             ft.Text(f"Cód: {item['codigo']}", size=11, weight=ft.FontWeight.BOLD, color=accent),
                             celda_cantidad(item),
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
@@ -1911,7 +2181,13 @@ class VentasView(BaseView):
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ], spacing=4),
                     padding=10, border_radius=12, width=280,
-                    bgcolor=card_bg, border=ft.Border.all(1, border),
+                    # Mismo sombreado derivado del modelo que en las tablas,
+                    # con el borde reforzado para que la tarjeta marcada se
+                    # distinga también en modo claro.
+                    bgcolor=ft.Colors.with_opacity(0.22, accent) if marcado else card_bg,
+                    border=ft.Border.all(2 if marcado else 1, accent if marcado else border),
+                    ink=True,
+                    on_click=lambda e, cod=item["codigo"]: self.seleccionar_item(cod, e),
                 )
                 tarjetas.append(t)
 
