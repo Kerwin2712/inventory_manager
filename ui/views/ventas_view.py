@@ -1652,8 +1652,12 @@ class VentasView(BaseView):
         self._refrescar_carrito_y_resumen(e)
 
     def handle_abrir_modal_editar_item(self, item: dict, e=None):
-        """Abre un diálogo emergente para editar cantidad o precio de un renglón del carrito."""
-        p = self.get_current_page(e)
+        """Diálogo para editar la cantidad o el precio de un renglón.
+
+        Es lo que ejecuta F5 sobre el renglón marcado, además del botón de
+        editar de la fila: los dos entran por `ejecutar_accion_item`.
+        """
+        p = self._pagina_actual(e)
         if not p:
             return
 
@@ -1695,8 +1699,7 @@ class VentasView(BaseView):
                     raise ValueError("Los valores deben ser mayores a cero.")
 
                 editar_item_en_carrito(self._sid, item["codigo"], n_cant, n_precio, n_precio_bcv, tasa_bcv=self.tasa_bcv)
-                dlg.open = False
-                p.update()
+                self._close_dialog(e_save, dialog=dlg)
                 self.show_alert_success(e_save, f"Renglón '{item['codigo']}' actualizado.")
                 self._refrescar_carrito_y_resumen(e_save)
             except ValueError as ex:
@@ -1704,8 +1707,7 @@ class VentasView(BaseView):
                 p.update()
 
         def cerrar(e_close):
-            dlg.open = False
-            p.update()
+            self._close_dialog(e_close, dialog=dlg)
 
         dlg = ft.AlertDialog(
             title=ft.Row([
@@ -1735,10 +1737,14 @@ class VentasView(BaseView):
             actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN
         )
 
-        if dlg not in p.overlay:
-            p.overlay.append(dlg)
-        dlg.open = True
-        p.update()
+        # Pila nativa de Flet 0.86 (`show_dialog`/`pop_dialog`) y no el patrón
+        # heredado de `page.overlay` + bandera `open`: con ese patrón esta
+        # versión no llega a dibujar el cierre y el diálogo se queda pegado, o
+        # sigue activo pero invisible recibiendo clics sobre botones que el
+        # usuario ya no ve (el resto de los diálogos de esta vista se migraron
+        # antes por lo mismo).
+        self._dlg_editar_item = dlg
+        self._open_dialog(dlg, e)
 
     # ─────────────────────────────────────────────────────────────────────────
     # MARCADOR DEL RENGLÓN DEL CARRITO (Nueva Función 3, extendida a Ventas)

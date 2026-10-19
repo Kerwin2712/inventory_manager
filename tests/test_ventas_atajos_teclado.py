@@ -339,3 +339,95 @@ def test_escape_quita_la_marca_del_renglon(vista, pagina, evento):
     _pulsar(vista, pagina, "Escape")
 
     assert vista._seleccion.hay_seleccion is False
+
+
+# ─── 5. F5 y F6 sobre el renglón marcado ─────────────────────────────────────
+
+def test_f5_abre_el_dialogo_de_edicion_del_renglon_marcado(vista, pagina, evento):
+    _marcar(vista, "TEC-002", evento)
+
+    _pulsar(vista, pagina, "F5")
+
+    dlg = pagina.visible
+    assert dlg is not None
+    textos = [c.value for c in dlg.title.controls if isinstance(c, ft.Text)]
+    assert any("Editar Renglón" in t for t in textos)
+
+
+def test_f6_quita_del_carrito_el_renglon_marcado(vista, pagina, evento):
+    _marcar(vista, "TEC-002", evento)
+
+    _pulsar(vista, pagina, "F6")
+
+    codigos = [i["codigo"] for i in obtener_carrito_activo(vista._sid)["items"]]
+    assert codigos == ["TEC-001", "TEC-003"]
+
+
+def test_f6_no_pide_la_clave_del_usuario(vista, pagina, evento):
+    """Quitar un renglón de un carrito no borra ningún dato del sistema: solo
+    saca un artículo de una venta que todavía no se procesó. La clave quedó
+    reservada al borrado de ítems del inventario y de deudas, que sí
+    destruyen información persistida."""
+    _marcar(vista, "TEC-002", evento)
+
+    _pulsar(vista, pagina, "F6")
+
+    # Se removió de una, sin diálogo intermedio pidiendo nada.
+    assert "TEC-002" not in [i["codigo"] for i in obtener_carrito_activo(vista._sid)["items"]]
+    assert pagina.visible is None
+
+
+def test_f6_deja_el_carrito_sin_marca_fantasma(vista, pagina, evento):
+    _marcar(vista, "TEC-002", evento)
+
+    _pulsar(vista, pagina, "F6")
+
+    assert vista._seleccion.hay_seleccion is False
+
+
+@pytest.mark.parametrize("tecla", ["F1", "F2", "F3", "F4"])
+def test_f1_a_f4_no_hacen_nada_en_el_carrito(vista, pagina, evento, tecla):
+    """Mapeo canónico: las teclas sin ícono equivalente en el carrito quedan
+    inertes. En particular NO se les inventó un significado (se descartó
+    expresamente mapear F3/F4 a subir y bajar la cantidad)."""
+    _marcar(vista, "TEC-002", evento)
+    antes = [dict(i) for i in obtener_carrito_activo(vista._sid)["items"]]
+
+    _pulsar(vista, pagina, tecla)
+
+    assert obtener_carrito_activo(vista._sid)["items"] == antes
+    assert pagina.visible is None
+
+
+@pytest.mark.parametrize("tecla", ["F1", "F2", "F3", "F4", "F5", "F6"])
+def test_ninguna_tecla_hace_nada_sin_renglon_marcado(vista, pagina, tecla):
+    """Sin ítem marcado no hay sobre qué actuar, y adivinar uno sería disparar
+    una acción sobre algo que el usuario no eligió."""
+    antes = [dict(i) for i in obtener_carrito_activo(vista._sid)["items"]]
+
+    _pulsar(vista, pagina, tecla)
+
+    assert obtener_carrito_activo(vista._sid)["items"] == antes
+    assert pagina.visible is None
+
+
+def test_las_teclas_entran_por_el_mismo_punto_de_entrada_que_los_botones(vista, pagina, evento):
+    llamadas = []
+    vista.ejecutar_accion_item = lambda accion, codigo, e=None: llamadas.append((accion, codigo))
+    _marcar(vista, "TEC-003", evento)
+
+    _pulsar(vista, pagina, "F5")
+    _pulsar(vista, pagina, "F6")
+
+    assert llamadas == [("editar", "TEC-003"), ("borrar", "TEC-003")]
+
+
+def test_ejecutar_accion_sobre_seleccionado_sin_marca_devuelve_falso(vista, evento):
+    assert vista.ejecutar_accion_sobre_seleccionado("editar", evento) is False
+
+
+@pytest.mark.parametrize("accion", ["info", "cobrar", "carrito", "historial"])
+def test_las_acciones_sin_equivalente_devuelven_falso(vista, evento, accion):
+    _marcar(vista, "TEC-001", evento)
+
+    assert vista.ejecutar_accion_sobre_seleccionado(accion, evento) is False
