@@ -5,7 +5,11 @@ import flet as ft
 from ui.views.base_view import BaseView
 from ui.components.scroll_nav import build_scroll_nav
 from ui.components.seleccion_lista import SeleccionLista
-from ui.components.teclado_nav import ATAJOS_ITEM
+from ui.components.teclado_nav import (
+    ATAJOS_ITEM,
+    ControlTeclado,
+    RegistroFoco,
+)
 from core.database import get_setting, set_setting
 from services.bcv_service import obtener_estado_tasa
 from services.cartera_service import (
@@ -118,6 +122,25 @@ class VentasView(BaseView):
         # por `_refrescar_carrito_y_resumen`, que NO reconstruye el Dashboard,
         # así que la marca sobrevive a todo el uso normal del carrito.
         self._seleccion = SeleccionLista()
+
+        # ── Atajos de teclado (flechas de navegación y F1–F6) ───────────────
+        # Los destinos de scroll se pasan como INVOCABLES y no como controles:
+        # la tabla del carrito se reconstruye entera en cada repintado, así
+        # que un control guardado aquí sería uno que ya no está en pantalla y
+        # las flechas desplazarían un árbol muerto sin dar señal de nada.
+        self._carrito_scroll_h = None
+        self._carrito_scroll_v = None
+        self._resultados_scroll_v = None
+        self._registro_foco = RegistroFoco()
+        self._teclado = ControlTeclado(
+            obtener_pagina=self._pagina_actual,
+            destino_vertical=self._destino_scroll_vertical,
+            destino_horizontal=self._destino_scroll_horizontal,
+            seleccion=self._seleccion,
+            ejecutar_accion=self.ejecutar_accion_sobre_seleccionado,
+            al_limpiar=self.limpiar_seleccion,
+            registro_foco=self._registro_foco,
+        )
 
         self._columnas_carrito_ocultables = VentasView._COLUMNAS_CARRITO_OCULTABLES
         self._columnas_carrito_labels = {
@@ -262,6 +285,44 @@ class VentasView(BaseView):
                 f"Ref: $ {tot_usd_bcv_equivalente:,.2f} BCV",
             )
         return f"$ {tot_usd:,.2f}", ft.Colors.GREEN_700, "Dólares en Efectivo"
+
+    # ── Atajos de teclado: instalación y destinos de scroll ─────────────────
+
+    def _pagina_actual(self, e=None):
+        """Página viva de la vista. Es lo que `ControlTeclado` necesita para
+        tomar el teclado, y se resuelve igual que en el resto del archivo:
+        primero el evento (siempre fiable) y después la Page inyectada por el
+        Dashboard al construir la vista."""
+        return self.get_current_page(e) or self._page_ref
+
+    def _asegurar_teclado(self, e=None) -> bool:
+        """Engancha los atajos a la página, de forma perezosa e idempotente.
+
+        Perezosa porque al construir la vista todavía no hay `page`: esta
+        vista se instancia headless y el Dashboard la monta después, así que
+        se reintenta desde los puntos en los que ya hay un evento a mano. La
+        idempotencia y el respeto por el handler previo —esta vista comparte
+        la página con el Dashboard y no puede quedarse con el teclado— los
+        resuelve `ControlTeclado`; aquí solo se le pide instalarse.
+        """
+        return self._teclado.instalar(e)
+
+    def _destino_scroll_vertical(self):
+        """Qué desplazan ↑/↓ (y Ctrl+↑/↓ hasta el extremo).
+
+        El carrito es la lista sobre la que actúan los atajos F5/F6, así que
+        es también la que navegan las flechas: tener un eje con dos dueños
+        según dónde esté mirando el usuario convierte cada pulsación en una
+        apuesta. La única excepción es el carrito VACÍO, donde no hay tabla ni
+        scroll que mover y el panel de resultados es lo único desplazable en
+        pantalla.
+        """
+        return self._carrito_scroll_v or self._resultados_scroll_v
+
+    def _destino_scroll_horizontal(self):
+        """Qué desplazan ←/→: el mismo eje que mueven los botones de flecha de
+        la barra del carrito (la tabla es más ancha que la pantalla)."""
+        return self._carrito_scroll_h
 
     def _calcular_sid(self, e=None) -> str:
         """Resuelve el ID de sesión de Flet (page.session.id) para aislar los
@@ -495,6 +556,10 @@ class VentasView(BaseView):
             on_change=self._filtrar_solo_digitos_cliente,
             on_submit=self.handle_buscar_cliente,
         )
+        # Regla del foco: mientras el cursor esté en un campo, las flechas son
+        # del cursor y no de la navegación. Un campo que se quede sin enlazar
+        # le mueve la pantalla al usuario mientras escribe.
+        self._registro_foco.enlazar(self.cli_search_numero, "cliente_cedula")
         self.btn_buscar_cli = ft.ElevatedButton(
             content=ft.Row([ft.Icon(ft.Icons.SEARCH, size=18), ft.Text("Buscar Cliente", weight=ft.FontWeight.BOLD)], tight=True),
             style=ft.ButtonStyle(
@@ -567,6 +632,8 @@ class VentasView(BaseView):
             text_align=ft.TextAlign.CENTER,
             border_radius=12,
         )
+        self._registro_foco.enlazar(self.prod_search_input, "busqueda_producto")
+        self._registro_foco.enlazar(self.cant_input, "cantidad_solicitada")
         self.btn_buscar_prod = ft.IconButton(
             icon=ft.Icons.MANAGE_SEARCH,
             icon_color=self.get_accent_color(),
@@ -757,6 +824,11 @@ class VentasView(BaseView):
             controls=[panel_agregar_prod, row_carrito_totales],
             spacing=15
         )
+
+        # Primer intento de enganche del teclado: cuando el Dashboard inyectó
+        # la Page al construir la vista, aquí ya hay con qué (y las flechas
+        # funcionan desde el primer pintado, sin esperar un clic).
+        self._asegurar_teclado()
 
         return ft.Container(
             content=ft.Column(
@@ -1141,6 +1213,7 @@ class VentasView(BaseView):
         text_color = self.get_text_color()
 
         if not resultados:
+            self._resultados_scroll_v = None  # nada que desplazar
             return ft.Container(
                 content=ft.Row([
                     ft.Icon(ft.Icons.SEARCH_OFF, size=16, color=subtext),
@@ -1227,6 +1300,11 @@ class VentasView(BaseView):
                 bgcolor=ft.Colors.with_opacity(0.10, accent) if es_exacto else None,
             ))
 
+        # Se nombra para poder apuntarle las flechas del teclado cuando el
+        # carrito está vacío (ver `_destino_scroll_vertical`).
+        lista_resultados = ft.Column(controls=filas, spacing=2, scroll=ft.ScrollMode.AUTO)
+        self._resultados_scroll_v = lista_resultados
+
         pie: list[ft.Control] = []
         if len(resultados) >= self._LIMITE_RESULTADOS_BUSQUEDA:
             pie.append(ft.Text(
@@ -1251,7 +1329,7 @@ class VentasView(BaseView):
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 # Único scroll vertical del panel, dentro de una altura acotada.
                 ft.Container(
-                    content=ft.Column(controls=filas, spacing=2, scroll=ft.ScrollMode.AUTO),
+                    content=lista_resultados,
                     height=min(240, 46 * len(filas) + 8),
                 ),
                 *pie,
@@ -1265,6 +1343,7 @@ class VentasView(BaseView):
     def handle_limpiar_resultados(self, e):
         """Oculta y vacía el panel de resultados."""
         self._resultados_busqueda = []
+        self._resultados_scroll_v = None
         if hasattr(self, "panel_resultados_container"):
             self.panel_resultados_container.content = None
             self.panel_resultados_container.visible = False
@@ -1693,6 +1772,10 @@ class VentasView(BaseView):
 
     def seleccionar_item(self, codigo: str, e=None):
         """Clic en cualquier parte del renglón: marca (nunca desmarca)."""
+        # Reintento de enganche: si la vista se construyó antes de tener
+        # página, este es el primer momento con un evento en la mano, y es
+        # justo cuando [Esc] y F1–F6 empiezan a tener sentido.
+        self._asegurar_teclado(e)
         if self._seleccion.seleccionar(codigo):
             self._refrescar_carrito_y_resumen(e)
 
@@ -1702,6 +1785,7 @@ class VentasView(BaseView):
         Es la primera de las dos únicas formas de deseleccionar que admite la
         especificación (la otra es [Esc], que entra por `limpiar_seleccion`).
         """
+        self._asegurar_teclado(e)
         if self._seleccion.alternar(codigo):
             self._refrescar_carrito_y_resumen(e)
 
@@ -2038,6 +2122,11 @@ class VentasView(BaseView):
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
             tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=304)
+            # Destinos de las flechas del teclado: EXACTAMENTE los mismos
+            # controles que mueven los botones de flecha de la barra, para que
+            # la tecla y el clic desplacen lo mismo.
+            self._carrito_scroll_h = tabla_scroll_row
+            self._carrito_scroll_v = tabla_scroll_col
             contenido_vista = ft.Column([
                 ft.Row([
                     ft.Container(expand=True),
@@ -2119,6 +2208,11 @@ class VentasView(BaseView):
             )
             tabla_scroll_row = ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
             tabla_scroll_col = ft.Column(controls=[tabla_scroll_row], scroll=ft.ScrollMode.ALWAYS, height=304)
+            # Destinos de las flechas del teclado: EXACTAMENTE los mismos
+            # controles que mueven los botones de flecha de la barra, para que
+            # la tecla y el clic desplacen lo mismo.
+            self._carrito_scroll_h = tabla_scroll_row
+            self._carrito_scroll_v = tabla_scroll_col
             contenido_vista = ft.Column([
                 ft.Row([
                     ft.Container(expand=True),
@@ -2196,6 +2290,11 @@ class VentasView(BaseView):
                 scroll=ft.ScrollMode.ALWAYS,
                 height=346,
             )
+            # Las tarjetas se reacomodan solas al ancho disponible (`wrap`):
+            # no hay eje horizontal que desplazar, así que ←/→ no tienen aquí
+            # un destino que mover y quedan inertes en este modo.
+            self._carrito_scroll_h = None
+            self._carrito_scroll_v = contenido_vista
 
         selector_cols = self._build_selector_columnas_carrito() if modo == "separado" else ft.Container()
 
