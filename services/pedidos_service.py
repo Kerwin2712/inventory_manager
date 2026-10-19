@@ -83,21 +83,20 @@ ENCABEZADO_POR_CAMPO: dict[str, str] = {
     for campo, etiqueta, _obligatorio in CAMPOS_PRODUCTO_MAPEO
 }
 
-# Columnas informativas para que el Administrador supervise el pedido. La
-# importación las ignora hoy (ninguna normaliza a un alias suyo), pero son
-# datos que el PDF pide explícitamente y que se perderían si no viajaran en el
-# archivo. Van al final para no alterar el orden de la plantilla compatible.
-ENCABEZADO_SUB_DEPARTAMENTO = "Sub-Departamento"
-ENCABEZADO_COSTO_EFECTIVO = "Costo USD (Efectivo)"
-ENCABEZADO_COSTO_BCV = "Costo USD (BCV)"
+# El Sub-Departamento y los dos COSTOS viajaban como columnas meramente
+# INFORMATIVAS: el archivo las llevaba para que el Administrador supervisara el
+# pedido, pero la Carga Masiva no las leía y alguien tenía que retipear los
+# costos a mano en la ficha de cada producto. Desde que `importacion_service`
+# las declara, son columnas DERIVADAS como cualquier otra —el encabezado es el
+# mismo de antes, así que los archivos ya generados también entran ahora con
+# sus costos— y por eso no están acá abajo: salen de `ENCABEZADO_POR_CAMPO`.
+#
+# La Fecha de Recepción sigue siendo informativa porque no corresponde a ningún
+# campo de `productos`: es un dato del pedido, no del producto. Viaja igual,
+# repetida en cada fila, porque se perdería si no fuera en el archivo.
 ENCABEZADO_FECHA_RECEPCION = "Fecha de Recepción"
 
-ENCABEZADOS_INFORMATIVOS: tuple[str, ...] = (
-    ENCABEZADO_SUB_DEPARTAMENTO,
-    ENCABEZADO_COSTO_EFECTIVO,
-    ENCABEZADO_COSTO_BCV,
-    ENCABEZADO_FECHA_RECEPCION,
-)
+ENCABEZADOS_INFORMATIVOS: tuple[str, ...] = (ENCABEZADO_FECHA_RECEPCION,)
 
 ENCABEZADOS_PEDIDO: tuple[str, ...] = tuple(ENCABEZADO_POR_CAMPO.values()) + ENCABEZADOS_INFORMATIVOS
 
@@ -469,10 +468,17 @@ def _fila_excel(renglon: dict, proveedor: str, fecha_recepcion: str) -> dict:
         ENCABEZADO_POR_CAMPO["codigo"]: renglon["codigo"],
         ENCABEZADO_POR_CAMPO["referencia"]: renglon["referencia"],
         ENCABEZADO_POR_CAMPO["departamento"]: renglon["departamento"],
+        ENCABEZADO_POR_CAMPO["sub_departamento"]: renglon["sub_departamento"],
         ENCABEZADO_POR_CAMPO["descripcion_general"]: renglon["descripcion_general"],
         ENCABEZADO_POR_CAMPO["marca"]: renglon["marca"],
         ENCABEZADO_POR_CAMPO["precio_dolares"]: renglon["precio_usd_efectivo"],
         ENCABEZADO_POR_CAMPO["precio_bcv"]: renglon["precio_usd_bcv"],
+        # Los costos del renglón son los de ESTA entrada de mercancía, no los
+        # almacenados del producto (el vendedor que armó el pedido nunca los
+        # vio). Ahora la Carga Masiva los escribe en la ficha, que es lo que
+        # pidió el usuario del proyecto: antes el Administrador los retipeaba.
+        ENCABEZADO_POR_CAMPO["costo_usd_efectivo"]: renglon["costo_usd_efectivo"],
+        ENCABEZADO_POR_CAMPO["costo_usd_bcv"]: renglon["costo_usd_bcv"],
         # El Proveedor y la Fecha de Recepción se piden UNA sola vez al cerrar
         # el pedido, pero se repiten en cada fila porque la Carga Masiva resuelve
         # el proveedor fila por fila (busca su `empresa` para enlazar el ID).
@@ -485,9 +491,6 @@ def _fila_excel(renglon: dict, proveedor: str, fecha_recepcion: str) -> dict:
         ENCABEZADO_POR_CAMPO["existencia"]: renglon["cantidad"],
         ENCABEZADO_POR_CAMPO["codigo_barras"]: renglon["codigo_barras"],
         ENCABEZADO_POR_CAMPO["nombre_referencia_corto"]: renglon["nombre_referencia_corto"],
-        ENCABEZADO_SUB_DEPARTAMENTO: renglon["sub_departamento"],
-        ENCABEZADO_COSTO_EFECTIVO: renglon["costo_usd_efectivo"],
-        ENCABEZADO_COSTO_BCV: renglon["costo_usd_bcv"],
         ENCABEZADO_FECHA_RECEPCION: fecha_recepcion,
     }
 
