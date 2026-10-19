@@ -399,7 +399,9 @@ def test_el_archivo_generado_desde_la_vista_entra_por_la_carga_masiva(
     resultado = procesar_importacion_excel(str(ruta))
 
     assert resultado["exito"] is True, resultado["mensaje"]
-    assert obtener_producto("TUB-001")["existencia"] == 6
+    # 4 que ya tenía + 6 recibidas: el archivo del pedido es una entrada de
+    # mercancía y SUMA al stock, no lo reemplaza.
+    assert obtener_producto("TUB-001")["existencia"] == 10
 
 
 def test_armar_y_exportar_desde_la_vista_no_toca_el_inventario(

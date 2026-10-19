@@ -175,7 +175,9 @@ def test_el_archivo_generado_entra_por_la_carga_masiva_con_los_valores_intactos(
     tubo = obtener_producto("TUB-001", rol_usuario="administrador")
     assert tubo["precio_dolares"] == 35.5
     assert tubo["precio_bcv"] == 38.25
-    assert tubo["existencia"] == 6
+    # Entrada de mercancía: las 6 unidades recibidas se SUMAN a las 4 que el
+    # producto ya tenía (ver `tests/test_importacion_entrada_mercancia.py`).
+    assert tubo["existencia"] == 10
     assert tubo["marca"] == "Monroe"
     assert tubo["referencia"] == "REF-TUB-001"
     assert tubo["departamento"] == "Repuestos"

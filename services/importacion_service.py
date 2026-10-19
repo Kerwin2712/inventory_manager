@@ -20,6 +20,93 @@ def limpiar_clave(k) -> str:
         k_clean = k_clean.replace(a, b)
     return k_clean
 
+# ═════════════════════════════════════════════════════════════════════════
+# QUÉ INTENCIÓN TIENE LA IMPORTACIÓN SOBRE LA EXISTENCIA
+# ═════════════════════════════════════════════════════════════════════════
+# El mismo camino de Carga Masiva sirve para dos cosas que piden lo contrario:
+#
+#   - Cargar el catálogo inicial o RESTAURAR UN RESPALDO. Ahí la columna
+#     Existencia describe el estado del inventario, así que hay que FIJARLA en
+#     ese número. Si se sumara, cada vez que alguien reimporta un respaldo se
+#     duplicarían las existencias de toda la base: un desastre silencioso y
+#     muy difícil de deshacer, porque no hay con qué saber cuánto había antes.
+#
+#   - Ingresar una ENTRADA DE MERCANCÍA (el archivo que genera
+#     `services.pedidos_service`). Ahí la columna Existencia es la cantidad que
+#     acaba de llegar, así que hay que SUMARLA a lo que el producto ya tenía.
+#     Decisión expresa del usuario del proyecto ("que sume al stock existente"):
+#     si un repuesto tenía 5 unidades y el pedido trae 10, queda en 15 — antes
+#     quedaba en 10 y las 5 que había se perdían.
+#
+# Las dos intenciones se distinguen por un marcador EXPLÍCITO dentro del
+# archivo, nunca por adivinanza: la hoja de resumen que el generador de pedidos
+# ya escribía lleva una fila cuyo valor es el literal `ENTRADA_DE_MERCANCIA`.
+# Se exigen las dos cosas —el nombre de la hoja Y el literal en una celda—
+# porque el nombre de una hoja es un indicio débil (cualquiera puede llamar así
+# a una hoja), mientras que ese literal no lo escribe nadie por accidente. Todo
+# lo demás, incluido cualquier archivo que un usuario arme a mano, entra por el
+# camino de siempre: ante la duda se FIJA, que es el comportamiento histórico y
+# el que no multiplica stock.
+MODO_FIJAR = "fijar"
+MODO_SUMAR = "sumar"
+
+NOMBRE_HOJA_ENTRADA_MERCANCIA = "Resumen del Pedido"
+ETIQUETA_TIPO_ARCHIVO = "Tipo de archivo"
+MARCADOR_ENTRADA_MERCANCIA = "ENTRADA_DE_MERCANCIA"
+
+_CLAVE_HOJA_ENTRADA = NOMBRE_HOJA_ENTRADA_MERCANCIA.lower().strip()
+
+
+def _modo_desde_libro(excel_file, sheet_map: dict) -> str:
+    """`MODO_SUMAR` solo si el libro trae el marcador de entrada de mercancía.
+
+    Cualquier problema para leer la hoja de resumen devuelve `MODO_FIJAR`:
+    fail-closed hacia el comportamiento histórico, porque equivocarse sumando
+    duplica el inventario entero y equivocarse fijando solo deja el valor que el
+    archivo declara.
+    """
+    hoja = sheet_map.get(_CLAVE_HOJA_ENTRADA)
+    if hoja is None:
+        return MODO_FIJAR
+    try:
+        df = pd.read_excel(excel_file, sheet_name=hoja).fillna("")
+    except Exception:
+        return MODO_FIJAR
+
+    columnas = {limpiar_clave(c): c for c in df.columns}
+    col_dato, col_valor = columnas.get("dato"), columnas.get("valor")
+    if not col_dato or not col_valor:
+        return MODO_FIJAR
+
+    etiqueta_buscada = limpiar_clave(ETIQUETA_TIPO_ARCHIVO)
+    for _idx, fila in df.iterrows():
+        if limpiar_clave(fila[col_dato]) != etiqueta_buscada:
+            continue
+        if str(fila[col_valor]).strip().upper() == MARCADOR_ENTRADA_MERCANCIA:
+            return MODO_SUMAR
+    return MODO_FIJAR
+
+
+def detectar_modo_existencia(ruta_archivo: str) -> str:
+    """Intención del archivo sobre la existencia (`MODO_SUMAR`/`MODO_FIJAR`).
+
+    Pública para que la interfaz pueda avisarle al Administrador qué está a
+    punto de cargar, y para poder testear la detección sin importar nada.
+    """
+    try:
+        excel_file = pd.ExcelFile(ruta_archivo)
+    except Exception:
+        return MODO_FIJAR
+    try:
+        sheet_map = {str(s).lower().strip(): s for s in excel_file.sheet_names}
+        return _modo_desde_libro(excel_file, sheet_map)
+    finally:
+        try:
+            excel_file.close()
+        except Exception:
+            pass
+
+
 def analizar_proveedores_excel(ruta_archivo: str) -> dict:
     """
     Analiza el archivo Excel buscando nombres de proveedores que no estén registrados en la base de datos.
@@ -461,8 +548,16 @@ def _costo_de_celda(bruto, etiqueta: str, hoja: str, num_fila: int) -> float | N
         raise ValueError(f"Hoja '{hoja}' (Fila {num_fila}): {str(ex).split(': ', 1)[-1]}")
 
 
-def _escribir_producto(cursor, valores: dict, presentes: set[str], hoja: str, num_fila: int) -> None:
-    """Inserta o actualiza el producto de una fila ya normalizada."""
+def _escribir_producto(
+    cursor, valores: dict, presentes: set[str], hoja: str, num_fila: int,
+    modo: str = MODO_FIJAR,
+) -> None:
+    """Inserta o actualiza el producto de una fila ya normalizada.
+
+    `modo` es lo que el archivo quiere de la existencia: `MODO_FIJAR` la deja en
+    el número de la columna (catálogo, respaldo) y `MODO_SUMAR` se la suma a la
+    que el producto ya tenía (entrada de mercancía). Ver la sección de arriba.
+    """
     codigo = valores["codigo"]
     cursor.execute(
         "SELECT existencia, sub_departamento, costo_usd_efectivo, costo_usd_bcv, "
@@ -486,7 +581,13 @@ def _escribir_producto(cursor, valores: dict, presentes: set[str], hoja: str, nu
     # La alerta de stock mínimo no viaja en ningún archivo, así que siempre se
     # conserva: sin esto, `INSERT OR REPLACE` la pondría en NULL en cada carga.
     alerta = previo["alerta_stock_minimo"] if previo is not None else None
+
     existencia = valores["existencia"]
+    if modo == MODO_SUMAR and previo is not None:
+        # Entrada de mercancía: la cantidad recibida se SUMA a lo que había.
+        # Un producto que todavía no existe entra con la cantidad tal cual, sin
+        # tratamiento especial: no tiene existencia previa a la que sumarle.
+        existencia = float(previo["existencia"] or 0.0) + existencia
 
     # Regla de negocio del dominio (`core.models.validar_costo_obligatorio`):
     # un producto con existencia (>= 1 unidad) debe tener su Costo USD Efectivo.
@@ -557,6 +658,7 @@ def procesar_importacion_productos_mapeada(ruta_archivo: str, hoja: str, mapeo: 
     except Exception as ex:
         return {"exito": False, "mensaje": f"Error al leer la hoja '{hoja}': {ex}", "hoja": hoja, "fila": None}
 
+    modo = detectar_modo_existencia(ruta_archivo)
     conn = get_connection()
     conn.isolation_level = None
     cursor = conn.cursor()
@@ -571,7 +673,7 @@ def procesar_importacion_productos_mapeada(ruta_archivo: str, hoja: str, mapeo: 
             if normalizada is None:
                 continue
             valores, presentes = normalizada
-            _escribir_producto(cursor, valores, presentes, hoja, num_fila)
+            _escribir_producto(cursor, valores, presentes, hoja, num_fila, modo=modo)
             count += 1
 
         cursor.execute("COMMIT")
@@ -694,6 +796,7 @@ def ejecutar_importacion_completa_mapeada(ruta_archivo: str, hoja_productos: str
         return {"exito": False, "mensaje": f"Error al abrir el archivo Excel: {ex}", "hoja": None, "fila": None}
 
     sheet_map = {str(s).lower().strip(): s for s in sheet_names}
+    modo = _modo_desde_libro(excel_file, sheet_map)
     conn = get_connection()
     conn.isolation_level = None
     cursor = conn.cursor()
@@ -723,7 +826,7 @@ def ejecutar_importacion_completa_mapeada(ruta_archivo: str, hoja_productos: str
                 if normalizada is None:
                     continue
                 valores, presentes = normalizada
-                _escribir_producto(cursor, valores, presentes, hoja_actual, num_fila)
+                _escribir_producto(cursor, valores, presentes, hoja_actual, num_fila, modo=modo)
                 stats["productos"] += 1
 
         cursor.execute("COMMIT")
@@ -784,6 +887,7 @@ def procesar_importacion_excel(ruta_archivo: str) -> dict:
         }
 
     sheet_map = {str(s).lower().strip(): s for s in sheet_names}
+    modo = _modo_desde_libro(excel_file, sheet_map)
 
     conn = get_connection()
     conn.isolation_level = None  # Control de transacciones explícitas
@@ -832,7 +936,7 @@ def procesar_importacion_excel(ruta_archivo: str) -> dict:
                 if normalizada is None:
                     continue
                 valores, presentes = normalizada
-                _escribir_producto(cursor, valores, presentes, hoja_actual, num_fila)
+                _escribir_producto(cursor, valores, presentes, hoja_actual, num_fila, modo=modo)
                 stats["productos"] += 1
 
         cursor.execute("COMMIT")

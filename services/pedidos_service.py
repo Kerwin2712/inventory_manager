@@ -24,6 +24,15 @@ derivan de lo que `services.importacion_service` declara (`CAMPOS_PRODUCTO_MAPEO
 y sus alias de encabezado). Si alguien renombra una columna allá, acá cambia
 sola — y el test del círculo cerrado (generar → importar) lo verifica.
 
+ES UNA ENTRADA DE MERCANCÍA, NO UN CATÁLOGO
+El archivo lleva en su hoja de resumen un marcador explícito
+(`MARCADOR_ENTRADA_MERCANCIA`) que le dice a la Carga Masiva que las cantidades
+se SUMAN a la existencia que cada producto ya tiene, en vez de fijarla. Esa
+distinción es el motivo de que el marcador exista: el mismo camino de
+importación se usa para restaurar respaldos, y ahí sumar duplicaría el
+inventario entero. El literal lo declara `importacion_service`, que es quien lo
+lee.
+
 AISLAMIENTO POR SESIÓN
 El borrador vive en memoria, indexado por `session_id`, con el mismo criterio
 que `services.cart_manager` usa para los carritos: la aplicación Flet atiende
@@ -40,6 +49,9 @@ from core.models import normalizar_costo
 from services.busqueda_service import CRITERIO_POR_DEFECTO, buscar_productos
 from services.importacion_service import (
     CAMPOS_PRODUCTO_MAPEO,
+    ETIQUETA_TIPO_ARCHIVO,
+    MARCADOR_ENTRADA_MERCANCIA,
+    NOMBRE_HOJA_ENTRADA_MERCANCIA,
     _ALIAS_CAMPO_PRODUCTO,
     limpiar_clave,
 )
@@ -54,10 +66,15 @@ from services.inventario_service import obtener_producto
 # la detección sea directa y no dependa del fallback de "hoja única".
 NOMBRE_HOJA_PEDIDO = "Productos"
 
-# Hoja informativa con los datos que el PDF exige UNA sola vez (Proveedor y
-# Fecha de Recepción) más los totales del pedido. La Carga Masiva la ignora:
-# solo lee las hojas llamadas Productos / Clientes / Proveedores.
-NOMBRE_HOJA_RESUMEN = "Resumen del Pedido"
+# Hoja con los datos que el PDF exige UNA sola vez (Proveedor y Fecha de
+# Recepción) más los totales del pedido. La Carga Masiva no la importa como
+# datos —solo lee las hojas llamadas Productos / Clientes / Proveedores—, pero
+# sí la usa como MARCADOR: es lo que le dice que este archivo es una entrada de
+# mercancía y que por lo tanto las cantidades se SUMAN a la existencia, en vez
+# de fijarla como haría un catálogo o un respaldo. El nombre de la hoja y el
+# literal del marcador se derivan de `importacion_service`, que es quien los
+# lee: duplicarlos acá sería tener dos definiciones del mismo contrato.
+NOMBRE_HOJA_RESUMEN = NOMBRE_HOJA_ENTRADA_MERCANCIA
 
 
 def _encabezado_compatible(campo: str, etiqueta: str) -> str:
@@ -279,13 +296,12 @@ def _normalizar_valores_renglon(
 def _acumular_o_agregar(renglones: list[dict], nuevo: dict) -> dict:
     """Inserta el renglón, o acumula la cantidad si su código ya está.
 
-    El Excel debe tener UNA fila por código: la importación hace
-    `INSERT OR REPLACE`, así que dos filas del mismo producto no suman
-    existencias — la segunda sobrescribe a la primera y la cantidad de la
-    primera se perdería en silencio. Al acumular acá, el archivo ya sale con la
-    cantidad total correcta. Los demás valores (marca, costos, precios) se
-    actualizan con los últimos ingresados: son los de la entrada que el usuario
-    está registrando ahora.
+    El Excel debe tener UNA fila por código: el pedido es un documento que el
+    Administrador lee antes de cargarlo, y dos renglones del mismo repuesto con
+    cantidades distintas lo obligan a sumarlas de cabeza para saber qué llegó.
+    Al acumular acá, el archivo sale con la cantidad total a la vista. Los demás
+    valores (marca, costos, precios) se actualizan con los últimos ingresados:
+    son los de la entrada que el usuario está registrando ahora.
     """
     existente = _renglon_existente(renglones, nuevo["codigo"])
     if existente is None:
@@ -484,10 +500,10 @@ def _fila_excel(renglon: dict, proveedor: str, fecha_recepcion: str) -> dict:
         # el proveedor fila por fila (busca su `empresa` para enlazar el ID).
         ENCABEZADO_POR_CAMPO["proveedor"]: proveedor,
         # La cantidad recibida viaja en la columna Existencia: es la única que
-        # la importación escribe sobre el stock. Ojo (y es la razón por la que
-        # este archivo lo supervisa un Administrador): la importación hace
-        # INSERT OR REPLACE, así que FIJA la existencia en este número en vez de
-        # sumarla a la que el producto ya tenía.
+        # la importación escribe sobre el stock. Al llevar este libro la hoja
+        # de resumen con el marcador de entrada de mercancía, la Carga Masiva
+        # SUMA este número a la existencia que el producto ya tenía (5 + 10 =
+        # 15) en vez de fijarla, que es lo que decidió el usuario del proyecto.
         ENCABEZADO_POR_CAMPO["existencia"]: renglon["cantidad"],
         ENCABEZADO_POR_CAMPO["codigo_barras"]: renglon["codigo_barras"],
         ENCABEZADO_POR_CAMPO["nombre_referencia_corto"]: renglon["nombre_referencia_corto"],
@@ -531,6 +547,16 @@ def generar_archivo_pedido(session_id: str, ruta_destino: str, proveedor: str, f
     df_productos = pd.DataFrame(filas, columns=list(ENCABEZADOS_PEDIDO))
     df_resumen = pd.DataFrame(
         [
+            # Primera fila a propósito: es el marcador que lee la Carga Masiva
+            # para saber que las cantidades de este archivo se SUMAN al stock.
+            # La fila de abajo dice lo mismo en castellano, para el Administrador
+            # que abre el archivo en Excel antes de cargarlo.
+            {"Dato": ETIQUETA_TIPO_ARCHIVO, "Valor": MARCADOR_ENTRADA_MERCANCIA},
+            {
+                "Dato": "Efecto al importar",
+                "Valor": "La Existencia de cada fila es la CANTIDAD RECIBIDA y se "
+                         "SUMA al stock que el producto ya tiene (no lo reemplaza).",
+            },
             {"Dato": "Proveedor", "Valor": proveedor},
             {"Dato": "Fecha de Recepción", "Valor": fecha_recepcion},
             {"Dato": "Renglones", "Valor": len(filas)},
