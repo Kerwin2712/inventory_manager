@@ -159,6 +159,36 @@ Los dobles de página headless montan **un solo** control de teclado por prueba.
 
 ---
 
+---
+
+## Auditoría Manejable y Acciones por Lote - 19/10/2026
+
+- **Responsable:** Claude (IA Coding Assistant), con dos agentes en paralelo sobre archivos exclusivos.
+- **Motivo:** El usuario pidió dos cosas: que la Auditoría Preventiva se comporte como las demás listas ("es mejor que esta vista sea más manejable, más revisable"), y que en Inventario las acciones tengan en cuenta la selección múltiple en vez de actuar siempre sobre un solo ítem.
+
+### Decisiones tomadas con el usuario
+
+- **Auditoría: solo acciones de reposición** — ver detalle, historial, editar y contactar proveedor. Descartó cobrar y carrito: "es una lista para reponer stock, no para vender". Lleva marcador y selección múltiple igual que Inventario.
+- **"Contactar proveedor" no recibe tecla.** No existe en el mapeo canónico, y darle F2 o F3 rompería la regla de que la misma tecla hace lo mismo en todas las listas. Queda con mouse.
+- **Con varios marcados, el clic en un ícono pregunta siempre** si la acción va sobre esa fila o sobre el lote. El usuario descartó recordar la respuesta.
+- **En Inventario, cada acción sabe si tiene sentido en lote**: añadir al carrito, procesar venta y borrar se aplican a todos; ver detalle, historial y editar muestran la lista de lo marcado para elegir uno, porque en lote no significan nada.
+- **F2 y F3 preguntan el carrito destino** (el activo, otro de los abiertos, o uno nuevo). El usuario corrigió esto sobre la marcha: "a veces no se quiere agregar al carrito que está ahí, sino a uno nuevo o a otro".
+- **Se retira el botón de borrado masivo**, porque F6 lo cubre — con la condición de que el camino siga alcanzable con el mouse desde el ícono de una fila marcada, para no dejarlo solo por teclado.
+
+### El defecto que apareció al verificar en la aplicación
+
+Con el ítem marcado, **F1 no mostraba nada**. La sonda demostró que la acción sí se ejecutaba de principio a fin —intención, despacho, diálogo apilado, `True` de vuelta— y aun así la pantalla no cambiaba. El diálogo aparecía al pulsar **cualquier otra tecla** después.
+
+La causa: **Flet acumula los cambios del árbol mientras maneja un evento y los manda al terminar.** Un atajo de teclado no cuelga de ningún control, así que ese envío no llega y el diálogo recién apilado se queda en la cola. Para el usuario eso se lee como "la tecla no hace nada", y el diálogo que aparece al clic siguiente, como un programa trabado.
+
+Es la explicación de por qué **las flechas siempre funcionaron y los diálogos no**: `scroll_to` es una llamada directa al cliente, no un cambio del árbol, así que no depende de ese envío.
+
+`ControlTeclado` marca ahora que quedó algo por dibujar cuando una acción de tecla se ejecuta, y repinta después de ceder el evento. Se añadió además el repintado explícito tras `show_dialog` y `pop_dialog` en las cinco vistas: `page.show_dialog()` apila el diálogo pero no redibuja, y tras un clic no se nota porque Flet repinta al terminar el handler del control.
+
+**Pendiente de confirmar en la aplicación real:** este último arreglo quedó sin verificar en vivo. El panel de previsualización perdió la correspondencia entre las coordenadas del clic y el lienzo de Flutter a mitad de la sesión, y no se pudo volver a marcar una fila para repetir la prueba. Lo que **sí** quedó verificado en vivo es todo lo anterior: la Auditoría renderiza sus tres modos de vista, el conmutador etiquetado, el marcador, los cuatro íconos con su atajo y el contacto del proveedor; y que F1 ejecutaba la acción pero no se dibujaba.
+
+---
+
 ### Pendientes conocidos
 
 - **`proveedor_id` se pierde en el camino del asistente de mapeo** de la importación: ese camino solo tiene el nombre del proveedor, no su ID. El camino heurístico sí lo preserva, porque el respaldo exporta la columna.
