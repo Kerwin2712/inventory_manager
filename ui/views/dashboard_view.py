@@ -191,6 +191,10 @@ class DashboardView(BaseView):
             # [Esc] limpie el marcador y que las teclas de función sepan si hay
             # un ítem sobre el que actuar.
             seleccion=self._seleccion_auditoria,
+            # F1, F4 y F5 actúan SOLO sobre el ítem marcado: el punto de
+            # entrada recibe el nombre de la acción y resuelve el código él
+            # mismo, así que la tecla no tiene que adivinar ninguna fila.
+            ejecutar_accion=self._accionar_por_teclado,
             al_limpiar=self.limpiar_seleccion_auditoria,
             # Identidad logica de la vista: el Dashboard la reemplaza en cada
             # repintado, asi que el control nuevo RELEVA al de la instancia
@@ -1363,6 +1367,37 @@ class DashboardView(BaseView):
             return False
         handler(codigo, e)
         return True
+
+    def ejecutar_accion_auditoria_sobre_seleccionado(self, accion: str, e=None) -> bool:
+        """Misma acción, aplicada al ítem marcado: es lo que invocan las teclas.
+
+        Sin ítem marcado no hace NADA (devuelve `False`): adivinar una fila
+        sería abrir un formulario de edición sobre algo que el usuario no
+        eligió."""
+        codigo = self._seleccion_auditoria.seleccionado
+        if not codigo:
+            return False
+        return self.ejecutar_accion_auditoria(accion, codigo, e)
+
+    def _accionar_por_teclado(self, accion: str, e=None) -> bool:
+        """Lo que invocan las teclas de función sobre esta lista.
+
+        El mapeo de `teclado_nav.ATAJOS_ITEM` es FIJO y común a todas las
+        listas (F1 info, F2 cobrar, F3 carrito, F4 historial, F5 editar, F6
+        borrar), así que aquí quedan vivas F1, F4 y F5, y F2, F3 y F6 quedan
+        INERTES porque esta lista no tiene esos íconos. Una tecla sin ícono
+        equivalente no hace nada, que es muy distinto de hacer otra cosa: si
+        F3 añadiera al carrito desde la lista de reposición, la misma tecla
+        significaría cosas distintas en dos pantallas del mismo programa.
+
+        La guarda de sección no es decorativa: el Dashboard aloja a las demás
+        vistas, y una tecla pulsada mientras el usuario mira Ventas no puede
+        accionar una lista del Inicio que ya no está en pantalla."""
+        if self.current_section != "Inicio":
+            return False
+        if accion not in self.ACCIONES_AUDITORIA:
+            return False
+        return self.ejecutar_accion_auditoria_sobre_seleccionado(accion, e)
 
     # ── Contactar proveedor ─────────────────────────────────────────────────
     def _mostrar_contactos_proveedores(self, codigos, e=None):

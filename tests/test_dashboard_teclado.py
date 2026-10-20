@@ -1,8 +1,11 @@
 """Navegación con flechas en el área de Inicio.
 
 El usuario del proyecto pidió que las flechas naveguen en todas las vistas, no
-solo en el Inventario. En Inicio no hay ítems con íconos, así que aquí va solo
-la navegación: ninguna tecla de función.
+solo en el Inventario. Aquí va la NAVEGACIÓN; las teclas de función sobre la
+lista de Auditoría Preventiva tienen su propio archivo
+(`test_dashboard_auditoria_teclado.py`) y en este solo se conserva lo que la
+navegación necesita de ellas: sin ningún ítem marcado, ninguna tecla de función
+hace nada.
 
 El punto delicado de esta pantalla es que el Dashboard **aloja** a las demás
 vistas. Si el destino de scroll del Inicio sobreviviera a un cambio de
@@ -180,12 +183,13 @@ def test_escape_suelta_el_foco(dashboard):
     assert dashboard._teclado.foco.hay_campo_con_foco is False
 
 
-# ─── Ninguna tecla de función en Inicio ──────────────────────────────────────
+# ─── Sin ítem marcado, ninguna tecla de función hace nada ────────────────────
 
 @pytest.mark.parametrize("tecla", ["F1", "F2", "F3", "F4", "F5", "F6"])
-def test_las_teclas_de_funcion_no_hacen_nada_en_el_inicio(dashboard, tecla):
-    """Aquí no hay ítems con íconos: sin modelo de selección, el control de
-    teclado no puede disparar ninguna acción de ítem."""
+def test_sin_item_marcado_las_teclas_de_funcion_no_hacen_nada(dashboard, tecla):
+    """Las teclas de función actúan SOBRE EL ÍTEM MARCADO de la lista de
+    Auditoría. Sin nada marcado no hay sobre qué actuar, y adivinar una fila
+    sería abrir un formulario sobre algo que el usuario no eligió."""
     espia = EspiaScroll()
     dashboard._scroll_inicio_v = espia
 
