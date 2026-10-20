@@ -32,6 +32,12 @@ def actualizar_stock_minimo(valor: float) -> float:
     return valor
 
 
+# Etiqueta única para los productos sin proveedor cargado. Se nombra una sola
+# vez porque la usan la fila de la tabla y la agrupación de contactos: si cada
+# sitio escribiera su propio texto, el mismo producto aparecería con dos
+# nombres distintos en dos ventanas del mismo programa.
+SIN_PROVEEDOR = "Sin Proveedor Asignado"
+
 # Consulta base de la auditoría preventiva. El JOIN con proveedores aísla el
 # contacto de reposición (ERS 3.6); el WHERE lo inyecta cada criterio.
 _SQL_ALERTAS = """
@@ -44,9 +50,11 @@ _SQL_ALERTAS = """
         p.departamento,
         p.marca,
         p.alerta_stock_minimo,
+        prov.id AS proveedor_id,
         prov.empresa AS proveedor_nombre,
         prov.telefono AS proveedor_telefono,
-        prov.contacto AS proveedor_contacto
+        prov.contacto AS proveedor_contacto,
+        prov.correo AS proveedor_correo
     FROM productos p
     LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
     WHERE {condicion}
@@ -60,7 +68,15 @@ def _fila_a_alerta(r, minimo: float, origen: str) -> dict:
     `referencia`, `descripcion_general` y `marca` se agregaron para la
     Auditoría Preventiva a ancho completo (especificación 17/10/2026): con la
     tarjeta ocupando media pantalla solo cabía el nombre corto, y el cliente
-    pedía "la información completa del item"."""
+    pedía "la información completa del item".
+
+    `proveedor_id` y `proveedor_correo` se agregaron al convertir la Auditoría
+    en una lista con acciones: la acción "Contactar proveedor" necesita el
+    identificador para NO repetir el mismo proveedor cuando el usuario marca
+    varios productos que se le compran al mismo (el nombre de empresa no sirve
+    de clave: dos registros pueden traerlo vacío y se fundirían en uno), y el
+    correo porque un pedido de reposición se manda por escrito tan a menudo
+    como por teléfono."""
     propio = r["alerta_stock_minimo"]
     return {
         "codigo": r["codigo"],
@@ -71,9 +87,11 @@ def _fila_a_alerta(r, minimo: float, origen: str) -> dict:
         "minimo": float(minimo),
         "departamento": r["departamento"] or "General",
         "marca": r["marca"] or "",
-        "proveedor_nombre": r["proveedor_nombre"] or "Sin Proveedor Asignado",
+        "proveedor_id": r["proveedor_id"],
+        "proveedor_nombre": r["proveedor_nombre"] or SIN_PROVEEDOR,
         "proveedor_telefono": r["proveedor_telefono"] or "N/A",
         "proveedor_contacto": r["proveedor_contacto"] or "N/A",
+        "proveedor_correo": r["proveedor_correo"] or "",
         "alerta_stock_minimo": int(propio) if propio is not None else None,
         "origen": origen,
     }
@@ -128,6 +146,91 @@ def obtener_alertas_stock(minimo: float | None = None) -> list[dict]:
         alertas[r["codigo"]] = _fila_a_alerta(r, float(minimo), "global")
 
     return sorted(alertas.values(), key=lambda a: (a["existencia"], a["codigo"]))
+
+
+def obtener_contactos_proveedores(codigos) -> list[dict]:
+    """Contactos de reposición de los productos `codigos`, UNO POR PROVEEDOR.
+
+    Es lo que necesita la acción "Contactar proveedor" de la Auditoría
+    Preventiva cuando el usuario marcó varios productos: reponer no se hace
+    producto por producto sino llamada por llamada, así que lo útil es la lista
+    de proveedores a los que hay que llamar, cada uno con los productos que le
+    corresponden. Repetir el mismo proveedor tantas veces como productos
+    marcados haría al usuario marcar el mismo teléfono cuatro veces.
+
+    Criterios, todos deliberados:
+
+    - Se agrupa por `proveedores.id` y NO por nombre de empresa: `empresa` es
+      opcional en el esquema, y dos proveedores sin empresa cargada se
+      fundirían en un solo bloque equivocado.
+    - Los productos SIN proveedor asignado no se descartan: van juntos en un
+      bloque propio (`proveedor_id is None`). Esconderlos dejaría al usuario
+      creyendo que ya llamó por todo lo que había marcado, cuando justamente
+      esos son los que le falta averiguar a quién comprarle.
+    - El orden de los proveedores es el del PRIMER producto marcado de cada uno
+      (y el de los productos dentro del bloque, el de `codigos`): el usuario
+      armó la selección en un orden y reconoce su propia lista. El bloque sin
+      proveedor queda al final, porque no es una llamada que pueda hacer ya.
+    - Un código inexistente se ignora en silencio: puede haberse borrado entre
+      el marcado y la acción, y eso no es motivo para negarle al usuario los
+      contactos de los que sí existen.
+    """
+    pedidos = [str(c).strip() for c in (codigos or ()) if str(c or "").strip()]
+    if not pedidos:
+        return []
+
+    # `IN (...)` con marcadores: los códigos vienen de la selección del
+    # usuario, nunca interpolados en el SQL.
+    marcadores = ",".join("?" for _ in pedidos)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            p.codigo,
+            p.nombre_referencia_corto,
+            p.descripcion_general,
+            p.existencia,
+            prov.id AS proveedor_id,
+            prov.empresa,
+            prov.contacto,
+            prov.telefono,
+            prov.correo
+        FROM productos p
+        LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
+        WHERE p.codigo IN ({marcadores})
+    """, tuple(pedidos))
+    filas = {r["codigo"]: r for r in cursor.fetchall()}
+    conn.close()
+
+    grupos: dict[object, dict] = {}
+    for codigo in pedidos:
+        r = filas.get(codigo)
+        if r is None:
+            continue
+        clave = r["proveedor_id"]
+        grupo = grupos.get(clave)
+        if grupo is None:
+            grupo = {
+                "proveedor_id": clave,
+                "empresa": (r["empresa"] or "").strip() or SIN_PROVEEDOR,
+                "contacto": (r["contacto"] or "").strip(),
+                "telefono": (r["telefono"] or "").strip(),
+                "correo": (r["correo"] or "").strip(),
+                "productos": [],
+            }
+            grupos[clave] = grupo
+        grupo["productos"].append({
+            "codigo": r["codigo"],
+            "nombre_corto": r["nombre_referencia_corto"] or r["codigo"],
+            "descripcion_general": r["descripcion_general"] or "",
+            "existencia": float(r["existencia"] or 0.0),
+        })
+
+    # Los proveedores reales primero (en el orden en que el usuario los
+    # encontró) y el bloque sin proveedor al final.
+    con_proveedor = [g for k, g in grupos.items() if k is not None]
+    sin_proveedor = [g for k, g in grupos.items() if k is None]
+    return con_proveedor + sin_proveedor
 
 
 def obtener_top_ventas(rango_temporal: str = "Hoy", limite: int = 10) -> list[dict]:
