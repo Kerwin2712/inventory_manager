@@ -4,14 +4,18 @@ from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
+from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.scroll_nav import build_floating_v_nav, build_inline_h_nav
-from ui.components.teclado_nav import ControlTeclado
+from ui.components.teclado_nav import (
+    ACCIONES_SOLO_ADMIN, ControlTeclado, etiqueta_atajo, tooltip_con_atajo,
+)
 from services.bcv_service import obtener_estado_tasa
 from services.reportes_service import (
     obtener_metricas_dashboard,
     obtener_top_ventas,
     obtener_ventas_del_dia,
     obtener_alertas_stock,
+    obtener_contactos_proveedores,
     obtener_stock_minimo,
     actualizar_stock_minimo,
 )
@@ -39,6 +43,54 @@ class DashboardView(BaseView):
     # instancia durante toda la sesión, pero se olvida al cerrar el programa.
     MODOS_VISTA_AUDITORIA = ("separado", "agrupado", "tarjetas")
     MODO_VISTA_AUDITORIA_DEFECTO = "agrupado"
+
+    # ── Acciones de un ítem de la Auditoría ──────────────────────────────────
+    # SOLO las de reposición, por decisión expresa del usuario del proyecto:
+    # ver detalle, historial clínico, editar y contactar al proveedor. Cobrar y
+    # Carrito se descartaron con el criterio de que "es una lista para reponer
+    # stock, no para vender", y Borrar no está entre las elegidas.
+    #
+    # El orden es el de `teclado_nav.ATAJOS_ITEM` (F1 info … F5 editar) y es el
+    # mismo en que se dibujan los íconos: la tecla y la posición del ícono
+    # cuentan la misma historia. "proveedor" va al final porque NO tiene tecla:
+    # no existe en el mapeo canónico, y no se le inventó una ni se reutilizó
+    # F2/F3/F6 porque eso rompería la regla de que la misma tecla hace lo mismo
+    # en todas las listas de la aplicación. Queda accesible con el mouse.
+    ACCIONES_AUDITORIA = ("info", "historial", "editar", "proveedor")
+
+    # Acciones que NO tienen sentido en lote: ver el detalle de cinco productos
+    # a la vez no significa nada, el historial de cinco tampoco, y editarlos
+    # juntos menos. Cuando el usuario pide aplicarlas a todo lo marcado se le
+    # ofrece elegir uno (`DialogoElegirItem`) en vez de mandarlo a desmarcar.
+    ACCIONES_AUDITORIA_UNO_A_UNO = ("info", "historial", "editar")
+
+    # Nombre de cada acción EN PALABRAS DEL USUARIO: viaja al tooltip, al
+    # título de los diálogos y a la pregunta de alcance, de modo que las tres
+    # cosas la nombren igual.
+    ETIQUETAS_ACCION_AUDITORIA = {
+        "info": "Ver detalle del ítem",
+        "historial": "Historial Clínico",
+        "editar": "Editar",
+        "proveedor": "Contactar proveedor",
+    }
+
+    # Ícono de cada acción. Los tres que ya existen en el catálogo conservan el
+    # suyo: reconocer el ícono sin leer el tooltip solo funciona si es el mismo
+    # dibujo en las dos pantallas.
+    ICONOS_ACCION_AUDITORIA = {
+        "info": ft.Icons.INFO_OUTLINE_ROUNDED,
+        "historial": ft.Icons.HISTORY_ROUNDED,
+        "editar": ft.Icons.EDIT_OUTLINED,
+        "proveedor": ft.Icons.PHONE_IN_TALK_ROUNDED,
+    }
+
+    # ── Botones de acción de la fila ─────────────────────────────────────────
+    # Mismos números que el catálogo de Inventario, y por la misma razón: la
+    # etiqueta del atajo va SUPERPUESTA en la esquina del cuadrado del ícono,
+    # así que la celda de acciones no crece ni a lo ancho ni a lo alto.
+    _LADO_BOTON_ACCION = 34
+    _TAM_ICONO_ACCION = 20
+    _TAM_ETIQUETA_ATAJO = 8
 
     # Alto reservado al pie de la tabla de Auditoría para que el cluster
     # flotante de navegación vertical no se dibuje encima de la última fila
@@ -97,6 +149,19 @@ class DashboardView(BaseView):
         self._columnas_visibles_auditoria = {
             k: True for k in self._columnas_ocultables_auditoria
         }
+
+        # ── Pila de diálogos propios del área de Inicio ─────────────────────
+        # Es una PILA y no una referencia única porque un diálogo puede abrir
+        # otro encima (la pregunta de alcance abre la de "cuál de todos"): al
+        # cerrar el de arriba hay que volver a apuntar al de abajo y no
+        # perderlo. Los modales que presta la vista de Inventario (detalle,
+        # historial, formulario de edición) llevan la suya.
+        self._dialogos_inicio: list[ft.AlertDialog] = []
+
+        # Vista de Inventario que presta sus modales a las acciones de la
+        # Auditoría. Se crea al primer uso y nunca se dibuja; ver
+        # `_vista_inventario_para_modales`.
+        self._vista_inventario_auxiliar = None
 
         self._teclado = ControlTeclado(
             # Resolución tardía a propósito: pasar `self.get_current_page`
@@ -1015,6 +1080,250 @@ class DashboardView(BaseView):
     # siendo del cuerpo del Inicio, un solo dueño por eje) y los anchos siguen
     # calculados para entrar en una pantalla normal sin deslizable.
 
+    # ── Diálogos propios del área de Inicio ─────────────────────────────────
+    def _paleta_dialogo_inicio(self) -> dict:
+        """Paleta que esperan los componentes de diálogo (`dialogo_alcance`,
+        `producto_detalle_modal`): se pasa por parámetro para que el
+        componente no herede de `BaseView` ni conozca el tema."""
+        return {
+            "texto": self.get_text_color(),
+            "subtexto": self.get_subtext_color(),
+            "acento": self.get_accent_color(),
+            "fondo": self.get_card_bg(),
+            "borde": self.get_border_color(),
+        }
+
+    def _abrir_dialogo_inicio(self, dialogo: ft.AlertDialog, e=None):
+        """Apila un diálogo del Inicio y lo muestra sobre el que hubiera debajo."""
+        # Un diálogo que Flet descarte solo (tocando fuera, si no es modal)
+        # dejaría un fantasma en esta pila y el siguiente cierre descartaría el
+        # diálogo equivocado: el usuario pulsa Cancelar, no se cierra nada
+        # visible y la pantalla parece colgada. Ver `ui/components/pila_dialogos.py`.
+        sincronizar_al_descartar(dialogo, self._dialogos_inicio)
+        if dialogo not in self._dialogos_inicio:
+            self._dialogos_inicio.append(dialogo)
+        self.abrir_dialogo(dialogo, e)
+
+    def _cerrar_dialogo_inicio(self, dialogo: ft.AlertDialog = None, e=None):
+        """Descarta el diálogo del tope (o el indicado) y deja activo el de abajo."""
+        if dialogo is None:
+            dialogo = self._dialogos_inicio[-1] if self._dialogos_inicio else None
+        if dialogo is None:
+            return
+        if dialogo in self._dialogos_inicio:
+            self._dialogos_inicio.remove(dialogo)
+        # `BaseView.cerrar_dialogo` llama a `pop_dialog()` ANTES de bajar
+        # `open`, que es el orden que exige Flet 0.86.
+        self.cerrar_dialogo(dialogo, e)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ACCIONES DE UN ÍTEM DE LA AUDITORÍA
+    # ─────────────────────────────────────────────────────────────────────────
+    # Cada ícono de la fila entra por `ejecutar_accion_auditoria`, con un
+    # nombre estable y un solo argumento (el código del ítem): así los atajos
+    # de teclado se enlazan al ítem marcado sin tener que alcanzar closures
+    # anónimas enterradas en el cargador de filas, y los dos caminos —el clic y
+    # la tecla— recorren exactamente el mismo código.
+
+    def _vista_inventario_para_modales(self, e=None):
+        """Vista de Inventario auxiliar que le presta sus modales a esta lista.
+
+        Tres de las cuatro acciones ya existen en el catálogo —ver detalle,
+        historial clínico y editar—, y la de editar arrastra los tres pasos del
+        formulario con su validación y su manejo de la pila de diálogos de Flet
+        0.86. Copiarlas aquí sería duplicar centenares de líneas y, peor, dos
+        criterios que se van a desincronizar en cuanto alguien corrija uno. En
+        vez de eso se instancia UNA vez una vista de Inventario que no se
+        dibuja nunca y se le piden sus modales.
+
+        Tres detalles que no son opcionales:
+
+        1. El registro de foco se COMPARTE con el de esta vista. Sin eso, al
+           escribir en el formulario de edición las flechas desplazarían el
+           Inicio que está detrás, que es exactamente el defecto que el
+           registro existe para evitar.
+        2. `_refrescar_tabla` se sustituye por el refresco de ESTA lista: al
+           guardar el formulario, la lista que tiene que enterarse de que el
+           stock cambió es la Auditoría, no el catálogo que no está en
+           pantalla.
+        3. Su cuerpo NUNCA se monta, así que su propio `ControlTeclado` no se
+           instala y no compite por el teclado con el del Dashboard.
+        """
+        vista = self._vista_inventario_auxiliar
+        if vista is None:
+            vista = InventarioView(
+                es_admin=self.es_admin,
+                username=(self.user_info or {}).get("username"),
+                rol_usuario=(self.user_info or {}).get("role"),
+            )
+            vista._teclado.foco = self._teclado.foco
+            vista._refrescar_tabla = self._refrescar_auditoria
+            self._vista_inventario_auxiliar = vista
+        # La página puede llegar después de la construcción (la vista se
+        # instancia headless y se monta más tarde), así que se reasigna en cada
+        # uso en vez de confiar en la que hubiera al crearla.
+        pagina = self.get_current_page(e)
+        if pagina is not None:
+            try:
+                vista.page = pagina
+            except (RuntimeError, AttributeError):
+                pass
+        return vista
+
+    def _refrescar_auditoria(self, e=None):
+        """Vuelve a consultar las alertas y repinta la lista.
+
+        Lo invoca el formulario de edición al guardar: subirle la existencia a
+        un producto tiene que sacarlo de la lista de reposición en el momento,
+        no al siguiente cambio de sección."""
+        self._cargar_filas_auditoria()
+        self.safe_update(e)
+
+    def _alerta_en_pantalla(self, codigo: str) -> dict | None:
+        """Alerta de la lista por su código, o `None` si ya no está."""
+        return self._alertas_en_pantalla.get((codigo or "").strip())
+
+    def _etiqueta_item_auditoria(self, codigo: str) -> str:
+        """Descripción corta con la que se nombra un ítem ante el usuario.
+
+        El código solo no le dice nada a quien atiende el mostrador: viaja al
+        diálogo de "cuál de todos" y a los contactos del proveedor."""
+        item = self._alerta_en_pantalla(codigo) or {}
+        return item.get("nombre_corto") or item.get("descripcion_general") or codigo
+
+    def accion_info_auditoria(self, codigo: str, e=None):
+        """Ficha completa del producto, en el MISMO modal que usa el catálogo
+        (el ítem se relee con el rol, así que los costos llegan solo a quien
+        corresponde)."""
+        self._vista_inventario_para_modales(e)._abrir_modal_detalle({"codigo": codigo}, e)
+
+    def accion_historial_auditoria(self, codigo: str, e=None):
+        """Historial Clínico de Producto (ERS 3.6), exclusivo admin/gerencia."""
+        self._vista_inventario_para_modales(e)._abrir_modal_historial(codigo, e)
+
+    def accion_editar_auditoria(self, codigo: str, e=None):
+        """Formulario de edición del producto. Es la acción con la que el
+        usuario corrige el stock o el umbral que disparó la alerta."""
+        self._vista_inventario_para_modales(e)._abrir_flujo_edicion(codigo, e)
+
+    def accion_proveedor_auditoria(self, codigo: str, e=None):
+        """Contacto de reposición del proveedor del ítem."""
+        self._mostrar_contactos_proveedores([codigo], e)
+
+    def _handlers_accion_auditoria(self) -> dict:
+        return {
+            "info": self.accion_info_auditoria,
+            "historial": self.accion_historial_auditoria,
+            "editar": self.accion_editar_auditoria,
+            "proveedor": self.accion_proveedor_auditoria,
+        }
+
+    def ejecutar_accion_auditoria(self, accion: str, codigo: str, e=None) -> bool:
+        """Punto de entrada ÚNICO de los íconos de la fila y de los atajos.
+
+        Devuelve `False` cuando la acción no aplica, sin dejar nada a medias.
+        Una acción que no existe en esta lista falla ruidosamente, porque eso
+        es un error de programación y no una situación del usuario."""
+        handler = self._handlers_accion_auditoria().get(accion)
+        if handler is None:
+            raise ValueError(f"Acción de auditoría desconocida: {accion!r}")
+        # El Historial Clínico es exclusivo admin/gerencia (ERS 3.6). Se
+        # comprueba por la lista compartida y no por el rol a mano para que el
+        # criterio sea el mismo que en el catálogo de Inventario.
+        if accion in ACCIONES_SOLO_ADMIN and not self.es_admin:
+            return False
+        # Hoy el panel COMPLETO es admin/gerencia, así que sin ese rol no hay
+        # lista ni íconos; la guarda está igual porque quien entre por nombre o
+        # por teclado no pasa por los íconos.
+        if not self.es_admin:
+            return False
+        codigo = (codigo or "").strip()
+        if not codigo:
+            return False
+        handler(codigo, e)
+        return True
+
+    # ── Contactar proveedor ─────────────────────────────────────────────────
+    def _mostrar_contactos_proveedores(self, codigos, e=None):
+        """Contactos de reposición de los ítems `codigos`, UNO POR PROVEEDOR.
+
+        Criterio (es la única de las cuatro acciones que SÍ tiene sentido en
+        lote): reponer no se hace producto por producto sino llamada por
+        llamada, así que con varios ítems marcados lo útil es la lista de
+        proveedores a los que hay que llamar, cada uno con los productos que le
+        corresponden y su existencia actual. Un mismo proveedor no aparece dos
+        veces aunque se le compren cuatro de los productos marcados; la
+        agrupación la hace el servicio por `proveedores.id`."""
+        contactos = obtener_contactos_proveedores(codigos)
+        texto = self.get_text_color()
+        subtext = self.get_subtext_color()
+        accent = self.get_accent_color()
+
+        if not contactos:
+            self.show_alert_info(
+                "No se encontraron los ítems seleccionados para buscar su proveedor.", e,
+            )
+            return
+
+        bloques = []
+        for contacto in contactos:
+            sin_datos = not (contacto["telefono"] or contacto["correo"])
+            datos = " · ".join(
+                d for d in (contacto["contacto"], contacto["telefono"], contacto["correo"]) if d
+            )
+            bloques.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(
+                            contacto["empresa"], size=14, weight=ft.FontWeight.BOLD,
+                            color=texto, no_wrap=False,
+                        ),
+                        ft.Text(
+                            datos or "Sin datos de contacto cargados",
+                            size=12, color=ft.Colors.AMBER_400 if sin_datos else subtext,
+                            no_wrap=False, selectable=True,
+                        ),
+                        ft.Text("A reponer:", size=11, color=subtext),
+                        ft.Column([
+                            ft.Text(
+                                f"· {p['nombre_corto']} ({p['codigo']}) — quedan {p['existencia']:.0f}",
+                                size=12, color=texto, no_wrap=False,
+                            )
+                            for p in contacto["productos"]
+                        ], spacing=2, tight=True),
+                    ], spacing=4, tight=True),
+                    padding=10,
+                    border_radius=12,
+                    border=ft.Border.all(1, self.get_border_color()),
+                )
+            )
+
+        dialogo = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.PHONE_IN_TALK_ROUNDED, color=accent),
+                ft.Text(
+                    f"Contactar proveedor ({len(contactos)})",
+                    color=texto, weight=ft.FontWeight.BOLD,
+                ),
+            ], spacing=10),
+            content=ft.Container(
+                # Un ÚNICO scroll vertical sobre un alto acotado: un lote de
+                # quince proveedores no puede estirar el diálogo fuera de la
+                # pantalla, y dos scrolls anidados competirían por el gesto.
+                content=ft.Column(
+                    controls=bloques, spacing=10, scroll=ft.ScrollMode.AUTO,
+                ),
+                width=520,
+                height=min(420, 150 * max(1, len(bloques))),
+            ),
+            actions=[ft.TextButton(
+                "Cerrar", on_click=lambda ev: self._cerrar_dialogo_inicio(dialogo, ev),
+            )],
+            bgcolor=self.get_card_bg(),
+        )
+        self._abrir_dialogo_inicio(dialogo, e)
+
     def _build_panel_auditoria(self, accent, text_color) -> ft.Control:
         """Tarjeta de la Auditoría Preventiva: el parámetro de stock mínimo, el
         selector de modo de vista, los clusters de flechas y la lista.
@@ -1149,11 +1458,15 @@ class DashboardView(BaseView):
 
     # ── Columnas de la lista separada ───────────────────────────────────────
     def _columnas_orden_visible_auditoria(self) -> list[str]:
-        """Orden fijo de columnas, filtrando las que el usuario desactivó."""
+        """Orden fijo de columnas, filtrando las que el usuario desactivó.
+
+        "acciones" CIERRA siempre la lista y no se puede ocultar: es la columna
+        con la que se trabaja, y una lista de reposición sin sus íconos vuelve
+        a ser la tabla pasiva que el usuario pidió cambiar."""
         return [
             k for k in self._columnas_ocultables_auditoria
             if self._columnas_visibles_auditoria.get(k, True)
-        ]
+        ] + ["acciones"]
 
     def _build_columna_auditoria(self, key: str, accent, text_color) -> ft.DataColumn:
         color = accent if key in ("acciones", "marcador") else text_color
@@ -1187,7 +1500,12 @@ class DashboardView(BaseView):
     def _toggle_columna_auditoria(self, key: str, e=None):
         """Oculta o muestra una columna, impidiendo quedarse sin ninguna: una
         tabla de cero columnas no es una vista, es una pantalla en blanco."""
-        visibles = self._columnas_orden_visible_auditoria()
+        # Se cuentan solo las ocultables: "acciones" es estructural y no
+        # alcanza para que la tabla siga diciendo algo.
+        visibles = [
+            k for k in self._columnas_ocultables_auditoria
+            if self._columnas_visibles_auditoria.get(k, True)
+        ]
         if self._columnas_visibles_auditoria[key] and len(visibles) <= 1:
             self.show_alert_info("Debe quedar al menos una columna visible.", e)
             return
@@ -1259,11 +1577,11 @@ class DashboardView(BaseView):
         self._dt_auditoria.rows = []
 
         if self._modo_vista_auditoria == "separado":
-            self._cargar_separado_auditoria(alertas, accent, text_color, subtext)
+            self._cargar_separado_auditoria(alertas, accent, text_color, subtext, card_bg)
         elif self._modo_vista_auditoria == "tarjetas":
             self._cargar_tarjetas_auditoria(alertas, accent, text_color, subtext, card_bg, border)
         else:
-            self._cargar_agrupado_auditoria(alertas, accent, text_color, subtext)
+            self._cargar_agrupado_auditoria(alertas, accent, text_color, subtext, card_bg)
 
     def _envolver_tabla_auditoria(self):
         """Pone la tabla en pantalla con el cluster vertical flotando encima.
@@ -1275,6 +1593,90 @@ class DashboardView(BaseView):
         self._vista_auditoria.content = ft.Stack(
             controls=[self._tabla_auditoria_con_holgura, self._nav_v_auditoria],
         )
+
+    # ── Íconos de acción de la fila ─────────────────────────────────────────
+    def _color_accion_auditoria(self, accion: str, accent) -> str:
+        """Color del ícono. El Historial conserva el violeta que ya tiene en el
+        catálogo y "Contactar proveedor" usa el verde del teléfono: que el
+        mismo ícono tenga el mismo color en las dos pantallas es parte de
+        poder reconocerlo sin leer el tooltip."""
+        return {
+            "info": accent,
+            "historial": ft.Colors.PURPLE_300,
+            "editar": accent,
+            "proveedor": ft.Colors.GREEN_400,
+        }[accion]
+
+    def _boton_accion_auditoria(self, accion: str, codigo: str, accent, card_bg,
+                                subtext, size=None) -> ft.Control:
+        """Un ícono de la fila, cableado a `ejecutar_accion_auditoria` y con la
+        tecla que lo acciona dibujada encima.
+
+        La etiqueta del atajo va SUPERPUESTA en la esquina inferior derecha del
+        cuadrado del ícono, dentro de un `Stack` del tamaño del botón: así la
+        fila no crece y las dos vistas con tabla siguen entrando sin tocar sus
+        altos de fila. Las acciones sin tecla ("Contactar proveedor") devuelven
+        el botón pelado, sin insignia que prometa un atajo inexistente."""
+        color = self._color_accion_auditoria(accion, accent)
+        # El tooltip también lleva el atajo ("Editar (F5)"): sirve para
+        # confirmarlo, no para descubrirlo — el PDF pide que la tecla esté a la
+        # vista "para siempre ser consciente de ella".
+        descripcion = tooltip_con_atajo(self.ETIQUETAS_ACCION_AUDITORIA[accion], accion)
+        boton = ft.IconButton(
+            self.ICONOS_ACCION_AUDITORIA[accion],
+            icon_color=color,
+            icon_size=size or self._TAM_ICONO_ACCION,
+            tooltip=descripcion,
+            width=self._LADO_BOTON_ACCION,
+            height=self._LADO_BOTON_ACCION,
+            style=ft.ButtonStyle(padding=0),
+            on_click=lambda ev, a=accion, c=codigo: self.ejecutar_accion_auditoria(a, c, ev),
+        )
+        etiqueta = etiqueta_atajo(accion)
+        if not etiqueta:
+            return boton
+
+        insignia = ft.Container(
+            content=ft.Text(
+                etiqueta,
+                size=self._TAM_ETIQUETA_ATAJO,
+                weight=ft.FontWeight.BOLD,
+                color=color,
+                no_wrap=True,
+            ),
+            # Fondo OPACO (el de la tarjeta) más borde y texto del color del
+            # ícono: así la tecla se lee sobre el dibujo del ícono y en los dos
+            # temas, sin tener que elegir un color de texto por tema. Un fondo
+            # translúcido dejaba el ícono asomando por detrás de la etiqueta.
+            bgcolor=card_bg,
+            border=ft.Border.all(1, color),
+            border_radius=4,
+            padding=ft.Padding.symmetric(horizontal=2),
+            right=0,
+            bottom=0,
+        )
+        return ft.Stack(
+            controls=[boton, insignia],
+            width=self._LADO_BOTON_ACCION,
+            height=self._LADO_BOTON_ACCION,
+        )
+
+    def _botones_accion_auditoria(self, item: dict, accent, card_bg, subtext,
+                                  size=None) -> list[ft.Control]:
+        """Los íconos del ítem, en el orden de los atajos (F1 info, F4
+        historial, F5 editar) y con "Contactar proveedor" al final, que es el
+        que no tiene tecla."""
+        codigo = item["codigo"]
+        return [
+            self._boton_accion_auditoria(accion, codigo, accent, card_bg, subtext, size)
+            for accion in self.ACCIONES_AUDITORIA
+            # El Historial Clínico no se dibuja para quien no puede abrirlo:
+            # un ícono que rechaza el clic se lee como un cuelgue.
+            if not (accion in ACCIONES_SOLO_ADMIN and not self.es_admin)
+        ]
+
+    def _celda_acciones_auditoria(self, item: dict, accent, card_bg, subtext) -> ft.Control:
+        return ft.Row(self._botones_accion_auditoria(item, accent, card_bg, subtext), spacing=0)
 
     def _chip_auditoria(self, texto: str, color: str) -> ft.Container:
         """Etiqueta compacta sobre fondo tenue del mismo color (código,
@@ -1294,7 +1696,7 @@ class DashboardView(BaseView):
         return "umbral propio" if item.get("origen") == "producto" else "umbral global"
 
     # ── Modo "separado": una columna por campo ──────────────────────────────
-    def _cargar_separado_auditoria(self, alertas, accent, text_color, subtext):
+    def _cargar_separado_auditoria(self, alertas, accent, text_color, subtext, card_bg):
         """Una columna por campo, con el selector de columnas para esconder lo
         que no interese. Es el formato para revisar dato por dato."""
         self._dt_auditoria.data_row_min_height = 48
@@ -1327,6 +1729,7 @@ class DashboardView(BaseView):
             "contacto": lambda a: texto(
                 f"{a['proveedor_contacto']} · {a['proveedor_telefono']}", subtext,
             ),
+            "acciones": lambda a: self._celda_acciones_auditoria(a, accent, card_bg, subtext),
         }
 
         columnas = self._columnas_orden_visible_auditoria()
@@ -1337,7 +1740,7 @@ class DashboardView(BaseView):
         self._envolver_tabla_auditoria()
 
     # ── Modo "agrupado": varios datos por celda, en dos líneas ──────────────
-    def _cargar_agrupado_auditoria(self, alertas, accent, text_color, subtext):
+    def _cargar_agrupado_auditoria(self, alertas, accent, text_color, subtext, card_bg):
         """Varios datos por celda y en dos líneas, SIN deslizable horizontal:
         los anchos suman ~1120 px, el ancho útil de una pantalla normal. Es el
         formato con el que esta ventana ya se mostraba, y el que deja leer la
@@ -1350,6 +1753,7 @@ class DashboardView(BaseView):
             ft.DataColumn(ft.Text("Stock Actual", color=text_color, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Mínimo", color=text_color, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color, weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Acciones", color=accent, weight=ft.FontWeight.BOLD)),
         ]
 
         filas = []
@@ -1413,12 +1817,19 @@ class DashboardView(BaseView):
                 padding=ft.Padding.symmetric(vertical=6),
             )
 
+            celda_acciones = ft.Container(
+                content=self._celda_acciones_auditoria(item, accent, card_bg, subtext),
+                width=150,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
             filas.append(ft.DataRow(cells=[
                 ft.DataCell(celda_producto),
                 ft.DataCell(celda_clasificacion),
                 ft.DataCell(celda_stock),
                 ft.DataCell(celda_minimo),
                 ft.DataCell(celda_proveedor),
+                ft.DataCell(celda_acciones),
             ]))
 
         self._dt_auditoria.rows = filas
@@ -1495,6 +1906,8 @@ class DashboardView(BaseView):
                         ),
                     ], spacing=1, expand=True),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(height=4),
+                self._celda_acciones_auditoria(item, accent, card_bg, subtext),
             ], spacing=6),
             padding=12, border_radius=14, width=320,
             bgcolor=card_bg,
