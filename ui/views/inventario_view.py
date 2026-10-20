@@ -1598,6 +1598,289 @@ class InventarioView(BaseView):
                 ft.Colors.AMBER_700, e
             )
 
+    def _ir_a_ventas(self, e=None) -> bool:
+        """Lleva la pantalla a Ventas SIN tocar ningún carrito.
+
+        El Flujo Directo de un ítem sale por `on_procesar_venta`, pero ese
+        callback del Dashboard (`procesar_venta_desde_inventario`) crea un
+        carrito nuevo y mete el producto él mismo: para un lote que ya se
+        añadió al carrito que el usuario eligió, volvería a crear uno y a
+        duplicar el renglón, tirando por tierra justo la pregunta que el
+        usuario pidió que se le hiciera. Así que el lote navega por el mismo
+        camino que el enlace "IR A VENTAS" del aviso de un ítem: la vista de
+        ruta de arriba cambia de sección, o en su defecto se va a la ruta.
+
+        Devuelve False si no hay por dónde navegar (vista construida fuera del
+        Dashboard), para que quien llame pueda avisar en vez de dejar al
+        usuario esperando una pantalla que no va a llegar.
+        """
+        p = self._get_page(e)
+        if p is None:
+            return False
+        vistas = getattr(p, "views", None) or []
+        top_view = vistas[-1] if vistas else None
+        if hasattr(top_view, "handle_nav_change"):
+            top_view.handle_nav_change("Ventas")
+            return True
+        if hasattr(p, "go"):
+            p.go("/ventas")
+            return True
+        return False
+
+    @staticmethod
+    def _etiqueta_carrito(cinfo: dict) -> str:
+        """Cómo se nombra un carrito en un desplegable de destino.
+
+        Lleva el nombre, a quién atiende y cuántos renglones acumula: sin el
+        conteo, dos carritos del mismo cliente se leen idénticos y elegir
+        destino se vuelve una lotería.
+        """
+        cliente = cinfo.get("cliente")
+        n_items = len(cinfo.get("items", []))
+        quien = cliente["nombre"] if cliente else "Sin cliente"
+        return f"{cinfo['nombre']} — {quien} ({n_items} ítem{'s' if n_items != 1 else ''})"
+
+    def _etiquetas_de_items(self, codigos) -> dict:
+        """Descripción corta de cada código, para las listas de los diálogos.
+
+        Un código solo ("PRD-0012") no le dice nada a quien atiende el
+        mostrador: en una lista de la que hay que ELEGIR, el nombre del
+        producto es lo único que permite elegir sin equivocarse.
+        """
+        etiquetas = {}
+        for codigo in codigos or []:
+            prod = self._producto_en_pantalla(codigo) or {}
+            etiquetas[codigo] = (
+                prod.get("nombre_referencia_corto")
+                or prod.get("descripcion_general")
+                or prod.get("referencia")
+                or codigo
+            )
+        return etiquetas
+
+    # ── Añadir VARIOS ítems al carrito (F2 y F3 en lote) ─────────────────────
+    # Clave del desplegable que significa "hacer un carrito nuevo"; misma
+    # convención que el modal de un solo ítem.
+    _NUEVO_CARRITO = "__nuevo__"
+
+    # Cantidad con la que entra cada ítem del lote. Es 1 por la misma razón que
+    # el Flujo Directo de un ítem (`_procesar_venta_directo` también carga 1):
+    # pedir quince cantidades en un diálogo convierte "añadir lo que marqué" en
+    # un formulario, y cada renglón se ajusta después en Ventas, que es donde
+    # el usuario va a cerrar la venta de todas formas.
+    _CANTIDAD_POR_ITEM_DEL_LOTE = 1.0
+
+    def _abrir_modal_destino_carrito_lote(self, codigos, ir_a_ventas: bool, e=None):
+        """Pregunta a QUÉ carrito va el lote ANTES de tocar nada.
+
+        Corrección expresa del usuario del proyecto: "a veces puede que se
+        agreguen los artículos y no se quiera agregar al carrito que está ahí,
+        sino que se quiera agregar a uno nuevo o a otro. Entonces debes
+        preguntar". Así que F2 y F3 en lote no escriben en el carrito activo
+        por omisión, aunque sea el destino más probable.
+
+        El desplegable es el mismo mecanismo del modal de un ítem (el activo,
+        otro de los abiertos, o uno nuevo) pero SIN el panel de cliente: un
+        lote de quince artículos no es el momento de buscar o crear al
+        cliente, y el carrito recién hecho se vincula en Ventas, que es donde
+        el usuario va a terminar.
+        """
+        from services.cart_manager import (
+            obtener_id_carrito_activo, obtener_todos_los_carritos,
+        )
+
+        codigos = [c for c in (codigos or []) if c]
+        if not codigos:
+            return None
+
+        sid = self.get_session_id(e)
+        carritos = obtener_todos_los_carritos(sid)
+        activo = obtener_id_carrito_activo(sid)
+
+        dd_destino = ft.Dropdown(
+            label="Enviar a Carrito",
+            # Arranca en el activo porque es el destino más probable, pero la
+            # decisión no se da por hecha: este diálogo no se salta nunca.
+            value=activo,
+            options=(
+                [ft.dropdown.Option(self._NUEVO_CARRITO, "➕ Crear nuevo carrito")]
+                + [
+                    ft.dropdown.Option(
+                        cid,
+                        self._etiqueta_carrito(cinfo)
+                        + (" · activo" if cid == activo else ""),
+                    )
+                    for cid, cinfo in carritos.items()
+                ]
+            ),
+            border_radius=12,
+        )
+
+        etiquetas = self._etiquetas_de_items(codigos)
+        resumen = ft.Column(
+            [
+                ft.Text(
+                    f"{etiquetas[c]} ({c})",
+                    size=12, color=self.get_subtext_color(), no_wrap=False,
+                )
+                for c in codigos
+            ],
+            spacing=2,
+            tight=True,
+            # Lote largo: la lista es la dueña de su propio eje vertical, para
+            # que el diálogo no crezca sin fin (un solo dueño por eje).
+            scroll=ft.ScrollMode.AUTO,
+            height=min(160, 22 * max(1, len(codigos))),
+        )
+
+        def confirmar(ev=None):
+            # Se CIERRA antes de ejecutar: los avisos del resultado se apilan
+            # encima, y un diálogo muerto debajo dejaría al usuario mirando
+            # botones que ya no responden (ver `dialogo_alcance`).
+            self._close_dialog(ev if ev is not None else e, dialog=dlg)
+            self._agregar_lote_a_carrito(
+                codigos, dd_destino.value, ir_a_ventas,
+                ev if ev is not None else e,
+            )
+
+        def cancelar(ev=None):
+            self._close_dialog(ev if ev is not None else e, dialog=dlg)
+
+        nombre_accion = "Procesar Venta" if ir_a_ventas else "Añadir al Carrito"
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(
+                    ft.Icons.POINT_OF_SALE if ir_a_ventas else ft.Icons.ADD_SHOPPING_CART,
+                    color=ft.Colors.BLUE_400 if ir_a_ventas else ft.Colors.GREEN_400,
+                ),
+                ft.Text(
+                    f"{nombre_accion} — {len(codigos)} ítems",
+                    weight=ft.FontWeight.BOLD, color=self.get_text_color(),
+                ),
+            ], spacing=10),
+            content=ft.Column([
+                ft.Text(
+                    "¿A qué carrito van los ítems marcados? Puede sumarlos al "
+                    "carrito que ya está abierto, a otro de los abiertos, o "
+                    "empezar uno nuevo.",
+                    size=13, color=self.get_text_color(), no_wrap=False,
+                ),
+                dd_destino,
+                ft.Divider(height=6),
+                ft.Text(
+                    "Se añadirá 1 unidad de cada uno:",
+                    size=12, weight=ft.FontWeight.W_600, color=self.get_text_color(),
+                ),
+                resumen,
+            ], spacing=10, tight=True, width=440),
+            actions=[
+                ft.TextButton("Cancelar", on_click=cancelar),
+                ft.Button(
+                    content=ft.Text(nombre_accion, weight=ft.FontWeight.BOLD),
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12),
+                    ),
+                    on_click=confirmar,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            bgcolor=self.get_card_bg(),
+            # Detrás de este diálogo no hay una clase componente (como sí la
+            # hay en `dialogo_alcance`), así que los controles por los que la
+            # vista y las pruebas lo alcanzan viajan en `data`, siguiendo el
+            # mismo convenio.
+            data={
+                "destino": dd_destino,
+                "codigos": tuple(codigos),
+                "ir_a_ventas": ir_a_ventas,
+                "confirmar": confirmar,
+                "cancelar": cancelar,
+            },
+        )
+        self._open_dialog(dlg, e)
+        return dlg
+
+    def _agregar_lote_a_carrito(
+        self, codigos, destino: str, ir_a_ventas: bool, e=None,
+    ) -> list[str]:
+        """Añade el lote al carrito elegido y avisa de lo que quedó fuera.
+
+        EXISTENCIA INSUFICIENTE — decisión documentada: se añaden LOS QUE SE
+        PUEDA y se avisa de los que no, en vez de rechazar el lote entero.
+        Rechazarlo obligaría al usuario a adivinar cuál de los quince códigos
+        es el culpable, desmarcarlo y volver a empezar; y lo que quería —cobrar
+        los catorce que sí hay— es justo lo que no conseguiría. El aviso nombra
+        los que quedaron fuera para que la omisión no pase desapercibida: una
+        omisión silenciosa en una venta se descubre en la caja.
+        """
+        from services.cart_manager import (
+            agregar_o_actualizar_producto, cambiar_carrito_activo,
+            crear_nuevo_carrito, obtener_carrito_activo,
+            obtener_todos_los_carritos,
+        )
+
+        cantidad = self._CANTIDAD_POR_ITEM_DEL_LOTE
+        aptos, omitidos = [], []
+        for codigo in codigos or []:
+            prod = self._producto_en_pantalla(codigo)
+            # Un código sin producto (otro camino lo borró entre el marcado y
+            # la confirmación) cuenta como omitido, no como error del lote.
+            if not prod or float(prod.get("existencia", 0) or 0) < cantidad:
+                omitidos.append(codigo)
+                continue
+            aptos.append(prod)
+
+        if not aptos:
+            self._snack(
+                "Ninguno de los ítems marcados tiene existencia disponible: "
+                "no se añadió nada al carrito.",
+                ft.Colors.RED_700, e,
+            )
+            return []
+
+        sid = self.get_session_id(e)
+        if destino == self._NUEVO_CARRITO:
+            # El carrito nuevo se crea DESPUÉS de comprobar las existencias:
+            # crearlo antes dejaría un carrito vacío colgado en la sesión
+            # cuando no hubiera nada que poner dentro.
+            carrito = crear_nuevo_carrito(sid)
+        else:
+            # Un destino que ya no existe (otro camino lo eliminó) cae al
+            # activo en vez de tumbar la acción.
+            carrito = obtener_todos_los_carritos(sid).get(destino) or obtener_carrito_activo(sid)
+
+        for prod in aptos:
+            agregar_o_actualizar_producto(
+                sid, prod, cantidad=cantidad, id_carrito=carrito["id"],
+            )
+        # El destino elegido pasa a ser el activo: es el carrito en el que el
+        # usuario acaba de decidir trabajar, y Ventas abre el activo.
+        cambiar_carrito_activo(sid, carrito["id"])
+
+        agregados = [p["codigo"] for p in aptos]
+        plural = "ítems" if len(agregados) != 1 else "ítem"
+        self._snack(
+            f"{len(agregados)} {plural} añadidos a {carrito['id']}.",
+            ft.Colors.GREEN_700, e,
+        )
+        if omitidos:
+            self._snack(
+                "Quedaron fuera (sin existencia suficiente o ya no están en el "
+                f"inventario): {', '.join(omitidos)}.",
+                ft.Colors.AMBER_700, e,
+            )
+        # La diferencia entre las dos acciones: F3 se queda en Inventario y F2
+        # ("Procesar Venta") lleva además a Ventas.
+        if ir_a_ventas and not self._ir_a_ventas(e):
+            self._snack(
+                "Esta acción requiere el Dashboard (navegación a Ventas no "
+                "disponible en este contexto).",
+                ft.Colors.AMBER_700, e,
+            )
+        return agregados
+
     def _abrir_modal_agregar_carrito(self, prod: dict, e=None):
         """Abre un diálogo emergente para elegir a qué carrito enviar el
         producto: un carrito ya guardado (recuperándolo por su cliente) o uno
@@ -1616,16 +1899,10 @@ class InventarioView(BaseView):
 
         NUEVO_CARRITO = "__nuevo__"
 
-        def _etiqueta_carrito(cinfo: dict) -> str:
-            cliente = cinfo.get("cliente")
-            n_items = len(cinfo.get("items", []))
-            quien = cliente["nombre"] if cliente else "Sin cliente"
-            return f"{cinfo['nombre']} — {quien} ({n_items} ítem{'s' if n_items != 1 else ''})"
-
         carritos_dict = obtener_todos_los_carritos(sid)
         opciones_carrito = [
             ft.dropdown.Option(NUEVO_CARRITO, "➕ Crear nuevo carrito")
-        ] + [ft.dropdown.Option(cid, _etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
+        ] + [ft.dropdown.Option(cid, self._etiqueta_carrito(cinfo)) for cid, cinfo in carritos_dict.items()]
 
         dd_carrito_destino = ft.Dropdown(
             label="Enviar a Carrito",
