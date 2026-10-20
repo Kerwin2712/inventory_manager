@@ -6,6 +6,7 @@ from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
 from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.scroll_nav import build_floating_v_nav, build_inline_h_nav
+from ui.components.seleccion_lista import SeleccionLista
 from ui.components.teclado_nav import (
     ACCIONES_SOLO_ADMIN, ControlTeclado, etiqueta_atajo, tooltip_con_atajo,
 )
@@ -128,6 +129,7 @@ class DashboardView(BaseView):
         # Mismo criterio que el catálogo: "marcador" y "acciones" son
         # estructurales y por eso no figuran entre las ocultables.
         self._columnas_ocultables_auditoria = [
+            # "marcador" y "acciones" NO figuran aquí: son estructurales.
             "codigo", "referencia", "descripcion", "nombre_corto",
             "departamento", "marca", "existencia", "minimo",
             "proveedor", "contacto",
@@ -163,6 +165,19 @@ class DashboardView(BaseView):
         # `_vista_inventario_para_modales`.
         self._vista_inventario_auxiliar = None
 
+        # ── Marcador de selección de la lista de Auditoría ──────────────────
+        # El modelo vive en `ui.components.seleccion_lista`, el MISMO que usan
+        # el catálogo de Inventario, el carrito de Ventas y las Deudas por
+        # Cobrar: la mecánica del marcador tiene que ser idéntica en las cuatro
+        # listas, y esta vista solo traduce clics y teclas a sus operaciones.
+        self._seleccion_auditoria = SeleccionLista(
+            on_cambio=self._al_cambiar_seleccion_auditoria,
+        )
+        # True mientras se está repintando la lista: corta el repintado que el
+        # modelo dispararía al descartar marcados fantasma desde dentro del
+        # propio repintado (ver `_descartar_marcados_fantasma`).
+        self._cargando_filas_auditoria = False
+
         self._teclado = ControlTeclado(
             # Resolución tardía a propósito: pasar `self.get_current_page`
             # directamente congelaría el método que exista en este instante,
@@ -172,6 +187,11 @@ class DashboardView(BaseView):
             obtener_pagina=lambda e=None: self.get_current_page(e),
             destino_vertical=lambda: self._scroll_inicio_v,
             destino_horizontal=lambda: self._scroll_inicio_h,
+            # Modelo de selección de la lista de Auditoría: es lo que hace que
+            # [Esc] limpie el marcador y que las teclas de función sepan si hay
+            # un ítem sobre el que actuar.
+            seleccion=self._seleccion_auditoria,
+            al_limpiar=self.limpiar_seleccion_auditoria,
             # Identidad logica de la vista: el Dashboard la reemplaza en cada
             # repintado, asi que el control nuevo RELEVA al de la instancia
             # anterior en vez de encadenarse a el. Sin esto la cadena de
@@ -241,6 +261,15 @@ class DashboardView(BaseView):
         # el teclado se lo cede a la vista anidada, que tiene los suyos.
         self._scroll_inicio_v = None
         self._scroll_inicio_h = None
+
+        # Lo MISMO vale para la selección de la Auditoría: al cambiar de
+        # sección la lista deja de estar montada, y un ítem que siguiera
+        # marcado haría que una tecla de función abriera un modal sobre una
+        # lista que el usuario no tiene delante. Se olvida solo al SALIR del
+        # Inicio, nunca al repintarlo: ahí el marcado es justamente lo que hay
+        # que conservar.
+        if self.current_section != "Inicio":
+            self._olvidar_seleccion_auditoria()
 
         # Selección del contenido principal según la sección activa
         if self.current_section == "Ventas":
@@ -1080,6 +1109,89 @@ class DashboardView(BaseView):
     # siendo del cuerpo del Inicio, un solo dueño por eje) y los anchos siguen
     # calculados para entrar en una pantalla normal sin deslizable.
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # MARCADOR Y SOMBREADO DE LA FILA (igual que en el catálogo)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Mecánica, tal como la pidió el usuario del proyecto ("marcador y
+    # selección múltiple: sí, igual que Inventario"):
+    #   - Un clic en cualquier parte de la fila (no solo en la casilla) marca
+    #     el ítem: se sombrea y la casilla izquierda queda marcada. El marcado
+    #     sobrevive al desplazamiento horizontal porque es estado del modelo,
+    #     no del control que recibió el clic.
+    #   - Solo hay DOS formas de deseleccionar: clic DENTRO de la casilla
+    #     marcada, o [Esc].
+    #   - Con un ítem marcado, solo ese ítem puede accionar sus íconos; los de
+    #     las demás filas quedan deshabilitados VISIBLEMENTE.
+    #   - Sin nada marcado, todo funciona como antes: es la regla "Importante"
+    #     del PDF y la más fácil de romper al cablear la lista.
+    def _al_cambiar_seleccion_auditoria(self):
+        """Repinta la lista cuando la selección cambió DE VERDAD.
+
+        Lo llama el modelo (`SeleccionLista.on_cambio`), así que cualquier
+        camino que altere la selección —clic, casilla, [Esc], cambio de
+        sección— termina repintando por aquí y no hay que acordarse en cada
+        handler. Se repinta SOLO la lista y no el Inicio entero: una selección
+        no cambia la tasa BCV ni las ventas del día, y un `rebuild_ui()` por
+        cada clic en una fila volvería a consultar la base cuatro veces."""
+        if self._cargando_filas_auditoria:
+            # Ya estamos dentro del repintado (ver `_descartar_marcados_fantasma`).
+            return
+        if self.current_section != "Inicio" or not hasattr(self, "_vista_auditoria"):
+            # Fuera del Inicio no hay lista que repintar: el cuerpo que la
+            # contenía ya no está montado.
+            return
+        self._cargar_filas_auditoria()
+        self.safe_update()
+
+    def _olvidar_seleccion_auditoria(self) -> None:
+        """Deja la selección como recién abierta la pantalla.
+
+        Se usa al salir del Inicio. También se vacía el índice de alertas: un
+        índice de una lista desmontada solo puede servir para accionar sobre
+        algo que ya no está en pantalla."""
+        self._alertas_en_pantalla = {}
+        self._seleccion_auditoria.limpiar()
+
+    def seleccionar_item_auditoria(self, codigo: str, e=None):
+        """Clic en cualquier parte de la fila: marca (nunca desmarca).
+
+        Reintenta `instalar()` (es idempotente) porque la página puede haber
+        llegado después de `get_body()`, y [Esc] es justamente la tecla que
+        hace falta en cuanto hay algo marcado."""
+        self._teclado.instalar(e)
+        self._seleccion_auditoria.seleccionar(codigo)
+
+    def alternar_item_auditoria(self, codigo: str, e=None):
+        """Clic DENTRO de la casilla marcadora: marca o desmarca."""
+        self._teclado.instalar(e)
+        self._seleccion_auditoria.alternar(codigo)
+
+    def limpiar_seleccion_auditoria(self, e=None):
+        """Quita la selección (tecla [Esc] o botón de la barra)."""
+        self._seleccion_auditoria.limpiar()
+        self.safe_update(e)
+
+    def _descartar_marcados_fantasma(self) -> None:
+        """Olvida los ítems marcados que ya no están en la lista.
+
+        Sin esto, el código de un producto que salió de la reposición —porque
+        el usuario acaba de subirle el stock— seguiría marcado y bloquearía los
+        íconos de todas las filas vivas por una selección que no se ve en
+        ninguna parte. El repintado que el modelo dispararía se corta con
+        `_cargando_filas_auditoria`: ya estamos dentro del repintado, y volver
+        a entrar sería recursión."""
+        fantasmas = [
+            c for c in self._seleccion_auditoria.seleccionados
+            if c not in self._alertas_en_pantalla
+        ]
+        if not fantasmas:
+            return
+        self._cargando_filas_auditoria = True
+        try:
+            self._seleccion_auditoria.descartar(fantasmas)
+        finally:
+            self._cargando_filas_auditoria = False
+
     # ── Diálogos propios del área de Inicio ─────────────────────────────────
     def _paleta_dialogo_inicio(self) -> dict:
         """Paleta que esperan los componentes de diálogo (`dialogo_alcance`,
@@ -1240,6 +1352,15 @@ class DashboardView(BaseView):
         codigo = (codigo or "").strip()
         if not codigo:
             return False
+        # Se vuelve a comprobar la regla del marcador aunque el ícono ya venga
+        # deshabilitado: tiene que valer también para quien invoque la acción
+        # por teclado o por código, no solo para quien hace clic.
+        if not self._seleccion_auditoria.puede_accionar(codigo):
+            self.show_alert_info(
+                "Hay otro ítem marcado. Haga clic en su casilla o pulse Esc para liberarlo.",
+                e,
+            )
+            return False
         handler(codigo, e)
         return True
 
@@ -1366,6 +1487,11 @@ class DashboardView(BaseView):
             columns=[self._build_columna_auditoria(k, accent, text_color)
                      for k in self._columnas_orden_visible_auditoria()],
             rows=[],
+            # Explícito aunque sea el valor por omisión: todas las filas llevan
+            # `on_select_change` (clic en cualquier parte de la fila), y con la
+            # columna de casillas propia de la tabla activada se dibujaría una
+            # SEGUNDA casilla junto a nuestro marcador.
+            show_checkbox_column=False,
         )
         # ── Separación de ejes ──────────────────────────────────────────────
         # Esta Row es la ÚNICA dueña del eje horizontal de la lista, y el
@@ -1460,13 +1586,19 @@ class DashboardView(BaseView):
     def _columnas_orden_visible_auditoria(self) -> list[str]:
         """Orden fijo de columnas, filtrando las que el usuario desactivó.
 
-        "acciones" CIERRA siempre la lista y no se puede ocultar: es la columna
-        con la que se trabaja, y una lista de reposición sin sus íconos vuelve
-        a ser la tabla pasiva que el usuario pidió cambiar."""
-        return [
-            k for k in self._columnas_ocultables_auditoria
-            if self._columnas_visibles_auditoria.get(k, True)
-        ] + ["acciones"]
+        El "marcador" ABRE siempre la lista y "acciones" la CIERRA, y ninguna
+        de las dos se puede ocultar. La razón de ser del marcador es que, al
+        desplazarse a la derecha, el usuario deje de confundir las filas entre
+        sí: tiene que ser la primera columna. Y una lista de reposición sin sus
+        íconos vuelve a ser la tabla pasiva que el usuario pidió cambiar."""
+        return (
+            ["marcador"]
+            + [
+                k for k in self._columnas_ocultables_auditoria
+                if self._columnas_visibles_auditoria.get(k, True)
+            ]
+            + ["acciones"]
+        )
 
     def _build_columna_auditoria(self, key: str, accent, text_color) -> ft.DataColumn:
         color = accent if key in ("acciones", "marcador") else text_color
@@ -1547,6 +1679,7 @@ class DashboardView(BaseView):
         # nombre (un atajo de teclado no tiene ninguna fila de la cual sacar el
         # ítem) resuelve el producto por aquí.
         self._alertas_en_pantalla = {a["codigo"]: a for a in alertas}
+        self._descartar_marcados_fantasma()
 
         # El selector de columnas solo tiene sentido en el modo separado.
         if hasattr(self, "_btn_columnas_auditoria"):
@@ -1616,8 +1749,14 @@ class DashboardView(BaseView):
         cuadrado del ícono, dentro de un `Stack` del tamaño del botón: así la
         fila no crece y las dos vistas con tabla siguen entrando sin tocar sus
         altos de fila. Las acciones sin tecla ("Contactar proveedor") devuelven
-        el botón pelado, sin insignia que prometa un atajo inexistente."""
+        el botón pelado, sin insignia que prometa un atajo inexistente.
+
+        `disabled` es la mitad VISIBLE de la regla del marcador: con otro ítem
+        marcado, el ícono se ve apagado en vez de aceptar el clic y no hacer
+        nada, porque un botón que ignora en silencio se lee como un cuelgue de
+        la aplicación. El tooltip dice además por qué."""
         color = self._color_accion_auditoria(accion, accent)
+        habilitado = self._seleccion_auditoria.puede_accionar(codigo)
         # El tooltip también lleva el atajo ("Editar (F5)"): sirve para
         # confirmarlo, no para descubrirlo — el PDF pide que la tecla esté a la
         # vista "para siempre ser consciente de ella".
@@ -1626,7 +1765,11 @@ class DashboardView(BaseView):
             self.ICONOS_ACCION_AUDITORIA[accion],
             icon_color=color,
             icon_size=size or self._TAM_ICONO_ACCION,
-            tooltip=descripcion,
+            tooltip=(
+                descripcion if habilitado
+                else f"{descripcion} (hay otro ítem marcado)"
+            ),
+            disabled=not habilitado,
             width=self._LADO_BOTON_ACCION,
             height=self._LADO_BOTON_ACCION,
             style=ft.ButtonStyle(padding=0),
@@ -1636,12 +1779,13 @@ class DashboardView(BaseView):
         if not etiqueta:
             return boton
 
+        color_etiqueta = color if habilitado else subtext
         insignia = ft.Container(
             content=ft.Text(
                 etiqueta,
                 size=self._TAM_ETIQUETA_ATAJO,
                 weight=ft.FontWeight.BOLD,
-                color=color,
+                color=color_etiqueta,
                 no_wrap=True,
             ),
             # Fondo OPACO (el de la tarjeta) más borde y texto del color del
@@ -1649,7 +1793,7 @@ class DashboardView(BaseView):
             # temas, sin tener que elegir un color de texto por tema. Un fondo
             # translúcido dejaba el ícono asomando por detrás de la etiqueta.
             bgcolor=card_bg,
-            border=ft.Border.all(1, color),
+            border=ft.Border.all(1, color_etiqueta),
             border_radius=4,
             padding=ft.Padding.symmetric(horizontal=2),
             right=0,
@@ -1677,6 +1821,49 @@ class DashboardView(BaseView):
 
     def _celda_acciones_auditoria(self, item: dict, accent, card_bg, subtext) -> ft.Control:
         return ft.Row(self._botones_accion_auditoria(item, accent, card_bg, subtext), spacing=0)
+
+    # ── Casilla marcadora y sombreado de la fila ────────────────────────────
+    def _celda_marcador_auditoria(self, item: dict, accent, subtext) -> ft.Control:
+        """La casilla izquierda. El ícono dice en qué modo está la selección
+        (redondo para el marcador único, cuadrado para el lote) para que el
+        usuario no tenga que mirar el conmutador."""
+        marcado = self._seleccion_auditoria.esta_seleccionado(item["codigo"])
+        if self._seleccion_auditoria.es_multiple:
+            icono = ft.Icons.CHECK_BOX_ROUNDED if marcado else ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED
+        else:
+            icono = ft.Icons.RADIO_BUTTON_CHECKED if marcado else ft.Icons.RADIO_BUTTON_UNCHECKED
+        return ft.Container(
+            content=ft.Icon(icono, color=accent if marcado else subtext, size=20),
+            width=34,
+            alignment=ft.Alignment.CENTER,
+            tooltip=(
+                "Clic para quitar la marca de este ítem"
+                if marcado else "Clic para marcar este ítem"
+            ),
+        )
+
+    def _celda_marcador_dc_auditoria(self, item: dict, accent, subtext) -> ft.DataCell:
+        """La casilla atiende su propio toque: es la única celda de la fila que
+        DESMARCA (`alternar`), mientras el resto de la fila solo marca."""
+        return ft.DataCell(
+            self._celda_marcador_auditoria(item, accent, subtext),
+            on_tap=lambda ev, cod=item["codigo"]: self.alternar_item_auditoria(cod, ev),
+        )
+
+    def _construir_fila_auditoria(self, item: dict, celdas: list[ft.DataCell], accent) -> ft.DataRow:
+        """Fila con su sombreado derivado del MODELO y no de una bandera local:
+        así sobrevive al desplazamiento horizontal y a los repintados."""
+        marcado = self._seleccion_auditoria.esta_seleccionado(item["codigo"])
+        return ft.DataRow(
+            cells=celdas,
+            selected=marcado,
+            color=ft.Colors.with_opacity(0.22, accent) if marcado else None,
+            # Hace la fila COMPLETA sensible al clic ("no importa si es fuera
+            # de la casilla"); la celda del marcador tiene su propio `on_tap` y
+            # por eso no cae aquí.
+            on_select_change=lambda ev, cod=item["codigo"]: self.seleccionar_item_auditoria(cod, ev),
+            data=item["codigo"],
+        )
 
     def _chip_auditoria(self, texto: str, color: str) -> ft.Container:
         """Etiqueta compacta sobre fondo tenue del mismo color (código,
@@ -1734,7 +1921,11 @@ class DashboardView(BaseView):
 
         columnas = self._columnas_orden_visible_auditoria()
         self._dt_auditoria.rows = [
-            ft.DataRow(cells=[ft.DataCell(constructores[k](a)) for k in columnas])
+            self._construir_fila_auditoria(a, [
+                self._celda_marcador_dc_auditoria(a, accent, subtext) if k == "marcador"
+                else ft.DataCell(constructores[k](a))
+                for k in columnas
+            ], accent)
             for a in alertas
         ]
         self._envolver_tabla_auditoria()
@@ -1748,6 +1939,9 @@ class DashboardView(BaseView):
         self._dt_auditoria.data_row_min_height = 72
         self._dt_auditoria.data_row_max_height = 95
         self._dt_auditoria.columns = [
+            # El marcador también abre la lista agrupada: la confusión de filas
+            # al moverse a la derecha es la misma en los tres formatos.
+            self._build_columna_auditoria("marcador", accent, text_color),
             ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Stock Actual", color=text_color, weight=ft.FontWeight.BOLD)),
@@ -1823,14 +2017,15 @@ class DashboardView(BaseView):
                 padding=ft.Padding.symmetric(vertical=6),
             )
 
-            filas.append(ft.DataRow(cells=[
+            filas.append(self._construir_fila_auditoria(item, [
+                self._celda_marcador_dc_auditoria(item, accent, subtext),
                 ft.DataCell(celda_producto),
                 ft.DataCell(celda_clasificacion),
                 ft.DataCell(celda_stock),
                 ft.DataCell(celda_minimo),
                 ft.DataCell(celda_proveedor),
                 ft.DataCell(celda_acciones),
-            ]))
+            ], accent))
 
         self._dt_auditoria.rows = filas
         self._envolver_tabla_auditoria()
@@ -1854,10 +2049,23 @@ class DashboardView(BaseView):
         )
 
     def _tarjeta_auditoria(self, item, accent, text_color, subtext, card_bg, border) -> ft.Control:
-        """Tarjeta de un producto a reponer."""
+        """Tarjeta de un producto a reponer.
+
+        El marcador también funciona aquí, y con la misma mecánica que en las
+        tablas: un clic en cualquier parte de la tarjeta marca, un clic en la
+        casilla alterna. Sin eso, cambiar a tarjetas sería perder la selección
+        y las acciones sobre lo marcado, y el usuario leería el modo de vista
+        como tres pantallas distintas en vez de tres formatos de la misma."""
+        marcado = self._seleccion_auditoria.esta_seleccionado(item["codigo"])
+        casilla = self._celda_marcador_auditoria(item, accent, subtext)
+        # La casilla se queda con su propio clic: es lo único de la tarjeta que
+        # DESMARCA (el resto solo marca, igual que en las filas).
+        casilla.on_click = lambda ev, cod=item["codigo"]: self.alternar_item_auditoria(cod, ev)
         return ft.Container(
+            on_click=lambda ev, cod=item["codigo"]: self.seleccionar_item_auditoria(cod, ev),
             content=ft.Column([
                 ft.Row([
+                    casilla,
                     ft.Text(f"Código: {item['codigo']}", size=12, weight=ft.FontWeight.BOLD, color=accent),
                     ft.Container(
                         content=ft.Text(
@@ -1910,6 +2118,10 @@ class DashboardView(BaseView):
                 self._celda_acciones_auditoria(item, accent, card_bg, subtext),
             ], spacing=6),
             padding=12, border_radius=14, width=320,
-            bgcolor=card_bg,
-            border=ft.Border.all(1, border),
+            # Sombreado derivado del modelo, igual que en las filas: una
+            # tarjeta marcada se tiñe y se le marca el borde, porque en una
+            # cuadrícula el borde se distingue mejor que un fondo apenas más
+            # claro.
+            bgcolor=ft.Colors.with_opacity(0.22, accent) if marcado else card_bg,
+            border=ft.Border.all(2 if marcado else 1, accent if marcado else border),
         )
