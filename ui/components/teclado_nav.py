@@ -27,6 +27,8 @@ este módulo consulta ese registro. Es contabilidad explícita, pero es la
 pueda volver a navegar sin tener que buscar un hueco de la pantalla donde
 hacer clic.
 """
+import asyncio
+
 from dataclasses import dataclass, field
 
 # ─── Intenciones de navegación ───────────────────────────────────────────────
@@ -318,6 +320,9 @@ class ControlTeclado:
         self.foco = registro_foco or RegistroFoco()
         self._handler_previo = None
         self._instalado = False
+        # True cuando una acción de tecla dejó algo por dibujar (ver
+        # `_repintar_si_hace_falta`).
+        self._pendiente_repintar = False
         # True mientras este control está atendiendo una tecla (ver `manejar`).
         self._procesando = False
         # Identidad logica de la vista que instala este control, p. ej.
@@ -482,6 +487,7 @@ class ControlTeclado:
                 await self._aplicar(intencion, e)
             finally:
                 await self._ceder(e)
+                await self._repintar_si_hace_falta(e)
         finally:
             self._procesando = False
 
@@ -503,6 +509,7 @@ class ControlTeclado:
         elif isinstance(intencion, IntencionAccion):
             if self._ejecutar_accion is not None:
                 self._ejecutar_accion(intencion.accion, e)
+                self._pendiente_repintar = True
         elif isinstance(intencion, IntencionSimple):
             # Escape: suelta el foco además de limpiar la selección, para que
             # las flechas vuelvan a navegar sin tener que buscar un hueco de
@@ -510,6 +517,43 @@ class ControlTeclado:
             self.foco.limpiar()
             if self._al_limpiar is not None:
                 self._al_limpiar(e)
+
+    async def _repintar_si_hace_falta(self, e=None) -> None:
+        """Agenda un repintado para DESPUÉS de este despacho de tecla.
+
+        Flet acumula los cambios del árbol mientras maneja un evento y los
+        manda al terminar. Un atajo de teclado no cuelga de ningún control, y
+        el envío no llega: el diálogo que la acción acaba de apilar se queda en
+        la cola y no se dibuja hasta que ocurra otro evento cualquiera. En la
+        aplicación real eso se vio como "F1 no hace nada" — y el diálogo
+        aparecía al siguiente clic, como si el programa se hubiera trabado.
+
+        Llamar a `update()` aquí mismo no alcanza: seguimos dentro del
+        despacho y el cambio vuelve a la misma cola. Por eso se agenda en una
+        tarea aparte, que corre cuando el despacho ya terminó.
+
+        Las flechas no lo necesitan porque `scroll_to` es una llamada directa
+        al cliente, no un cambio del árbol: por eso navegar siempre funcionó y
+        abrir un diálogo no.
+        """
+        if not self._pendiente_repintar:
+            return
+        self._pendiente_repintar = False
+        pagina = self._pagina(e)
+        if pagina is None:
+            return
+        # Ceder el control una vez deja que termine lo que la acción haya
+        # encadenado antes de pedir el dibujo.
+        await asyncio.sleep(0)
+        self._repintar(pagina)
+
+    @staticmethod
+    def _repintar(pagina) -> None:
+        try:
+            pagina.update()
+        except Exception:
+            # Una página desmontada o headless no debe tumbar el teclado.
+            pass
 
     async def _desplazar(self, intencion: IntencionScroll) -> None:
         obtener = (

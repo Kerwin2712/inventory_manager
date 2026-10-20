@@ -23,6 +23,19 @@ from services import deudas_service
 from services.user_service import authenticate_user
 
 
+
+def _repintar(pagina) -> None:
+    """Fuerza un redibujado de la página, tolerando que no se pueda.
+
+    Una página headless (las pruebas) o desmontada puede no aceptar `update()`;
+    eso nunca debe tumbar la apertura o el cierre de un diálogo.
+    """
+    try:
+        pagina.update()
+    except (RuntimeError, AttributeError, AssertionError):
+        pass
+
+
 class CarteraView(BaseView):
     """Vista avanzada para la gestión de la Cartera de Clientes y Proveedores."""
 
@@ -1076,6 +1089,12 @@ class CarteraView(BaseView):
                 p.show_dialog(dialog)
             except RuntimeError:
                 pass  # ya estaba montado en la pila de la página
+            # Repintado explícito. `show_dialog` apila el diálogo pero no
+            # redibuja: tras un clic no se nota, porque Flet repinta al
+            # terminar el handler del control, pero un atajo de teclado no
+            # cuelga de ningún control. Sin esto, F1 abría el diálogo y la
+            # pantalla no cambiaba hasta el siguiente clic en cualquier parte.
+            _repintar(p)
         else:  # respaldo para páginas que no exponen la API de diálogos
             if dialog not in p.overlay:
                 p.overlay.append(dialog)
@@ -1111,6 +1130,9 @@ class CarteraView(BaseView):
             # equivocado.
             p.pop_dialog()
             dialog.open = False
+            # Mismo motivo que al abrir: Esc cierra desde el teclado y sin
+            # repintado explícito el diálogo seguiría dibujado.
+            _repintar(p)
             return
 
         dialog.open = False

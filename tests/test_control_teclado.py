@@ -617,3 +617,106 @@ def test_la_guarda_se_libera_aunque_la_accion_reviente():
         _correr(pagina.on_keyboard_event(EventoFalso("F5")))
 
     assert control._procesando is False
+
+
+# ─── Repintado tras una acción de teclado ────────────────────────────────────
+
+class PaginaRepintable(PaginaFalsa):
+    """Cuenta los repintados además de manejar la pila de diálogos."""
+
+    def __init__(self):
+        super().__init__()
+        self.updates = 0
+
+    def update(self):
+        self.updates += 1
+
+
+def _control_con_accion(pagina, accion_hecha):
+    seleccion = SeleccionLista()
+    seleccion.seleccionar("P-001")
+    control = ControlTeclado(
+        obtener_pagina=lambda e=None: pagina,
+        seleccion=seleccion,
+        ejecutar_accion=lambda a, e=None: accion_hecha.append(a),
+        identidad="inventario",
+    )
+    control.instalar()
+    return control
+
+
+def test_una_accion_de_teclado_repinta_la_pagina():
+    """Flet acumula los cambios del árbol mientras maneja un evento y los manda
+    al terminar. Un atajo de teclado no cuelga de ningún control, así que ese
+    envío no llega y el diálogo que la acción apiló se queda sin dibujar: en la
+    aplicación real se veía como "F1 no hace nada", y aparecía al clic
+    siguiente."""
+    pagina = PaginaRepintable()
+    hechas = []
+    control = _control_con_accion(pagina, hechas)
+
+    _correr(control.manejar(EventoFalso("F1")))
+
+    assert hechas == ["info"]
+    assert pagina.updates >= 1, "la acción se ejecutó pero nadie repintó"
+
+
+def test_el_repintado_se_agenda_despues_del_despacho():
+    """Repintar dentro del despacho no alcanza: el cambio vuelve a la misma
+    cola. Con un bucle de eventos vivo, el repintado tiene que ocurrir en una
+    tarea posterior."""
+
+    async def escenario():
+        pagina = PaginaRepintable()
+        hechas = []
+        control = _control_con_accion(pagina, hechas)
+
+        await control.manejar(EventoFalso("F1"))
+        # Todavía dentro del mismo ciclo: puede o no haber repintado.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return pagina.updates
+
+    assert asyncio.run(escenario()) >= 1
+
+
+def test_las_flechas_no_necesitan_repintado():
+    """`scroll_to` es una llamada directa al cliente, no un cambio del árbol:
+    por eso navegar siempre funcionó y abrir un diálogo no."""
+    pagina = PaginaRepintable()
+    destino = DestinoFalso()
+    control = ControlTeclado(
+        obtener_pagina=lambda e=None: pagina,
+        destino_vertical=lambda: destino,
+        identidad="inventario",
+    )
+    control.instalar()
+
+    _correr(control.manejar(EventoFalso("Arrow Down")))
+    assert destino.llamadas
+
+
+def test_sin_pagina_el_repintado_no_falla():
+    """La vista puede haberse desmontado entre la pulsación y el dibujo."""
+    seleccion = SeleccionLista()
+    seleccion.seleccionar("P-001")
+    control = ControlTeclado(
+        obtener_pagina=lambda e=None: None,
+        seleccion=seleccion,
+        ejecutar_accion=lambda a, e=None: None,
+        identidad="inventario",
+    )
+    _correr(control.manejar(EventoFalso("F1")))  # no debe lanzar
+
+
+def test_una_pagina_que_rechaza_update_no_tumba_la_tecla():
+    class PaginaRota(PaginaFalsa):
+        def update(self):
+            raise RuntimeError("desmontada")
+
+    pagina = PaginaRota()
+    hechas = []
+    control = _control_con_accion(pagina, hechas)
+
+    _correr(control.manejar(EventoFalso("F1")))
+    assert hechas == ["info"]

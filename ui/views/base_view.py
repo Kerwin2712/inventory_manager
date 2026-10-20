@@ -1,6 +1,19 @@
 import flet as ft
 from core.database import get_setting, set_setting
 
+
+def _repintar(pagina) -> None:
+    """Fuerza un redibujado de la página, tolerando que no se pueda.
+
+    Una página headless (las pruebas) o desmontada puede no aceptar `update()`;
+    eso nunca debe tumbar la apertura o el cierre de un diálogo.
+    """
+    try:
+        pagina.update()
+    except (RuntimeError, AttributeError, AssertionError):
+        pass
+
+
 class BaseView(ft.View):
     """Clase base con persistencia automática de temas en SQLite."""
 
@@ -278,6 +291,12 @@ class BaseView(ft.View):
                 p.show_dialog(dialog)
             except RuntimeError:
                 pass  # ya estaba montado en la pila de la página
+            # Repintado explícito. `show_dialog` apila el diálogo pero no
+            # redibuja: tras un clic no se nota, porque Flet repinta al
+            # terminar el handler del control, pero un atajo de teclado no
+            # cuelga de ningún control. Sin esto, F1 abría el diálogo y la
+            # pantalla no cambiaba hasta el siguiente clic en cualquier parte.
+            _repintar(p)
             return
         # Respaldo para páginas que no exponen la API de diálogos.
         if dialog not in getattr(p, "overlay", []):
@@ -293,6 +312,9 @@ class BaseView(ft.View):
             # Flet encuentra es el de abajo y se cierra el equivocado.
             p.pop_dialog()
             dialog.open = False
+            # Mismo motivo que al abrir: Esc cierra desde el teclado y sin
+            # repintado explícito el diálogo seguiría dibujado.
+            _repintar(p)
             return
 
         dialog.open = False
