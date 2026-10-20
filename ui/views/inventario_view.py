@@ -10,6 +10,13 @@ from ui.components.teclado_nav import (
     ACCIONES_SOLO_ADMIN, ControlTeclado, etiqueta_atajo, tooltip_con_atajo,
 )
 from ui.components.dialogo_clave import DialogoClave
+# Las dos preguntas que hay que hacerle al usuario cuando una acción tiene
+# varios destinatarios posibles ("¿este o todos?" y "¿cuál de todos?") viven en
+# un componente aparte porque Ventas y Deudas por Cobrar van a reutilizarlas:
+# aquí solo se decide QUÉ acción pregunta qué y qué se hace con la respuesta.
+from ui.components.dialogo_alcance import (
+    ALCANCE_TODOS, DialogoAlcance, DialogoElegirItem, hace_falta_preguntar,
+)
 from services.bcv_service import actualizar_tasa, obtener_estado_tasa
 # La clave que autoriza un borrado es la de la cuenta con la sesión abierta:
 # `authenticate_user` ya la compara con `core.security.verify_password` contra
@@ -900,6 +907,41 @@ class InventarioView(BaseView):
     # del ícono cuentan la misma historia.
     ACCIONES_ITEM = ("info", "cobrar", "carrito", "historial", "editar", "borrar")
 
+    # ── Qué significa cada acción cuando hay VARIOS ítems marcados ───────────
+    # Pedido del usuario del proyecto: "que las acciones afecten a todos los
+    # ítems que tengo seleccionados". Pero no todas admiten lo mismo, y la
+    # diferencia no es cosmética:
+    #
+    #   - Las de LOTE se aplican a todo lo marcado, porque sumar quince
+    #     artículos al carrito o borrar quince códigos son operaciones que
+    #     siguen significando algo con quince ítems.
+    #   - Las de UNO no: "ver el detalle" de cinco productos a la vez no
+    #     significa nada, y editarlos juntos tampoco. Con varios marcados se
+    #     muestra la lista de lo marcado para elegir cuál, en vez de mandar al
+    #     usuario a desmarcar catorce filas y volver ("como hay varios ítems,
+    #     debería mostrarme una lista o solicitarme de cuál ítem quiero ver").
+    #
+    # Las dos tuplas tienen que cubrir `ACCIONES_ITEM` entre ambas; si alguien
+    # añade una séptima acción sin clasificarla, `_ejecutar_accion_en_lote`
+    # falla ruidosamente en vez de hacer algo arbitrario con ella.
+    ACCIONES_DE_UNO = ("info", "historial", "editar")
+    ACCIONES_EN_LOTE = ("cobrar", "carrito", "borrar")
+
+    # Cómo se nombra cada acción en los diálogos que preguntan. Van en las
+    # palabras del usuario ("Añadir al carrito") y no en los nombres internos,
+    # porque la pregunta quedaría abstracta justo cuando lo que se decide es
+    # sobre qué ítems se va a actuar. Los dos diálogos las usan en minúscula
+    # dentro de una frase, así que la etiqueta tiene que leerse bien ahí
+    # ("¿Sobre cuáles quiere añadir al carrito?").
+    ETIQUETAS_ACCION = {
+        "info": "Ver el detalle",
+        "cobrar": "Procesar la venta",
+        "carrito": "Añadir al carrito",
+        "historial": "Ver el historial clínico",
+        "editar": "Editar",
+        "borrar": "Eliminar",
+    }
+
     def _producto_en_pantalla(self, codigo: str) -> dict | None:
         """Producto de la página actual por su código (relee la base si hace
         falta, para que una acción por teclado funcione aunque la fila ya no
@@ -946,23 +988,57 @@ class InventarioView(BaseView):
             "borrar": self.accion_borrar,
         }
 
+    def _handler_de_accion(self, accion: str):
+        """Resuelve el handler de una acción, o falla si el nombre no existe.
+
+        Falla RUIDOSAMENTE (y no devolviendo `None`) porque un nombre mal
+        escrito en un cableado nuevo se vería como un botón que no hace nada, y
+        eso es lo más difícil de encontrar.
+        """
+        handler = self._handlers_accion().get(accion)
+        if handler is None:
+            raise ValueError(f"Acción de ítem desconocida: {accion!r}")
+        return handler
+
+    def _accion_autorizada(self, accion: str) -> bool:
+        """¿El rol de la sesión puede ejecutar esta acción?
+
+        El mapeo de teclas es FIJO para todos los roles (decisión del usuario
+        del proyecto): para un vendedor, F4 simplemente no hace nada. Se
+        rechaza EN SILENCIO y no con un aviso, porque un error sobre una tecla
+        que ese rol nunca va a poder usar solo confunde; el ícono tampoco se
+        dibuja en su fila.
+        """
+        return not (accion in ACCIONES_SOLO_ADMIN and not self.es_admin)
+
     def ejecutar_accion_item(self, accion: str, codigo: str, e=None) -> bool:
         """Punto de entrada único de los seis botones y de los atajos F1..F6.
+
+        Este es el camino del ÍCONO, donde el clic señala UNA fila concreta. Si
+        hay varias marcadas, esa fila y el lote son dos destinatarios posibles
+        y la ambigüedad es real, así que se PREGUNTA siempre: "si se usa el
+        ícono y hay varios seleccionados, debe preguntar si solamente al que se
+        le está haciendo clic o a todos los que están seleccionados". La
+        respuesta NO se recuerda para el clic siguiente: la intención cambia de
+        un clic al otro, y recordarla sería decidir por el usuario.
 
         Vuelve a comprobar `puede_accionar` aunque el botón ya venga
         deshabilitado: la regla tiene que valer también para quien invoque la
         acción por teclado o por código, no solo para quien hace clic.
         """
-        handler = self._handlers_accion().get(accion)
-        if handler is None:
-            raise ValueError(f"Acción de ítem desconocida: {accion!r}")
-        # El mapeo de teclas es FIJO para todos los roles (decisión del usuario
-        # del proyecto): para un vendedor, F4 simplemente no hace nada. Se
-        # devuelve False EN SILENCIO y no con un aviso, porque un error sobre
-        # una tecla que ese rol nunca va a poder usar solo confunde; el ícono
-        # tampoco se dibuja en su fila.
-        if accion in ACCIONES_SOLO_ADMIN and not self.es_admin:
+        handler = self._handler_de_accion(accion)
+        if not self._accion_autorizada(accion):
             return False
+
+        marcados = list(self._seleccion.seleccionados)
+        # `hace_falta_preguntar` centraliza el criterio (más de uno marcado);
+        # que el código esté entre los marcados es lo que hace de la pregunta
+        # una disyuntiva: sobre una fila ajena al lote no hay nada que elegir
+        # —y de hecho `puede_accionar` la rechaza unas líneas más abajo—.
+        if hace_falta_preguntar(marcados) and codigo in marcados:
+            self._preguntar_alcance(accion, codigo, marcados, e)
+            return True
+
         if not self._seleccion.puede_accionar(codigo):
             self._snack(
                 "Hay otro ítem marcado. Haga clic en su casilla o pulse Esc para liberarlo.",
@@ -973,18 +1049,130 @@ class InventarioView(BaseView):
         return True
 
     def ejecutar_accion_sobre_seleccionado(self, accion: str, e=None) -> bool:
-        """Misma acción, aplicada al ítem marcado: es lo que invocan F1..F6.
+        """Misma acción, aplicada a lo marcado: es lo que invocan F1..F6.
+
+        Este es el camino de la TECLA, y se diferencia del ícono en una cosa:
+        no hay ninguna fila señalada, así que no hay nada que preguntar sobre
+        el alcance. La tecla actúa sobre TODO lo marcado, que es lo que el
+        usuario pidió ("si yo tengo selección múltiple activado y selecciono
+        varios elementos y uso el atajo, por ejemplo F2 para ir a las ventas,
+        debería llevarme todas las ventas"). Con cero o un ítem marcado entra
+        por el camino del ícono y todo sigue exactamente como antes.
 
         Sin ítem marcado no hace NADA (devuelve False): adivinar una fila
         sería disparar una acción —incluido un borrado— sobre algo que el
         usuario no eligió. F6 sigue pasando por el diálogo de clave como el
-        botón de la fila, porque entra por `ejecutar_accion_item` y no por
-        `eliminar_producto`: la clave se exige venga de la tecla o del clic.
+        botón de la fila, venga de la tecla o del clic, y en lote la pide una
+        sola vez (ver `_ejecutar_accion_en_lote`).
         """
-        codigo = self._seleccion.seleccionado
-        if not codigo:
+        marcados = list(self._seleccion.seleccionados)
+        if not marcados:
             return False
-        return self.ejecutar_accion_item(accion, codigo, e)
+        # Se valida el nombre aunque el despacho pueda no usar el handler
+        # directamente: una tecla cableada a una acción inexistente tiene que
+        # romper aquí y no más adentro.
+        self._handler_de_accion(accion)
+        if not self._accion_autorizada(accion):
+            return False
+        if hace_falta_preguntar(marcados):
+            return self._ejecutar_accion_en_lote(accion, marcados, e)
+        return self.ejecutar_accion_item(accion, marcados[0], e)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DESPACHO POR ALCANCE: sobre qué ítems actúa cada acción
+    # ─────────────────────────────────────────────────────────────────────────
+    def _ejecutar_accion_en_lote(self, accion: str, marcados: list[str], e=None) -> bool:
+        """Aplica una acción a TODO lo marcado, cada una a su manera.
+
+        Es el punto donde la tabla de comportamiento se vuelve código, y está
+        en UN SOLO sitio a propósito: la tecla y la respuesta "los N marcados"
+        del `DialogoAlcance` desembocan las dos aquí, así que el mouse y el
+        teclado no pueden divergir.
+        """
+        self._handler_de_accion(accion)
+        if accion in self.ACCIONES_DE_UNO:
+            # No tiene sentido en lote: se elige uno de entre los marcados.
+            self._preguntar_cual_item(accion, marcados, e)
+            return True
+        if accion == "borrar":
+            # La clave del usuario, UNA SOLA VEZ para todo el lote: encadenar
+            # quince diálogos de clave haría que la teclee sin leer qué
+            # autoriza.
+            self._confirmar_eliminar_lote(e, codigos=marcados)
+            return True
+        if accion in ("cobrar", "carrito"):
+            # Las dos añaden el lote al carrito que el usuario elija; solo
+            # "cobrar" (F2, "Procesar Venta") sale además hacia Ventas.
+            self._abrir_modal_destino_carrito_lote(
+                marcados, ir_a_ventas=(accion == "cobrar"), e=e,
+            )
+            return True
+        raise ValueError(f"Acción sin comportamiento de lote definido: {accion!r}")
+
+    def _preguntar_alcance(self, accion: str, codigo: str, marcados: list[str], e=None):
+        """"¿Este o todos?" sobre el ícono de una fila con varias marcadas."""
+        etiqueta = self.ETIQUETAS_ACCION.get(accion, accion)
+
+        comp = DialogoAlcance(
+            titulo=etiqueta,
+            accion=etiqueta,
+            codigo=codigo,
+            marcados=marcados,
+            # `ev or e`: el clic real trae su propio evento (y con él la
+            # página), pero el componente también puede invocar el callback sin
+            # evento; sin el respaldo, el diálogo que apila la acción no
+            # encontraría página donde mostrarse.
+            on_elegir=lambda alcance, ev=None: self._al_elegir_alcance(
+                accion, codigo, marcados, alcance, ev if ev is not None else e,
+            ),
+            on_cerrar=lambda ev=None: self._close_dialog(
+                ev if ev is not None else e, dialog=comp.dialogo,
+            ),
+            paleta=self._paleta_dialogo(),
+        )
+        self._open_dialog(comp.dialogo, e)
+        return comp
+
+    def _al_elegir_alcance(
+        self, accion: str, codigo: str, marcados: list[str], alcance: str, e=None,
+    ) -> bool:
+        """Enruta la respuesta del `DialogoAlcance`.
+
+        El `DialogoAlcance` ya se cerró antes de llamar aquí (lo hace él
+        mismo), así que el diálogo que apile la acción queda ARRIBA y no debajo
+        de uno muerto que el usuario seguiría viendo sin poder usar. Cancelar
+        no llega hasta aquí: no se actúa sobre nada.
+        """
+        if alcance == ALCANCE_TODOS:
+            return self._ejecutar_accion_en_lote(accion, marcados, e)
+        # "Solo este": se ejecuta directo y no se vuelve a preguntar. Volver a
+        # entrar por `ejecutar_accion_item` reabriría el mismo diálogo en
+        # bucle, porque la selección múltiple sigue en pie.
+        self._handler_de_accion(accion)(codigo, e)
+        return True
+
+    def _preguntar_cual_item(self, accion: str, marcados: list[str], e=None):
+        """"¿Cuál de todos?" para las acciones que no tienen sentido en lote."""
+        etiqueta = self.ETIQUETAS_ACCION.get(accion, accion)
+
+        comp = DialogoElegirItem(
+            titulo=etiqueta,
+            accion=etiqueta,
+            marcados=marcados,
+            # La descripción corta y no solo el código: en una lista de la que
+            # hay que ELEGIR, "PRD-0012" no le dice nada a quien atiende el
+            # mostrador.
+            etiquetas=self._etiquetas_de_items(marcados),
+            on_elegir=lambda cod, ev=None: self._handler_de_accion(accion)(
+                cod, ev if ev is not None else e,
+            ),
+            on_cerrar=lambda ev=None: self._close_dialog(
+                ev if ev is not None else e, dialog=comp.dialogo,
+            ),
+            paleta=self._paleta_dialogo(),
+        )
+        self._open_dialog(comp.dialogo, e)
+        return comp
 
     def _accionar_por_teclado(self, accion: str, e=None) -> bool:
         """Lo que invocan F1..F6, con una guarda de más.
@@ -2753,10 +2941,17 @@ class InventarioView(BaseView):
             e,
         )
 
-    def _confirmar_eliminar_lote(self, e=None):
+    def _confirmar_eliminar_lote(self, e=None, codigos=None):
         """Borrado masivo: enuncia cuántos ítems y cuáles, y pide la clave una
-        sola vez para todo el lote."""
-        codigos = list(self._seleccion.seleccionados)
+        sola vez para todo el lote.
+
+        `codigos` permite nombrar el lote explícitamente, que es como llegan
+        tanto F6 como la respuesta "los N marcados" del `DialogoAlcance`; sin
+        él se toma la selección vigente. Se acepta el lote ya resuelto en vez
+        de releer la selección aquí para que el lote que el usuario vio
+        enunciado en el diálogo de alcance sea exactamente el que se borra.
+        """
+        codigos = list(codigos) if codigos else list(self._seleccion.seleccionados)
         if not codigos:
             self._snack("No hay ítems marcados para borrar.", ft.Colors.AMBER_700, e)
             return None
