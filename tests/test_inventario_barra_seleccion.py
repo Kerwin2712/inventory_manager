@@ -87,15 +87,17 @@ def test_sin_el_modo_multiple_solo_queda_el_ultimo(vista):
     assert vista._seleccion.seleccionados == ("P-002",)
 
 
-def test_el_boton_de_borrado_en_lote_aparece_al_marcar(vista):
+def test_la_barra_no_ofrece_un_boton_de_borrado_masivo(vista):
+    """El usuario lo pidió retirado: "podemos quitar el botón que se ve arriba
+    de eliminar de forma masiva, porque ya tenemos el atajo de F6 para
+    eliminar". El camino del mouse sigue siendo el ícono de la papelera de una
+    fila marcada (ver `test_inventario_acciones_en_lote.py`)."""
     vista.alternar_modo_seleccion()
-    assert vista._btn_borrar_lote.visible is False
-
     vista.seleccionar_item("P-001")
     vista.seleccionar_item("P-002")
 
-    assert vista._btn_borrar_lote.visible is True
-    assert "2" in " ".join(_textos(vista._btn_borrar_lote))
+    assert not hasattr(vista, "_btn_borrar_lote")
+    assert "Borrar" not in " ".join(_textos(vista._barra_seleccion))
 
 
 def test_la_etiqueta_de_estado_dice_cuantos_van(vista):

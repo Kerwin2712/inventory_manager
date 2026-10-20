@@ -825,22 +825,19 @@ class InventarioView(BaseView):
             visible=False,
             on_click=self.limpiar_seleccion,
         )
-        self._btn_borrar_lote = ft.Button(
-            content=ft.Text("Borrar marcados", size=11, weight=ft.FontWeight.BOLD),
-            icon=ft.Icons.DELETE_SWEEP_ROUNDED,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE,
-                shape=ft.RoundedRectangleBorder(radius=12),
-            ),
-            visible=False,
-            on_click=self._confirmar_eliminar_lote,
-        )
+        # NO hay botón "Borrar marcados" en la barra. Lo pidió el usuario del
+        # proyecto —"podemos quitar el botón que se ve arriba de eliminar de
+        # forma masiva, porque ya tenemos el atajo de F6 para eliminar"— y el
+        # camino del mouse no se pierde: el ícono de la papelera de cualquier
+        # fila marcada, con varias marcadas, pregunta por `DialogoAlcance` y
+        # permite elegir "los N marcados". Un botón dedicado además duplicaba
+        # el borrado del lote en dos sitios con reglas propias, que es como se
+        # desincronizan.
         self._barra_seleccion = ft.Row(
             controls=[
                 self._btn_modo_seleccion,
                 self._lbl_seleccion,
                 self._btn_limpiar_seleccion,
-                self._btn_borrar_lote,
             ],
             spacing=4,
         )
@@ -886,14 +883,6 @@ class InventarioView(BaseView):
             else "Marcar varios ítems a la vez para borrarlos juntos"
         )
         self._btn_limpiar_seleccion.visible = self._seleccion.hay_seleccion
-        # Borrar en lote solo se ofrece en el modo múltiple: en modo marcador,
-        # el borrado del ítem señalado ya está en su propio botón de la fila.
-        self._btn_borrar_lote.visible = multiple and self._seleccion.hay_seleccion
-        if self._btn_borrar_lote.visible:
-            self._btn_borrar_lote.content = ft.Text(
-                f"Borrar marcados ({self._seleccion.cantidad})",
-                size=11, weight=ft.FontWeight.BOLD,
-            )
 
     # ─────────────────────────────────────────────────────────────────────────
     # ACCIONES DE UN ÍTEM (los seis botones de la fila)
@@ -1118,10 +1107,10 @@ class InventarioView(BaseView):
             accion=etiqueta,
             codigo=codigo,
             marcados=marcados,
-            # `ev or e`: el clic real trae su propio evento (y con él la
-            # página), pero el componente también puede invocar el callback sin
-            # evento; sin el respaldo, el diálogo que apila la acción no
-            # encontraría página donde mostrarse.
+            # El evento del clic si llega (trae consigo la página), y si no, el
+            # que abrió esta pregunta: sin ese respaldo, el diálogo que apila
+            # la acción no encontraría página donde mostrarse y la respuesta
+            # del usuario se perdería en silencio.
             on_elegir=lambda alcance, ev=None: self._al_elegir_alcance(
                 accion, codigo, marcados, alcance, ev if ev is not None else e,
             ),

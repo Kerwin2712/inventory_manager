@@ -248,20 +248,16 @@ def test_la_barra_muestra_cuantos_items_lleva_marcados(vista, evento):
     _marcar_lote(vista, ["DEL-001", "DEL-002"], evento)
 
     assert vista._lbl_seleccion.value == "2 ítems marcados"
-    assert vista._btn_borrar_lote.visible is True
-    assert "2" in vista._btn_borrar_lote.content.value
 
 
 def test_la_barra_ofrece_entrar_y_salir_del_modo_multiple(vista, evento):
     assert vista._btn_modo_seleccion.on_click == vista.alternar_modo_seleccion
-    assert vista._btn_borrar_lote.visible is False
 
     _marcar_lote(vista, ["DEL-001"], evento)
     vista.alternar_modo_seleccion(evento)
 
     assert vista._seleccion.es_multiple is False
     assert vista._seleccion.hay_seleccion is False, "salir del lote limpia la selección"
-    assert vista._btn_borrar_lote.visible is False
 
 
 def test_el_borrado_masivo_pide_la_clave_una_sola_vez_y_borra_todo_el_lote(
