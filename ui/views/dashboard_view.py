@@ -4,6 +4,9 @@ from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
+from ui.components.dialogo_alcance import (
+    ALCANCE_TODOS, DialogoAlcance, DialogoElegirItem, hace_falta_preguntar,
+)
 from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.scroll_nav import build_floating_v_nav, build_inline_h_nav
 from ui.components.seleccion_lista import SeleccionLista
@@ -1144,6 +1147,7 @@ class DashboardView(BaseView):
             # Fuera del Inicio no hay lista que repintar: el cuerpo que la
             # contenía ya no está montado.
             return
+        self._actualizar_barra_seleccion_auditoria()
         self._cargar_filas_auditoria()
         self.safe_update()
 
@@ -1173,7 +1177,112 @@ class DashboardView(BaseView):
     def limpiar_seleccion_auditoria(self, e=None):
         """Quita la selección (tecla [Esc] o botón de la barra)."""
         self._seleccion_auditoria.limpiar()
+        self._actualizar_barra_seleccion_auditoria()
         self.safe_update(e)
+
+    def alternar_modo_seleccion_auditoria(self, e=None):
+        """Entra o sale del modo de selección múltiple.
+
+        Las transiciones las decide el modelo compartido: entrar CONSERVA lo
+        que ya estaba marcado (el ítem que el usuario venía señalando pasa a
+        ser el primero del lote) y salir limpia, porque volver al marcador
+        único con cinco ítems marcados dejaría un estado que ese modo no puede
+        representar y una lista sombreada a medias."""
+        self._teclado.instalar(e)
+        self._seleccion_auditoria.alternar_modo()
+        self._actualizar_barra_seleccion_auditoria()
+        self.safe_update(e)
+
+    # ── Barra de estado de la selección ─────────────────────────────────────
+    def _build_barra_seleccion_auditoria(self, accent, subtext) -> ft.Row:
+        """Controles para ver y manejar la selección sin adivinar.
+
+        El conmutador va CON ETIQUETA VISIBLE, no como un ícono suelto: en el
+        catálogo de Inventario el usuario no encontró la selección múltiple
+        justamente por eso —un ícono gris sin texto, pegado a la leyenda "Sin
+        selección", se lee como un indicador de estado y no como algo que se
+        pueda pulsar—, y ya se corrigió allí. Una función que existe pero nadie
+        descubre es una función que no existe."""
+        self._lbl_seleccion_auditoria = ft.Text(
+            self._seleccion_auditoria.descripcion_estado(), size=11, color=subtext,
+        )
+        self._btn_modo_seleccion_auditoria = ft.Button(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.CHECKLIST_ROUNDED, size=16),
+                    ft.Text("Selección múltiple", size=11, weight=ft.FontWeight.W_600),
+                ],
+                spacing=6, tight=True,
+            ),
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.TRANSPARENT,
+                color=subtext,
+                shape=ft.RoundedRectangleBorder(radius=12),
+                side=ft.BorderSide(1, subtext),
+                padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+            ),
+            tooltip="Marcar varios ítems a la vez para accionar sobre todos",
+            on_click=self.alternar_modo_seleccion_auditoria,
+        )
+        self._btn_limpiar_seleccion_auditoria = ft.IconButton(
+            ft.Icons.HIGHLIGHT_OFF_ROUNDED,
+            icon_color=subtext,
+            tooltip="Quitar la selección (equivale a pulsar Esc)",
+            visible=False,
+            on_click=self.limpiar_seleccion_auditoria,
+        )
+        self._barra_seleccion_auditoria = ft.Row(
+            controls=[
+                self._btn_modo_seleccion_auditoria,
+                self._lbl_seleccion_auditoria,
+                self._btn_limpiar_seleccion_auditoria,
+            ],
+            spacing=4,
+        )
+        return self._barra_seleccion_auditoria
+
+    def _actualizar_barra_seleccion_auditoria(self):
+        """Sincroniza etiqueta, ícono y visibilidad con el estado del modelo."""
+        if not hasattr(self, "_lbl_seleccion_auditoria"):
+            return
+        accent = self.get_accent_color()
+        subtext = self.get_subtext_color()
+        multiple = self._seleccion_auditoria.es_multiple
+
+        self._lbl_seleccion_auditoria.value = self._seleccion_auditoria.descripcion_estado()
+        self._lbl_seleccion_auditoria.color = (
+            accent if self._seleccion_auditoria.hay_seleccion else subtext
+        )
+        # El botón dice en qué modo está y qué hace el próximo clic, en vez de
+        # limitarse a cambiar de color: un botón que solo se tiñe deja al
+        # usuario adivinando si ya lo pulsó.
+        color_modo = accent if multiple else subtext
+        self._btn_modo_seleccion_auditoria.content = ft.Row(
+            [
+                ft.Icon(
+                    ft.Icons.CHECKLIST_RTL_ROUNDED if multiple else ft.Icons.CHECKLIST_ROUNDED,
+                    size=16,
+                ),
+                ft.Text(
+                    "Salir de selección múltiple" if multiple else "Selección múltiple",
+                    size=11, weight=ft.FontWeight.W_600,
+                ),
+            ],
+            spacing=6, tight=True,
+        )
+        self._btn_modo_seleccion_auditoria.style = ft.ButtonStyle(
+            bgcolor=ft.Colors.with_opacity(0.14, accent) if multiple else ft.Colors.TRANSPARENT,
+            color=color_modo,
+            shape=ft.RoundedRectangleBorder(radius=12),
+            side=ft.BorderSide(1, color_modo),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+        )
+        self._btn_modo_seleccion_auditoria.tooltip = (
+            "Volver a marcar un solo ítem"
+            if multiple
+            else "Marcar varios ítems a la vez para accionar sobre todos"
+        )
+        self._btn_limpiar_seleccion_auditoria.visible = self._seleccion_auditoria.hay_seleccion
 
     def _descartar_marcados_fantasma(self) -> None:
         """Olvida los ítems marcados que ya no están en la lista.
@@ -1334,28 +1443,30 @@ class DashboardView(BaseView):
             "proveedor": self.accion_proveedor_auditoria,
         }
 
-    def ejecutar_accion_auditoria(self, accion: str, codigo: str, e=None) -> bool:
-        """Punto de entrada ÚNICO de los íconos de la fila y de los atajos.
+    def _validar_accion_auditoria(self, accion: str, codigo: str, e=None) -> str | None:
+        """Comprobaciones comunes a TODOS los caminos de una acción.
 
-        Devuelve `False` cuando la acción no aplica, sin dejar nada a medias.
-        Una acción que no existe en esta lista falla ruidosamente, porque eso
-        es un error de programación y no una situación del usuario."""
-        handler = self._handlers_accion_auditoria().get(accion)
-        if handler is None:
+        Devuelve el código normalizado si la acción puede ejecutarse sobre él,
+        o `None` si no aplica. Lanza `ValueError` si la acción no existe en
+        esta lista, porque eso es un error de programación y no una situación
+        del usuario. Está aparte porque la misma acción llega por tres
+        caminos —el ícono, la tecla y el ítem elegido en un diálogo— y las tres
+        tienen que pasar por las mismas puertas."""
+        if accion not in self._handlers_accion_auditoria():
             raise ValueError(f"Acción de auditoría desconocida: {accion!r}")
         # El Historial Clínico es exclusivo admin/gerencia (ERS 3.6). Se
         # comprueba por la lista compartida y no por el rol a mano para que el
         # criterio sea el mismo que en el catálogo de Inventario.
         if accion in ACCIONES_SOLO_ADMIN and not self.es_admin:
-            return False
+            return None
         # Hoy el panel COMPLETO es admin/gerencia, así que sin ese rol no hay
         # lista ni íconos; la guarda está igual porque quien entre por nombre o
         # por teclado no pasa por los íconos.
         if not self.es_admin:
-            return False
+            return None
         codigo = (codigo or "").strip()
         if not codigo:
-            return False
+            return None
         # Se vuelve a comprobar la regla del marcador aunque el ícono ya venga
         # deshabilitado: tiene que valer también para quien invoque la acción
         # por teclado o por código, no solo para quien hace clic.
@@ -1364,20 +1475,127 @@ class DashboardView(BaseView):
                 "Hay otro ítem marcado. Haga clic en su casilla o pulse Esc para liberarlo.",
                 e,
             )
+            return None
+        return codigo
+
+    def ejecutar_accion_auditoria(self, accion: str, codigo: str, e=None) -> bool:
+        """Punto de entrada ÚNICO de los íconos de la fila.
+
+        Con VARIOS ítems marcados pregunta SIEMPRE sobre cuáles actúa
+        (`DialogoAlcance`), tal como lo pidió el usuario del proyecto: el clic
+        fue sobre el ícono de una fila concreta, pero puede querer actuar sobre
+        todo el lote. Adivinar es inaceptable en las dos direcciones — aplicar
+        a todo lo que creía ser uno, y aplicar a uno lo que creía ser todo y
+        quedarse con el trabajo a medias sin avisar.
+
+        Devuelve `False` cuando la acción no aplica, sin dejar nada a medias."""
+        codigo = self._validar_accion_auditoria(accion, codigo, e)
+        if codigo is None:
             return False
-        handler(codigo, e)
+        marcados = self._seleccion_auditoria.seleccionados
+        if hace_falta_preguntar(marcados):
+            self._preguntar_alcance_auditoria(accion, codigo, marcados, e)
+            return True
+        return self._ejecutar_accion_auditoria_directa(accion, codigo, e)
+
+    def _ejecutar_accion_auditoria_directa(self, accion: str, codigo: str, e=None) -> bool:
+        """La acción sobre UN ítem, sin más preguntas.
+
+        Es donde terminan los tres caminos: el ícono cuando no hay ambigüedad,
+        la tecla con un solo ítem marcado, y el ítem que el usuario eligió en
+        `DialogoAlcance` o en `DialogoElegirItem`."""
+        codigo = self._validar_accion_auditoria(accion, codigo, e)
+        if codigo is None:
+            return False
+        self._handlers_accion_auditoria()[accion](codigo, e)
         return True
 
     def ejecutar_accion_auditoria_sobre_seleccionado(self, accion: str, e=None) -> bool:
-        """Misma acción, aplicada al ítem marcado: es lo que invocan las teclas.
+        """Misma acción, aplicada a LO MARCADO: es lo que invocan las teclas.
 
         Sin ítem marcado no hace NADA (devuelve `False`): adivinar una fila
         sería abrir un formulario de edición sobre algo que el usuario no
-        eligió."""
-        codigo = self._seleccion_auditoria.seleccionado
-        if not codigo:
+        eligió. Con uno, actúa sobre él. Con varios, la tecla significa "sobre
+        todo lo marcado", así que se resuelve como el lote — y para las
+        acciones que no tienen sentido en lote, eso es preguntar cuál."""
+        marcados = self._seleccion_auditoria.seleccionados
+        if not marcados:
             return False
-        return self.ejecutar_accion_auditoria(accion, codigo, e)
+        if len(marcados) == 1:
+            return self._ejecutar_accion_auditoria_directa(accion, marcados[0], e)
+        return self._aplicar_accion_auditoria_a_todos(accion, marcados, e)
+
+    def _aplicar_accion_auditoria_a_todos(self, accion: str, marcados, e=None) -> bool:
+        """La acción sobre TODO el lote marcado.
+
+        Dos destinos distintos según la acción:
+
+        - Ver detalle, Historial y Editar NO tienen sentido en lote (ver cinco
+          fichas a la vez no significa nada, y editar cinco productos juntos
+          menos). Se muestra `DialogoElegirItem` con la descripción corta de
+          cada uno, en vez de mandar al usuario a desmarcar lo que acababa de
+          marcar.
+        - Contactar proveedor SÍ lo tiene, y es su mejor forma: un bloque por
+          proveedor involucrado, sin repetir ninguno.
+        """
+        if accion not in self._handlers_accion_auditoria():
+            raise ValueError(f"Acción de auditoría desconocida: {accion!r}")
+        if accion in ACCIONES_SOLO_ADMIN and not self.es_admin:
+            return False
+        if not self.es_admin:
+            return False
+        marcados = [c for c in marcados if c]
+        if not marcados:
+            return False
+        if accion in self.ACCIONES_AUDITORIA_UNO_A_UNO:
+            self._preguntar_cual_item_auditoria(accion, marcados, e)
+            return True
+        self._mostrar_contactos_proveedores(marcados, e)
+        return True
+
+    # ── Las dos preguntas sobre qué ítems actúa una acción ──────────────────
+    def _preguntar_alcance_auditoria(self, accion: str, codigo: str, marcados, e=None):
+        """"¿Solo este, o los N marcados?" (`DialogoAlcance`)."""
+        etiqueta = self.ETIQUETAS_ACCION_AUDITORIA[accion]
+        comp = DialogoAlcance(
+            titulo=etiqueta,
+            accion=etiqueta,
+            codigo=codigo,
+            marcados=list(marcados),
+            on_elegir=lambda alcance, ev=None: self._resolver_alcance_auditoria(
+                accion, codigo, list(marcados), alcance, ev or e,
+            ),
+            # Cerrar es responsabilidad de quien apiló: el componente no sabe
+            # de la pila de esta vista.
+            on_cerrar=lambda ev=None: self._cerrar_dialogo_inicio(comp.dialogo, ev or e),
+            paleta=self._paleta_dialogo_inicio(),
+        )
+        self._abrir_dialogo_inicio(comp.dialogo, e)
+
+    def _resolver_alcance_auditoria(self, accion, codigo, marcados, alcance, e=None) -> bool:
+        if alcance == ALCANCE_TODOS:
+            return self._aplicar_accion_auditoria_a_todos(accion, marcados, e)
+        return self._ejecutar_accion_auditoria_directa(accion, codigo, e)
+
+    def _preguntar_cual_item_auditoria(self, accion: str, marcados, e=None):
+        """"¿Cuál de todos?" (`DialogoElegirItem`), para las acciones que se
+        hacen de a uno.
+
+        Las etiquetas llevan la descripción corta del producto y no solo el
+        código: a quien atiende el mostrador, un código no le dice nada."""
+        etiqueta = self.ETIQUETAS_ACCION_AUDITORIA[accion]
+        comp = DialogoElegirItem(
+            titulo=etiqueta,
+            accion=etiqueta,
+            marcados=list(marcados),
+            etiquetas={c: self._etiqueta_item_auditoria(c) for c in marcados},
+            on_elegir=lambda codigo, ev=None: self._ejecutar_accion_auditoria_directa(
+                accion, codigo, ev or e,
+            ),
+            on_cerrar=lambda ev=None: self._cerrar_dialogo_inicio(comp.dialogo, ev or e),
+            paleta=self._paleta_dialogo_inicio(),
+        )
+        self._abrir_dialogo_inicio(comp.dialogo, e)
 
     def _accionar_por_teclado(self, accion: str, e=None) -> bool:
         """Lo que invocan las teclas de función sobre esta lista.
@@ -1582,6 +1800,11 @@ class DashboardView(BaseView):
             on_change=self._handle_cambio_modo_vista_auditoria,
         )
 
+        # Se construye ANTES de cargar las filas para que el estado de la
+        # selección ya tenga dónde mostrarse en el primer pintado.
+        self._build_barra_seleccion_auditoria(accent, subtext)
+        self._actualizar_barra_seleccion_auditoria()
+
         self._cargar_filas_auditoria(text_color, accent)
 
         return self.create_card(
@@ -1597,6 +1820,7 @@ class DashboardView(BaseView):
                                 ),
                             ], spacing=10),
                             ft.Row([
+                                self._barra_seleccion_auditoria,
                                 self._nav_h_auditoria,
                                 self._btn_modo_vista_auditoria,
                                 self._build_selector_columnas_auditoria(accent, text_color),

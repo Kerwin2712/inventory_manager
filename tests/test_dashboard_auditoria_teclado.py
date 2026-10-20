@@ -137,16 +137,21 @@ def test_f5_abre_el_formulario_del_item_marcado(vista, pagina):
 
 def test_las_teclas_recorren_el_mismo_camino_que_los_iconos(vista, pagina):
     """Dos caminos distintos para la misma acción son dos comportamientos que
-    se separan con el tiempo."""
+    se separan con el tiempo: la tecla y el ícono terminan en el mismo sitio."""
     ejecutadas = []
-    vista.ejecutar_accion_auditoria = lambda a, c, e=None: ejecutadas.append((a, c)) or True
+    vista._ejecutar_accion_auditoria_directa = (
+        lambda a, c, e=None: ejecutadas.append((a, c)) or True
+    )
     _marcar(vista, "AUD-002", pagina)
 
     for tecla in ("F1", "F4", "F5"):
         _pulsar(vista, pagina, tecla)
+    # Y el clic en un ícono, con un solo ítem marcado, llega al mismo método.
+    vista.ejecutar_accion_auditoria("info", "AUD-002")
 
     assert ejecutadas == [
         ("info", "AUD-002"), ("historial", "AUD-002"), ("editar", "AUD-002"),
+        ("info", "AUD-002"),
     ]
 
 
