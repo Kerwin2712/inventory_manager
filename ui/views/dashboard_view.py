@@ -1156,7 +1156,12 @@ class DashboardView(BaseView):
 
         Se usa al salir del Inicio. También se vacía el índice de alertas: un
         índice de una lista desmontada solo puede servir para accionar sobre
-        algo que ya no está en pantalla."""
+        algo que ya no está en pantalla.
+
+        El MODO de selección no se toca a propósito: que el conmutador de
+        selección múltiple esté encendido es una elección del usuario, igual
+        que el modo de vista, y apagárselo por haber pasado por Ventas sería
+        deshacerle algo que él puso."""
         self._alertas_en_pantalla = {}
         self._seleccion_auditoria.limpiar()
 
@@ -1826,7 +1831,11 @@ class DashboardView(BaseView):
                                 self._build_selector_columnas_auditoria(accent, text_color),
                                 inp_stock_minimo,
                                 btn_guardar_stock_minimo,
-                            ], spacing=8),
+                                # Seis grupos de controles en una sola barra:
+                                # `wrap` es lo que evita que en una ventana
+                                # angosta los últimos queden fuera de pantalla
+                                # en vez de bajar a una segunda línea.
+                            ], spacing=8, wrap=True),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         wrap=True,
