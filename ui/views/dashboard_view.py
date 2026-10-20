@@ -4,6 +4,7 @@ from ui.views.cartera_view import CarteraView
 from ui.views.inventario_view import InventarioView
 from ui.views.ventas_view import VentasView
 from ui.views.gestion_datos_view import GestionDatosView
+from ui.components.scroll_nav import build_floating_v_nav, build_inline_h_nav
 from ui.components.teclado_nav import ControlTeclado
 from services.bcv_service import obtener_estado_tasa
 from services.reportes_service import (
@@ -20,6 +21,29 @@ class DashboardView(BaseView):
 
     # ERS 3.6: módulo exclusivo de uso administrativo/gerencial.
     ROLES_CON_ACCESO_AUDITORIA = ("administrador", "superadmin", "gerencia")
+
+    # ── Modos de vista de la Auditoría Preventiva ────────────────────────────
+    # Los mismos tres que el catálogo de Inventario, y por el mismo pedido del
+    # usuario: "poder tener distintos tipos de vistas". Se repiten los nombres
+    # a propósito —"separado", "agrupado", "tarjetas"— para que el selector
+    # signifique lo mismo en las dos pantallas.
+    #
+    # El modo por omisión es "agrupado" y no "separado" como en Inventario:
+    # esta lista ya venía mostrándose agrupada (descripción completa en dos
+    # líneas, chips de código y referencia), y arrancar en otro formato le
+    # cambiaría la pantalla de la mañana a quien no pidió nada.
+    #
+    # A diferencia de Inventario, la elección NO se persiste: `preferencias_service`
+    # solo conoce la preferencia del catálogo y no es un archivo de este trabajo.
+    # El modo sobrevive a los cambios de sección porque el Dashboard es una sola
+    # instancia durante toda la sesión, pero se olvida al cerrar el programa.
+    MODOS_VISTA_AUDITORIA = ("separado", "agrupado", "tarjetas")
+    MODO_VISTA_AUDITORIA_DEFECTO = "agrupado"
+
+    # Alto reservado al pie de la tabla de Auditoría para que el cluster
+    # flotante de navegación vertical no se dibuje encima de la última fila
+    # (mismo criterio y mismo valor que en el catálogo de Inventario).
+    _HOLGURA_NAV_FLOTANTE = 44
 
     # El título de la vista activa viaja DENTRO de `build_header()`: una sola
     # franja horizontal con título de la vista + usuario + opciones + salir.
@@ -39,6 +63,41 @@ class DashboardView(BaseView):
         # pantalla.
         self._scroll_inicio_v = None
         self._scroll_inicio_h = None
+
+        # ── Estado de la lista de Auditoría Preventiva ──────────────────────
+        # Modo de vista elegido y alertas que hay en pantalla, indexadas por
+        # código. El índice existe para que una acción invocada por NOMBRE (un
+        # atajo de teclado no tiene ninguna fila de la cual sacar el ítem)
+        # pueda resolver el producto sin depender del `dict` de un clic.
+        self._modo_vista_auditoria = self.MODO_VISTA_AUDITORIA_DEFECTO
+        self._alertas_en_pantalla: dict[str, dict] = {}
+
+        # ── Visibilidad de columnas de la lista separada ────────────────────
+        # Mismo criterio que el catálogo: "marcador" y "acciones" son
+        # estructurales y por eso no figuran entre las ocultables.
+        self._columnas_ocultables_auditoria = [
+            "codigo", "referencia", "descripcion", "nombre_corto",
+            "departamento", "marca", "existencia", "minimo",
+            "proveedor", "contacto",
+        ]
+        self._columnas_labels_auditoria = {
+            "marcador": "Sel.",
+            "codigo": "Código",
+            "referencia": "Referencia",
+            "descripcion": "Descripción",
+            "nombre_corto": "Nombre Corto",
+            "departamento": "Depto.",
+            "marca": "Marca",
+            "existencia": "Stock Actual",
+            "minimo": "Mínimo",
+            "proveedor": "Proveedor",
+            "contacto": "Contacto",
+            "acciones": "Acciones",
+        }
+        self._columnas_visibles_auditoria = {
+            k: True for k in self._columnas_ocultables_auditoria
+        }
+
         self._teclado = ControlTeclado(
             # Resolución tardía a propósito: pasar `self.get_current_page`
             # directamente congelaría el método que exista en este instante,
@@ -190,6 +249,21 @@ class DashboardView(BaseView):
             # "Ventas Diarias" queda FUERA de la restricción de ERS 3.6: es el
             # registro de lo que se vendió hoy, no inteligencia de negocio, y
             # un vendedor necesita consultarlo durante su turno.
+            #
+            # El cuerpo se crea VACÍO y se llena después. Es la forma de
+            # romper un círculo: el panel de Auditoría necesita al cuerpo como
+            # destino del cluster de flechas ↑/↓ (el eje vertical es del
+            # cuerpo, no de la tabla), y el cuerpo necesita al panel como
+            # contenido. Registrando el destino antes de construir las
+            # secciones, las flechas de pantalla y las del teclado apuntan al
+            # MISMO control, que es la condición para que hagan lo mismo.
+            main_content = ft.Column(
+                controls=[],
+                scroll=ft.ScrollMode.AUTO,
+                spacing=20,
+            )
+            self._scroll_inicio_v = main_content
+
             secciones_inicio = [
                 self.build_metrics_cards(),
                 ft.Container(height=10),
@@ -216,12 +290,7 @@ class DashboardView(BaseView):
                         padding=18, border_radius=16,
                     )
                 )
-            main_content = ft.Column(
-                controls=secciones_inicio,
-                scroll=ft.ScrollMode.AUTO,
-                spacing=20,
-            )
-            self._scroll_inicio_v = main_content
+            main_content.controls = secciones_inicio
         else:
             main_content = ft.Container(
                 content=ft.Column(
@@ -897,8 +966,66 @@ class DashboardView(BaseView):
         )
 
         # ── 2. Auditoría Preventiva (Stock Crítico + Contacto Proveedor - ERS 3.6) ──
+        seccion_auditoria = self._build_panel_auditoria(accent, text_color)
+
+        # La Auditoría va primero: es la ventana que el cliente consulta al
+        # abrir el programa (qué reponer hoy). La Inteligencia de Negocio queda
+        # debajo, también a ancho completo (cambio 2 de la especificación).
+        return ft.ResponsiveRow(
+            controls=[
+                seccion_auditoria,
+                seccion_inteligencia,
+            ],
+            spacing=20,
+        )
+
+    def _tabla_a_ancho_completo(self, tabla: ft.Control) -> ft.Control:
+        """Envuelve una tabla ancha en su propio eje HORIZONTAL.
+
+        Los anchos de las tablas del Inicio están calculados para entrar
+        completas en una pantalla normal (sin deslizable horizontal, como pide
+        la especificación), pero en una ventana angosta la tabla se recortaría
+        contra el borde de la tarjeta. Este `Row` con scroll AUTO solo aparece
+        cuando hace falta. No rompe la regla de "un solo dueño por eje": el
+        cuerpo del Inicio es dueño del eje VERTICAL y este Row del HORIZONTAL."""
+        fila = ft.Row(controls=[tabla], scroll=ft.ScrollMode.AUTO, expand=True)
+        # Destino de RESPALDO para las flechas horizontales. Hay dos tablas con
+        # eje horizontal propio en el Inicio y una sola pulsación no puede
+        # desplazar las dos: la dueña de las flechas es la lista de Auditoría
+        # Preventiva, que se registra ella misma en `_build_panel_auditoria`
+        # (es la lista con la que el usuario trabaja: marca, acciona y
+        # recorre). Esta asignación solo cubre el caso en que la Auditoría no
+        # está en pantalla —un vendedor, que por ERS 3.6 no la ve— para que las
+        # flechas sigan moviendo algo útil en vez de quedarse muertas.
+        if self._scroll_inicio_h is None:
+            self._scroll_inicio_h = fila
+        return fila
+
+    # =========================================================================
+    # AUDITORÍA PREVENTIVA — LISTA COMPLETA (ERS 3.6)
+    # =========================================================================
+    # Pedido textual del usuario del proyecto: "En Inicio, en Auditoría
+    # Preventiva, hay que hacer lo mismo que en las otras vistas para poder
+    # tener distintos tipos de vistas, acciones incluso, y navegación con
+    # botones ... Es mejor que esta vista sea más manejable, más revisable".
+    #
+    # O sea: lo que era una tabla pasiva pasa a comportarse como la lista del
+    # catálogo de Inventario. El formato lo elige el usuario con el selector de
+    # modo, el eje horizontal es exclusivo de esta lista (el vertical sigue
+    # siendo del cuerpo del Inicio, un solo dueño por eje) y los anchos siguen
+    # calculados para entrar en una pantalla normal sin deslizable.
+
+    def _build_panel_auditoria(self, accent, text_color) -> ft.Control:
+        """Tarjeta de la Auditoría Preventiva: el parámetro de stock mínimo, el
+        selector de modo de vista, los clusters de flechas y la lista.
+
+        La tarjeta se arma SIEMPRE con los mismos controles y es
+        `_cargar_filas_auditoria` quien decide qué se dibuja dentro según el
+        modo elegido. Separarlo así permite cambiar de formato sin reconstruir
+        el Inicio entero (y sin volver a consultar las métricas, la tasa BCV y
+        las ventas del día, que no tienen nada que ver con el cambio)."""
+        subtext = self.get_subtext_color()
         stock_minimo_actual = obtener_stock_minimo()
-        alertas_stock = obtener_alertas_stock(minimo=stock_minimo_actual)
 
         def handle_guardar_stock_minimo(e):
             try:
@@ -926,48 +1053,92 @@ class DashboardView(BaseView):
             on_click=handle_guardar_stock_minimo,
         )
 
-        if alertas_stock:
-            stock_rows = [self._fila_auditoria(item, accent, text_color) for item in alertas_stock]
+        self._dt_auditoria = ft.DataTable(
+            columns=[self._build_columna_auditoria(k, accent, text_color)
+                     for k in self._columnas_orden_visible_auditoria()],
+            rows=[],
+        )
+        # ── Separación de ejes ──────────────────────────────────────────────
+        # Esta Row es la ÚNICA dueña del eje horizontal de la lista, y el
+        # cuerpo del Inicio (`_scroll_inicio_v`) del vertical. La Column
+        # intermedia NO desplaza: existe solo para darle al cluster flotante un
+        # destino cuando el panel se construye suelto (lo hacen las pruebas,
+        # que llaman a `build_data_sections()` sin pasar por `get_body()`).
+        self._tabla_auditoria_row = ft.Row(
+            controls=[self._dt_auditoria], scroll=ft.ScrollMode.AUTO, expand=True,
+        )
+        self._tabla_auditoria_col = ft.Column(
+            controls=[self._tabla_auditoria_row], tight=True,
+        )
+        # Las flechas ←/→ del teclado desplazan ESTA lista: es la que el
+        # usuario recorre, marca y acciona. Se asigna sin condición y después
+        # de que Ventas Diarias haya puesto su respaldo, así que gana siempre
+        # que la Auditoría esté en pantalla (ver `_tabla_a_ancho_completo`).
+        self._scroll_inicio_h = self._tabla_auditoria_row
 
-            stock_content = ft.DataTable(
-                columns=[
-                    ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Stock Actual", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Mínimo", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color, weight=ft.FontWeight.BOLD)),
-                ],
-                rows=stock_rows,
-                # Dos líneas de descripción necesitan alto de fila variable: los
-                # mismos valores que usa la vista "agrupado" del Inventario.
-                data_row_min_height=72,
-                data_row_max_height=95,
-            )
-        else:
-            stock_content = ft.Container(
-                content=ft.Column([
-                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINED, color=ft.Colors.GREEN_500, size=32),
-                    ft.Text("Todo el inventario se encuentra sobre el stock mínimo de reposición.", color=self.get_subtext_color(), size=13)
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=30
-            )
+        # Los clusters de botones apuntan a los MISMOS controles que las
+        # flechas del teclado: tienen que hacer exactamente lo mismo.
+        self._nav_h_auditoria = build_inline_h_nav(self._tabla_auditoria_row, accent)
+        self._nav_v_auditoria = build_floating_v_nav(
+            self._scroll_inicio_v or self._tabla_auditoria_col, accent,
+        )
+        # Sin esta holgura el cluster vertical flotante se dibuja encima del
+        # texto de la última fila.
+        self._tabla_auditoria_con_holgura = ft.Container(
+            content=self._tabla_auditoria_col,
+            padding=ft.Padding.only(bottom=self._HOLGURA_NAV_FLOTANTE),
+        )
+        self._vista_auditoria = ft.Container()
 
-        seccion_auditoria = self.create_card(
+        self._btn_modo_vista_auditoria = ft.SegmentedButton(
+            selected=[self._modo_vista_auditoria],
+            segments=[
+                ft.Segment(
+                    value="separado",
+                    label=ft.Text("Separado", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_COLUMN_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="agrupado",
+                    label=ft.Text("Agrupado", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_LIST_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="tarjetas",
+                    label=ft.Text("Tarjetas", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.GRID_VIEW_ROUNDED, size=16),
+                ),
+            ],
+            on_change=self._handle_cambio_modo_vista_auditoria,
+        )
+
+        self._cargar_filas_auditoria(text_color, accent)
+
+        return self.create_card(
             content=ft.Column(
                 controls=[
                     ft.Row(
                         controls=[
                             ft.Row([
                                 ft.Icon(ft.Icons.REPORT_PROBLEM_ROUNDED, color=accent),
-                                ft.Text(f"Auditoría Preventiva (Stock Crítico < {stock_minimo_actual:.0f})", size=15, weight=ft.FontWeight.BOLD, color=text_color),
+                                ft.Text(
+                                    f"Auditoría Preventiva (Stock Crítico < {stock_minimo_actual:.0f})",
+                                    size=15, weight=ft.FontWeight.BOLD, color=text_color,
+                                ),
                             ], spacing=10),
-                            ft.Row([inp_stock_minimo, btn_guardar_stock_minimo], spacing=2),
+                            ft.Row([
+                                self._nav_h_auditoria,
+                                self._btn_modo_vista_auditoria,
+                                self._build_selector_columnas_auditoria(accent, text_color),
+                                inp_stock_minimo,
+                                btn_guardar_stock_minimo,
+                            ], spacing=8),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         wrap=True,
                     ),
                     ft.Divider(height=10, color=self.get_border_color()),
-                    self._tabla_a_ancho_completo(stock_content),
+                    self._vista_auditoria,
                 ],
                 spacing=10,
             ),
@@ -976,129 +1147,356 @@ class DashboardView(BaseView):
             col={"sm": 12, "lg": 12},
         )
 
-        # La Auditoría va primero: es la ventana que el cliente consulta al
-        # abrir el programa (qué reponer hoy). La Inteligencia de Negocio queda
-        # debajo, también a ancho completo (cambio 2 de la especificación).
-        return ft.ResponsiveRow(
-            controls=[
-                seccion_auditoria,
-                seccion_inteligencia,
-            ],
-            spacing=20,
+    # ── Columnas de la lista separada ───────────────────────────────────────
+    def _columnas_orden_visible_auditoria(self) -> list[str]:
+        """Orden fijo de columnas, filtrando las que el usuario desactivó."""
+        return [
+            k for k in self._columnas_ocultables_auditoria
+            if self._columnas_visibles_auditoria.get(k, True)
+        ]
+
+    def _build_columna_auditoria(self, key: str, accent, text_color) -> ft.DataColumn:
+        color = accent if key in ("acciones", "marcador") else text_color
+        return ft.DataColumn(ft.Text(
+            self._columnas_labels_auditoria[key], color=color, weight=ft.FontWeight.BOLD,
+        ))
+
+    def _build_selector_columnas_auditoria(self, accent, text_color) -> ft.PopupMenuButton:
+        """Mostrar/ocultar columnas, igual que en el catálogo. Solo tiene
+        sentido en el modo separado (es el único con una columna por campo), y
+        `_cargar_filas_auditoria` lo esconde en los otros dos."""
+        self._col_menu_items_auditoria: dict[str, ft.PopupMenuItem] = {}
+        items = []
+        for key in self._columnas_ocultables_auditoria:
+            item = ft.PopupMenuItem(
+                content=self._columnas_labels_auditoria[key],
+                checked=self._columnas_visibles_auditoria[key],
+                on_click=lambda e, k=key: self._toggle_columna_auditoria(k, e),
+            )
+            self._col_menu_items_auditoria[key] = item
+            items.append(item)
+
+        self._btn_columnas_auditoria = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN_ROUNDED,
+            icon_color=accent,
+            tooltip="Mostrar/ocultar columnas de la auditoría",
+            items=items,
+        )
+        return self._btn_columnas_auditoria
+
+    def _toggle_columna_auditoria(self, key: str, e=None):
+        """Oculta o muestra una columna, impidiendo quedarse sin ninguna: una
+        tabla de cero columnas no es una vista, es una pantalla en blanco."""
+        visibles = self._columnas_orden_visible_auditoria()
+        if self._columnas_visibles_auditoria[key] and len(visibles) <= 1:
+            self.show_alert_info("Debe quedar al menos una columna visible.", e)
+            return
+        self._columnas_visibles_auditoria[key] = not self._columnas_visibles_auditoria[key]
+        self._col_menu_items_auditoria[key].checked = self._columnas_visibles_auditoria[key]
+        self._cargar_filas_auditoria()
+        self.safe_update(e)
+
+    def _handle_cambio_modo_vista_auditoria(self, e):
+        """Cambio de formato de la lista. Solo se recargan las filas: el resto
+        del Inicio (tasa BCV, métricas, ventas del día) no tiene nada que ver
+        con el formato y volver a consultarlo sería trabajo tirado."""
+        if e.control.selected:
+            self._modo_vista_auditoria = list(e.control.selected)[0]
+            self._cargar_filas_auditoria()
+            self.safe_update(e)
+
+    # ── Carga de las filas en los tres formatos ─────────────────────────────
+    def _cargar_filas_auditoria(self, text_color=None, accent=None):
+        """Rellena la lista de Auditoría en el modo vigente.
+
+        Es el equivalente de `InventarioView._cargar_filas`: una sola función
+        con una rama por formato, para que los tres compartan el origen de
+        datos y el índice de lo que hay en pantalla. Si cada modo tuviera su
+        propio cargador, el día que cambie la consulta habría que acordarse de
+        los tres."""
+        if not hasattr(self, "_vista_auditoria"):
+            return  # panel aún sin construir
+        if text_color is None:
+            text_color = self.get_text_color()
+        if accent is None:
+            accent = self.get_accent_color()
+        subtext = self.get_subtext_color()
+        card_bg = self.get_card_bg()
+        border = self.get_border_color()
+
+        alertas = obtener_alertas_stock(minimo=obtener_stock_minimo())
+        # Índice por código de lo que hay en pantalla: una acción invocada por
+        # nombre (un atajo de teclado no tiene ninguna fila de la cual sacar el
+        # ítem) resuelve el producto por aquí.
+        self._alertas_en_pantalla = {a["codigo"]: a for a in alertas}
+
+        # El selector de columnas solo tiene sentido en el modo separado.
+        if hasattr(self, "_btn_columnas_auditoria"):
+            self._btn_columnas_auditoria.visible = (self._modo_vista_auditoria == "separado")
+
+        if not alertas:
+            # Sin nada que reponer no hay lista: ni tabla vacía ni flechas que
+            # no desplacen nada.
+            self._nav_h_auditoria.visible = False
+            self._nav_v_auditoria.visible = False
+            self._dt_auditoria.rows = []
+            self._vista_auditoria.content = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINED, color=ft.Colors.GREEN_500, size=32),
+                    ft.Text(
+                        "Todo el inventario se encuentra sobre el stock mínimo de reposición.",
+                        color=subtext, size=13,
+                    ),
+                ], alignment=ft.MainAxisAlignment.CENTER,
+                   horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30,
+            )
+            return
+
+        # Se vacían las filas antes de rearmar las columnas: al alternar de
+        # modo, el diff de Flet encontraría filas con más celdas que columnas
+        # y se descalzaría (mismo cuidado que en el catálogo).
+        self._dt_auditoria.rows = []
+
+        if self._modo_vista_auditoria == "separado":
+            self._cargar_separado_auditoria(alertas, accent, text_color, subtext)
+        elif self._modo_vista_auditoria == "tarjetas":
+            self._cargar_tarjetas_auditoria(alertas, accent, text_color, subtext, card_bg, border)
+        else:
+            self._cargar_agrupado_auditoria(alertas, accent, text_color, subtext)
+
+    def _envolver_tabla_auditoria(self):
+        """Pone la tabla en pantalla con el cluster vertical flotando encima.
+
+        Sin altura fija: el `Stack` se ajusta a la tabla y el desplazamiento
+        vertical lo sigue aportando el cuerpo del Inicio."""
+        self._nav_h_auditoria.visible = True
+        self._nav_v_auditoria.visible = True
+        self._vista_auditoria.content = ft.Stack(
+            controls=[self._tabla_auditoria_con_holgura, self._nav_v_auditoria],
         )
 
-    def _tabla_a_ancho_completo(self, tabla: ft.Control) -> ft.Control:
-        """Envuelve una tabla ancha en su propio eje HORIZONTAL.
+    def _chip_auditoria(self, texto: str, color: str) -> ft.Container:
+        """Etiqueta compacta sobre fondo tenue del mismo color (código,
+        referencia, nombre corto). Funciona en los dos temas porque el fondo se
+        deriva del color del texto, no de un gris fijo."""
+        return ft.Container(
+            content=ft.Text(texto, size=11, weight=ft.FontWeight.W_600, color=color),
+            bgcolor=ft.Colors.with_opacity(0.12, color),
+            padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+            border_radius=6,
+        )
 
-        Los anchos de las tablas del Inicio están calculados para entrar
-        completas en una pantalla normal (sin deslizable horizontal, como pide
-        la especificación), pero en una ventana angosta la tabla se recortaría
-        contra el borde de la tarjeta. Este `Row` con scroll AUTO solo aparece
-        cuando hace falta. No rompe la regla de "un solo dueño por eje": el
-        cuerpo del Inicio es dueño del eje VERTICAL y este Row del HORIZONTAL."""
-        fila = ft.Row(controls=[tabla], scroll=ft.ScrollMode.AUTO, expand=True)
-        # Las flechas horizontales apuntan a la PRIMERA tabla ancha que se
-        # construye en el Inicio, que es la de Auditoria Preventiva (la que el
-        # requisito pide ampliar). Hay dos tablas con eje horizontal propio y
-        # una sola pulsacion no puede desplazar las dos; elegir la de arriba
-        # es predecible, mientras que elegir "la ultima construida" cambiaria
-        # de destino segun el orden de armado.
-        if self._scroll_inicio_h is None:
-            self._scroll_inicio_h = fila
-        return fila
+    @staticmethod
+    def _etiqueta_origen_minimo(item: dict) -> str:
+        """`origen` dice qué umbral disparó la alerta: sin ese dato, un mínimo
+        distinto al de la caja de texto parece un error de cálculo."""
+        return "umbral propio" if item.get("origen") == "producto" else "umbral global"
 
-    def _fila_auditoria(self, item: dict, accent: str, text_color: str) -> ft.DataRow:
-        """Fila de la Auditoría Preventiva al estilo "agrupado" del Inventario.
+    # ── Modo "separado": una columna por campo ──────────────────────────────
+    def _cargar_separado_auditoria(self, alertas, accent, text_color, subtext):
+        """Una columna por campo, con el selector de columnas para esconder lo
+        que no interese. Es el formato para revisar dato por dato."""
+        self._dt_auditoria.data_row_min_height = 48
+        self._dt_auditoria.data_row_max_height = 48
+        self._dt_auditoria.columns = [
+            self._build_columna_auditoria(k, accent, text_color)
+            for k in self._columnas_orden_visible_auditoria()
+        ]
 
-        El ancho ganado al pasar la tarjeta a pantalla completa se gasta en la
-        información que antes no cabía: la descripción general completa (hasta
-        DOS líneas, con elipsis al final, igual que el modo agrupado), el
-        código, la referencia, el nombre corto y el departamento/marca; todo
-        junto al stock actual, el mínimo que disparó la alerta y el contacto
-        del proveedor que ya se mostraban.
-
-        Los anchos son fijos (y suman ~1120 px) para que la tabla entre en una
-        pantalla normal sin deslizable horizontal, que es la condición que pide
-        la especificación."""
-        subtext = self.get_subtext_color()
-
-        def chip(texto: str, color: str) -> ft.Container:
-            return ft.Container(
-                content=ft.Text(texto, size=11, weight=ft.FontWeight.W_600, color=color),
-                bgcolor=ft.Colors.with_opacity(0.12, color),
-                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
-                border_radius=6,
+        def texto(valor, color=None, peso=ft.FontWeight.NORMAL):
+            return ft.Text(
+                valor, color=color or text_color, size=12, weight=peso,
+                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
             )
 
-        celda_producto = ft.Container(
+        constructores = {
+            "codigo": lambda a: texto(a["codigo"], accent, ft.FontWeight.W_600),
+            "referencia": lambda a: texto(a.get("referencia") or "-"),
+            "descripcion": lambda a: ft.Container(
+                content=texto(a.get("descripcion_general") or "-"), width=300,
+            ),
+            "nombre_corto": lambda a: texto(a["nombre_corto"]),
+            "departamento": lambda a: texto(a.get("departamento") or "-"),
+            "marca": lambda a: texto(a.get("marca") or "-"),
+            "existencia": lambda a: texto(
+                f"{a['existencia']:.0f}", ft.Colors.RED_500, ft.FontWeight.BOLD,
+            ),
+            "minimo": lambda a: texto(f"{a['minimo']:.0f}", peso=ft.FontWeight.W_600),
+            "proveedor": lambda a: texto(a["proveedor_nombre"]),
+            "contacto": lambda a: texto(
+                f"{a['proveedor_contacto']} · {a['proveedor_telefono']}", subtext,
+            ),
+        }
+
+        columnas = self._columnas_orden_visible_auditoria()
+        self._dt_auditoria.rows = [
+            ft.DataRow(cells=[ft.DataCell(constructores[k](a)) for k in columnas])
+            for a in alertas
+        ]
+        self._envolver_tabla_auditoria()
+
+    # ── Modo "agrupado": varios datos por celda, en dos líneas ──────────────
+    def _cargar_agrupado_auditoria(self, alertas, accent, text_color, subtext):
+        """Varios datos por celda y en dos líneas, SIN deslizable horizontal:
+        los anchos suman ~1120 px, el ancho útil de una pantalla normal. Es el
+        formato con el que esta ventana ya se mostraba, y el que deja leer la
+        descripción general completa de un vistazo."""
+        self._dt_auditoria.data_row_min_height = 72
+        self._dt_auditoria.data_row_max_height = 95
+        self._dt_auditoria.columns = [
+            ft.DataColumn(ft.Text("Producto (Descripción / Cód / Ref)", color=text_color, weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Depto / Marca", color=text_color, weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Stock Actual", color=text_color, weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Mínimo", color=text_color, weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Proveedor / Contacto (ERS 3.6)", color=text_color, weight=ft.FontWeight.BOLD)),
+        ]
+
+        filas = []
+        for item in alertas:
+            celda_producto = ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        item.get("descripcion_general") or item["nombre_corto"],
+                        size=13, weight=ft.FontWeight.BOLD, color=text_color,
+                        # El par `max_lines=2` + elipsis es lo que permite la
+                        # segunda línea cuando la descripción es larga: sin el
+                        # overflow explícito el texto se recortaría en seco.
+                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Row([
+                        self._chip_auditoria(f"Cód: {item['codigo']}", accent),
+                        self._chip_auditoria(f"Ref: {item.get('referencia') or '-'}", subtext),
+                        self._chip_auditoria(f"Corto: {item['nombre_corto']}", subtext),
+                    ], spacing=6, wrap=True),
+                ], spacing=4, tight=True),
+                width=380,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_clasificacion = ft.Container(
+                content=ft.Column([
+                    ft.Text(item.get("departamento") or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
+                    ft.Text(item.get("marca") or "-", size=11, color=subtext),
+                ], spacing=2, tight=True),
+                width=150,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_stock = ft.Container(
+                content=ft.Text(f"{item['existencia']:.0f}", size=16, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
+                width=90,
+                alignment=ft.Alignment.CENTER_LEFT,
+            )
+
+            celda_minimo = ft.Container(
+                content=ft.Column([
+                    ft.Text(f"{item['minimo']:.0f}", size=13, color=text_color, weight=ft.FontWeight.W_600),
+                    ft.Text(self._etiqueta_origen_minimo(item), size=10, color=subtext),
+                ], spacing=2, tight=True),
+                width=90,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            celda_proveedor = ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        item["proveedor_nombre"], size=12, weight=ft.FontWeight.W_600, color=text_color,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Text(
+                        f"{item['proveedor_contacto']} · {item['proveedor_telefono']}",
+                        size=11, color=subtext, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ], spacing=2, tight=True),
+                width=220,
+                padding=ft.Padding.symmetric(vertical=6),
+            )
+
+            filas.append(ft.DataRow(cells=[
+                ft.DataCell(celda_producto),
+                ft.DataCell(celda_clasificacion),
+                ft.DataCell(celda_stock),
+                ft.DataCell(celda_minimo),
+                ft.DataCell(celda_proveedor),
+            ]))
+
+        self._dt_auditoria.rows = filas
+        self._envolver_tabla_auditoria()
+
+    # ── Modo "tarjetas" ────────────────────────────────────────────────────
+    def _cargar_tarjetas_auditoria(self, alertas, accent, text_color, subtext, card_bg, border):
+        """Una tarjeta por producto a reponer. No hay tabla, así que tampoco
+        hay eje horizontal ni clusters de flechas: las tarjetas envuelven y el
+        eje vertical sigue siendo del cuerpo del Inicio."""
+        self._nav_h_auditoria.visible = False
+        self._nav_v_auditoria.visible = False
+        self._dt_auditoria.rows = []
+
+        tarjetas = [
+            self._tarjeta_auditoria(item, accent, text_color, subtext, card_bg, border)
+            for item in alertas
+        ]
+        self._vista_auditoria.content = ft.Column(
+            controls=[ft.Row(controls=tarjetas, wrap=True, spacing=10)],
+            tight=True,
+        )
+
+    def _tarjeta_auditoria(self, item, accent, text_color, subtext, card_bg, border) -> ft.Control:
+        """Tarjeta de un producto a reponer."""
+        return ft.Container(
             content=ft.Column([
+                ft.Row([
+                    ft.Text(f"Código: {item['codigo']}", size=12, weight=ft.FontWeight.BOLD, color=accent),
+                    ft.Container(
+                        content=ft.Text(
+                            f"Stock: {item['existencia']:.0f}", size=11,
+                            weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
+                        ),
+                        bgcolor=ft.Colors.RED_700,
+                        padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+                        border_radius=10,
+                    ),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(height=4),
                 ft.Text(
                     item.get("descripcion_general") or item["nombre_corto"],
-                    size=13, weight=ft.FontWeight.BOLD, color=text_color,
-                    # El par `max_lines=2` + elipsis es lo que permite la
-                    # segunda línea cuando la descripción es larga: sin el
-                    # overflow explícito el texto se recortaría en seco.
+                    size=14, weight=ft.FontWeight.BOLD, color=text_color,
                     max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
                 ),
                 ft.Row([
-                    chip(f"Cód: {item['codigo']}", accent),
-                    chip(f"Ref: {item.get('referencia') or '-'}", subtext),
-                    chip(f"Corto: {item['nombre_corto']}", subtext),
-                ], spacing=6, wrap=True),
-            ], spacing=4, tight=True),
-            width=470,
-            padding=ft.Padding.symmetric(vertical=6),
+                    ft.Text(f"Ref: {item.get('referencia') or '-'}", size=11, color=subtext),
+                    ft.Text(
+                        f"{item.get('departamento') or '-'} / {item.get('marca') or '-'}",
+                        size=11, color=subtext,
+                    ),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(height=4),
+                ft.Row([
+                    ft.Column([
+                        ft.Text("Mínimo", size=10, color=subtext),
+                        ft.Text(
+                            f"{item['minimo']:.0f}", size=13,
+                            weight=ft.FontWeight.BOLD, color=text_color,
+                        ),
+                        ft.Text(self._etiqueta_origen_minimo(item), size=9, color=subtext),
+                    ], spacing=1),
+                    ft.Column([
+                        ft.Text("Proveedor", size=10, color=subtext),
+                        ft.Text(
+                            item["proveedor_nombre"], size=12,
+                            weight=ft.FontWeight.W_600, color=text_color,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        ft.Text(
+                            f"{item['proveedor_contacto']} · {item['proveedor_telefono']}",
+                            size=10, color=subtext,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                    ], spacing=1, expand=True),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ], spacing=6),
+            padding=12, border_radius=14, width=320,
+            bgcolor=card_bg,
+            border=ft.Border.all(1, border),
         )
-
-        celda_clasificacion = ft.Container(
-            content=ft.Column([
-                ft.Text(item.get("departamento") or "-", size=12, weight=ft.FontWeight.W_600, color=text_color),
-                ft.Text(item.get("marca") or "-", size=11, color=subtext),
-            ], spacing=2, tight=True),
-            width=180,
-            padding=ft.Padding.symmetric(vertical=6),
-        )
-
-        celda_stock = ft.Container(
-            content=ft.Text(f"{item['existencia']:.0f}", size=16, color=ft.Colors.RED_500, weight=ft.FontWeight.BOLD),
-            width=110,
-            alignment=ft.Alignment.CENTER_LEFT,
-        )
-
-        # `origen` dice qué umbral disparó la alerta ("producto" = el umbral
-        # propio del ítem, "global" = el parametrizado): sin ese dato un mínimo
-        # distinto al de la caja de texto parece un error de cálculo.
-        celda_minimo = ft.Container(
-            content=ft.Column([
-                ft.Text(f"{item['minimo']:.0f}", size=13, color=text_color, weight=ft.FontWeight.W_600),
-                ft.Text(
-                    "umbral propio" if item.get("origen") == "producto" else "umbral global",
-                    size=10, color=subtext,
-                ),
-            ], spacing=2, tight=True),
-            width=110,
-            padding=ft.Padding.symmetric(vertical=6),
-        )
-
-        celda_proveedor = ft.Container(
-            content=ft.Column([
-                ft.Text(
-                    item["proveedor_nombre"], size=12, weight=ft.FontWeight.W_600, color=text_color,
-                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-                ft.Text(
-                    f"{item['proveedor_contacto']} · {item['proveedor_telefono']}",
-                    size=11, color=subtext, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-            ], spacing=2, tight=True),
-            width=250,
-            padding=ft.Padding.symmetric(vertical=6),
-        )
-
-        return ft.DataRow(cells=[
-            ft.DataCell(celda_producto),
-            ft.DataCell(celda_clasificacion),
-            ft.DataCell(celda_stock),
-            ft.DataCell(celda_minimo),
-            ft.DataCell(celda_proveedor),
-        ])
