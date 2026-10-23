@@ -1,3 +1,4 @@
+import sys
 import flet as ft
 from core.database import init_db, get_setting
 from ui.views.base_view import BaseView
@@ -5,6 +6,26 @@ from ui.views.login_view import LoginView
 from ui.views.admin_users_view import AdminUsersView
 from ui.views.dashboard_view import DashboardView
 from services.cart_manager import limpiar_sesion
+
+def _silenciar_desconexion_windows():
+    """Silencia el error WinError 10054 en Windows al cerrar la ventana de la aplicación Flet."""
+    if sys.platform != "win32":
+        return
+    try:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+        def _silent_call_connection_lost(self, exc):
+            try:
+                _orig_call_connection_lost(self, exc)
+            except (ConnectionResetError, OSError):
+                pass
+
+        _ProactorBasePipeTransport._call_connection_lost = _silent_call_connection_lost
+    except Exception:
+        pass
+
+_silenciar_desconexion_windows()
 
 def main(page: ft.Page):
     # Inicializar la base de datos SQLite, tablas y datos por defecto

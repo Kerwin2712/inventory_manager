@@ -279,3 +279,44 @@ def test_generar_comandos_reportes_termicos():
     assert b"Carlos Perez" in datos_cli
 
 
+def test_limpiar_cache_impresora():
+    """Verifica que limpiar_cache_impresora vacíe el caché de estados."""
+    from services.printer_service import _CACHE_ESTADO_CONEXION, limpiar_cache_impresora
+    _CACHE_ESTADO_CONEXION["COM5"] = {"conectada": True, "timestamp": 12345.0}
+    assert "COM5" in _CACHE_ESTADO_CONEXION
+
+    limpiar_cache_impresora()
+    assert len(_CACHE_ESTADO_CONEXION) == 0
+
+
+def test_detectar_impresora_termica_forzar_verificacion():
+    """Verifica que forzar_verificacion=True limpie el caché y realice un sondeo en vivo."""
+    from services.printer_service import _CACHE_ESTADO_CONEXION, limpiar_cache_impresora
+    _CACHE_ESTADO_CONEXION["COM5"] = {"conectada": False, "timestamp": 9999999999.0}
+
+    impresoras_falsas = [
+        {"nombre": "COM5 (MP80-12 Bluetooth)", "puerto": "COM5", "is_default": False, "is_offline": False, "tipo": "serial"},
+    ]
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras_falsas), \
+         patch("services.printer_service.probar_conexion_puerto_com", return_value=True):
+        det = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
+        assert det is not None
+        assert det["conectada"] is True
+
+
+def test_silenciar_desconexion_windows():
+    """Verifica que el manejador de WinError 10054 en main.py atrape ConnectionResetError sin fallar."""
+    from main import _silenciar_desconexion_windows
+    import sys
+    _silenciar_desconexion_windows()
+    if sys.platform == "win32":
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        mock_self = MagicMock()
+        mock_self._sock.shutdown.side_effect = ConnectionResetError("Host cerrado")
+        try:
+            _ProactorBasePipeTransport._call_connection_lost(mock_self, None)
+        except ConnectionResetError:
+            pytest.fail("ConnectionResetError no debió escapar")
+
+
+

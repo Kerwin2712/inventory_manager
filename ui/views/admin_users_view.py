@@ -348,13 +348,15 @@ class AdminUsersView(BaseView):
             guardar_impresora_termica_configurada,
             obtener_impresora_termica_configurada,
             imprimir_ticket_prueba,
+            detectar_impresora_termica,
+            limpiar_cache_impresora,
         )
 
         impresoras = listar_impresoras_sistema()
         opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
         for imp in impresoras:
             nombre = imp["nombre"]
-            estado = " (Desconectada)" if imp.get("is_offline") else ""
+            estado = " (Desconectada)" if imp.get("is_offline") else " (En línea)"
             pred = " [Predeterminada]" if imp.get("is_default") else ""
             opciones.append(ft.dropdown.Option(nombre, f"{nombre}{pred}{estado}"))
 
@@ -364,7 +366,7 @@ class AdminUsersView(BaseView):
             label="Impresora Térmica Seleccionada",
             value=actual if any(o.key == actual for o in opciones) else "",
             options=opciones,
-            width=380,
+            width=360,
             border_radius=12
         )
 
@@ -375,13 +377,59 @@ class AdminUsersView(BaseView):
             ft.Text("Procesando...", size=12, italic=True)
         ], visible=False, tight=True, spacing=8)
 
+        card_estado = ft.Container(
+            padding=10,
+            border_radius=10,
+        )
+
+        def _actualizar_card_estado(info):
+            if info and info.get("conectada"):
+                card_estado.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.GREEN_400)
+                card_estado.border = ft.Border.all(1, ft.Colors.GREEN_600)
+                card_estado.content = ft.Row([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_400, size=20),
+                    ft.Column([
+                        ft.Text(f"Impresora lista: {info['nombre']}", weight=ft.FontWeight.BOLD, size=12),
+                        ft.Text("En línea y respondiendo a comandos ESC/POS", size=10, color=ft.Colors.GREEN_200)
+                    ], spacing=1, expand=True)
+                ], tight=True)
+            elif info:
+                card_estado.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.ORANGE_400)
+                card_estado.border = ft.Border.all(1, ft.Colors.ORANGE_600)
+                card_estado.content = ft.Row([
+                    ft.Icon(ft.Icons.PRINT_DISABLED_OUTLINED, color=ft.Colors.ORANGE_400, size=20),
+                    ft.Column([
+                        ft.Text(f"Impresora desconectada: {info['nombre']}", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.ORANGE_300),
+                        ft.Text("Encienda la impresora o vincúlela y presione 'Buscar / Recargar'", size=10, color=ft.Colors.GREY_400)
+                    ], spacing=1, expand=True)
+                ], tight=True)
+            else:
+                card_estado.bgcolor = ft.Colors.with_opacity(0.08, ft.Colors.GREY_500)
+                card_estado.border = ft.Border.all(1, ft.Colors.GREY_600)
+                card_estado.content = ft.Row([
+                    ft.Icon(ft.Icons.SEARCH_OFF, color=ft.Colors.GREY_400, size=20),
+                    ft.Column([
+                        ft.Text("No se detectó impresora térmica", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREY_300),
+                        ft.Text("Conecte la impresora por USB o Bluetooth y presione 'Buscar / Recargar'", size=10, color=ft.Colors.GREY_400)
+                    ], spacing=1, expand=True)
+                ], tight=True)
+            try:
+                card_estado.update()
+            except Exception:
+                pass
+
+        info_inicial = detectar_impresora_termica(verificar_online=False)
+        _actualizar_card_estado(info_inicial)
+
         btn_cerrar = ft.TextButton("Cerrar")
+        btn_recargar = ft.OutlinedButton("Buscar / Recargar", icon=ft.Icons.REFRESH)
         btn_probar = ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT)
         btn_guardar = ft.Button("Guardar", icon=ft.Icons.CHECK,
                                 style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE))
 
         def _bloquear_botones(bloqueado: bool, mensaje: str = "Procesando..."):
             btn_cerrar.disabled = bloqueado
+            btn_recargar.disabled = bloqueado
             btn_probar.disabled = bloqueado
             btn_guardar.disabled = bloqueado
             lbl_estado.visible = bloqueado
@@ -390,6 +438,50 @@ class AdminUsersView(BaseView):
                 dlg_conf.update()
             except Exception:
                 pass
+
+        def recargar_impresoras(ev):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Buscando y verificando impresoras en el sistema...")
+
+            def _tarea():
+                nonlocal procesando_accion
+                try:
+                    limpiar_cache_impresora()
+                    nuevas = listar_impresoras_sistema(forzar_verificacion=True)
+                    nueva_info = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
+
+                    nuevas_opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
+                    for imp in nuevas:
+                        nom = imp["nombre"]
+                        est = " (Desconectada)" if imp.get("is_offline") else " (En línea)"
+                        prd = " [Predeterminada]" if imp.get("is_default") else ""
+                        nuevas_opciones.append(ft.dropdown.Option(nom, f"{nom}{prd}{est}"))
+
+                    dd_impresoras.options = nuevas_opciones
+                    sel_act = dd_impresoras.value or obtener_impresora_termica_configurada()
+                    if any(o.key == sel_act for o in nuevas_opciones):
+                        dd_impresoras.value = sel_act
+                    else:
+                        dd_impresoras.value = ""
+
+                    _actualizar_card_estado(nueva_info)
+                    if nueva_info and nueva_info.get("conectada"):
+                        self.show_alert_success(f"¡Impresora encontrada y conectada: {nueva_info['nombre']}!", ev)
+                    elif nueva_info:
+                        self.show_alert_error(f"Impresora '{nueva_info['nombre']}' no responde. Verifique que esté encendida.", ev)
+                    else:
+                        self.show_alert_error("No se encontró ninguna impresora térmica instalada.", ev)
+                except Exception as ex:
+                    self.show_alert_error(f"Error durante la búsqueda: {ex}", ev)
+                finally:
+                    procesando_accion = False
+                    _bloquear_botones(False)
+
+            import threading
+            threading.Thread(target=_tarea, daemon=True).start()
 
         def guardar_config(ev):
             nonlocal procesando_accion
@@ -409,18 +501,27 @@ class AdminUsersView(BaseView):
                 return
             procesando_accion = True
             _bloquear_botones(True, "Enviando ticket a la impresora...")
-            try:
-                sel = dd_impresoras.value or None
-                ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-                if ok:
-                    self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
-                else:
-                    self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
-            finally:
-                procesando_accion = False
-                _bloquear_botones(False)
+
+            def _tarea():
+                nonlocal procesando_accion
+                try:
+                    sel = dd_impresoras.value or None
+                    ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
+                    nueva_info = detectar_impresora_termica(verificar_online=True)
+                    _actualizar_card_estado(nueva_info)
+                    if ok:
+                        self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
+                    else:
+                        self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+                finally:
+                    procesando_accion = False
+                    _bloquear_botones(False)
+
+            import threading
+            threading.Thread(target=_tarea, daemon=True).start()
 
         btn_cerrar.on_click = lambda ev: self.cerrar_dialogo(dlg_conf, ev)
+        btn_recargar.on_click = recargar_impresoras
         btn_probar.on_click = probar_impresion
         btn_guardar.on_click = guardar_config
 
@@ -428,11 +529,19 @@ class AdminUsersView(BaseView):
             title=ft.Row([ft.Icon(ft.Icons.PRINT_ROUNDED, color=ft.Colors.BLUE_400), ft.Text("Configurar Impresora Térmica")]),
             content=ft.Column([
                 ft.Text("Seleccione la impresora para emitir los tickets de venta (80mm)."),
-                dd_impresoras,
+                card_estado,
+                ft.Row([
+                    dd_impresoras,
+                    ft.IconButton(
+                        icon=ft.Icons.REFRESH,
+                        tooltip="Buscar / Recargar impresora",
+                        on_click=recargar_impresoras
+                    )
+                ], tight=True, spacing=6),
                 lbl_estado,
                 ft.Text("Compatible con MP80-12, MPT-II, POS-80 (USB / Bluetooth).", size=11, color=self.get_subtext_color()),
             ], tight=True, spacing=12),
-            actions=[btn_cerrar, btn_probar, btn_guardar],
+            actions=[btn_cerrar, btn_recargar, btn_probar, btn_guardar],
             actions_alignment=ft.MainAxisAlignment.END
         )
         self.abrir_dialogo(dlg_conf, e)
