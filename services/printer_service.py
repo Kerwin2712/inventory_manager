@@ -15,6 +15,7 @@ Incluye:
 import ctypes
 import os
 import platform
+import re
 import subprocess
 from ctypes import wintypes
 from typing import Optional, List, Dict, Tuple
@@ -52,12 +53,124 @@ PRINTER_ATTRIBUTE_DEFAULT = 0x00000004
 PRINTER_ATTRIBUTE_WORK_OFFLINE = 0x00000400
 
 
+def listar_puertos_com_sistema() -> List[Dict]:
+    """Obtiene la lista de puertos COM activos en Windows, identificando dispositivos Bluetooth térmicos."""
+    sistema = platform.system()
+    puertos = []
+    if sistema != "Windows":
+        return puertos
+
+    try:
+        import winreg
+
+        # 1. Mapeo de dispositivos Bluetooth en BTHENUM para asociar MAC con FriendlyName
+        bt_names: Dict[str, str] = {}
+        try:
+            key_bt = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Enum\BTHENUM")
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(key_bt, i)
+                    if sub.startswith("Dev_"):
+                        sub_k = winreg.OpenKey(key_bt, sub)
+                        j = 0
+                        while True:
+                            try:
+                                inst = winreg.EnumKey(sub_k, j)
+                                inst_k = winreg.OpenKey(sub_k, inst)
+                                try:
+                                    fn, _ = winreg.QueryValueEx(inst_k, "FriendlyName")
+                                    mac = sub.replace("Dev_", "").upper()
+                                    bt_names[mac] = str(fn)
+                                except Exception:
+                                    pass
+                                j += 1
+                            except WindowsError:
+                                break
+                    i += 1
+                except WindowsError:
+                    break
+        except Exception:
+            pass
+
+        # 2. Asociar puertos seriales con nombres de dispositivos Bluetooth
+        port_to_name: Dict[str, str] = {}
+        try:
+            key_bt = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Enum\BTHENUM")
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(key_bt, i)
+                    sub_k = winreg.OpenKey(key_bt, sub)
+                    j = 0
+                    while True:
+                        try:
+                            inst = winreg.EnumKey(sub_k, j)
+                            inst_k = winreg.OpenKey(sub_k, inst)
+                            try:
+                                dp = winreg.OpenKey(inst_k, "Device Parameters")
+                                pname, _ = winreg.QueryValueEx(dp, "PortName")
+                                pname_clean = str(pname).upper().strip()
+                                matched = None
+                                for mac, name in bt_names.items():
+                                    if mac in inst.upper():
+                                        matched = f"{name} Bluetooth"
+                                        break
+                                if not matched:
+                                    matched = "Bluetooth Serial"
+                                port_to_name[pname_clean] = matched
+                            except Exception:
+                                pass
+                            j += 1
+                        except WindowsError:
+                            break
+                    i += 1
+                except WindowsError:
+                    break
+        except Exception:
+            pass
+
+        # 3. Leer puertos activos de HARDWARE\DEVICEMAP\SERIALCOMM
+        try:
+            key_sc = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM")
+            i = 0
+            while True:
+                try:
+                    dev, port, _ = winreg.EnumValue(key_sc, i)
+                    port_upper = str(port).upper().strip()
+                    desc = port_to_name.get(port_upper)
+                    if not desc:
+                        if "bth" in str(dev).lower():
+                            desc = "Bluetooth Serial"
+                        else:
+                            desc = "Puerto Serie"
+                    puertos.append({
+                        "nombre": f"{port_upper} ({desc})",
+                        "puerto": port_upper,
+                        "is_default": False,
+                        "is_offline": False,
+                        "tipo": "serial",
+                        "descripcion": desc,
+                    })
+                    i += 1
+                except WindowsError:
+                    break
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return puertos
+
+
 def listar_impresoras_sistema() -> List[Dict]:
-    """Obtiene la lista de todas las impresoras instaladas en el sistema.
+    """Obtiene la lista de todas las impresoras instaladas en el sistema (Spooler y Puertos COM/Bluetooth).
     
     Retorna una lista de diccionarios:
     [
-        {"nombre": "POS-80", "is_default": False, "is_offline": False},
+        {"nombre": "POS-80", "is_default": False, "is_offline": False, "tipo": "spooler"},
+        {"nombre": "COM5 (MP80-12 Bluetooth)", "is_default": False, "is_offline": False, "tipo": "serial", "puerto": "COM5"},
         ...
     ]
     """
@@ -89,6 +202,7 @@ def listar_impresoras_sistema() -> List[Dict]:
                             "nombre": p_name,
                             "is_default": is_default,
                             "is_offline": is_offline,
+                            "tipo": "spooler",
                         })
         except Exception:
             pass
@@ -108,12 +222,21 @@ def listar_impresoras_sistema() -> List[Dict]:
                             "nombre": nombre,
                             "is_default": False,
                             "is_offline": False,
+                            "tipo": "spooler",
                         })
                         i += 1
                     except WindowsError:
                         break
             except Exception:
                 pass
+
+        # Agregar puertos COM / Bluetooth activos (ej. COM5 MP80-12)
+        try:
+            puertos_com = listar_puertos_com_sistema()
+            for p in puertos_com:
+                impresoras.append(p)
+        except Exception:
+            pass
 
     elif sistema in ("Linux", "Darwin"):
         try:
@@ -128,6 +251,7 @@ def listar_impresoras_sistema() -> List[Dict]:
                             "nombre": p_name,
                             "is_default": False,
                             "is_offline": is_offline,
+                            "tipo": "spooler",
                         })
         except Exception:
             pass
@@ -146,19 +270,21 @@ def guardar_impresora_termica_configurada(nombre: str) -> None:
 
 
 def detectar_impresora_termica() -> Optional[Dict]:
-    """Detecta la impresora térmica disponible.
+    """Detecta la impresora térmica disponible (vía Spooler de Windows o puerto COM/Bluetooth).
     
     Prioridad:
     1. Si hay una impresora guardada en app_settings y existe en el sistema.
-    2. Si alguna impresora instalada coincide con palabras clave conocidas
+    2. Si alguna impresora instalada o puerto COM coincide con palabras clave conocidas
        (MP80, MPT-II, POS-80, Thermal, etc.).
        
     Retorna un diccionario con:
     {
-        "nombre": "POS-80",
+        "nombre": "COM5 (MP80-12 Bluetooth)",
         "conectada": True,   # True si no está marcada como offline
         "is_default": False,
-        "configurada_manualmente": bool
+        "configurada_manualmente": bool,
+        "tipo": "serial" | "spooler",
+        "puerto": "COM5" | None
     }
     O None si no se encuentra ninguna impresora térmica.
     """
@@ -168,16 +294,24 @@ def detectar_impresora_termica() -> Optional[Dict]:
 
     guardada = obtener_impresora_termica_configurada()
     if guardada:
+        guardada_lower = guardada.lower()
         for imp in impresoras:
-            if imp["nombre"].lower() == guardada.lower():
+            nom_lower = imp["nombre"].lower()
+            puerto_lower = str(imp.get("puerto", "")).lower()
+            if (guardada_lower == nom_lower or 
+                (puerto_lower and guardada_lower == puerto_lower) or
+                (puerto_lower and puerto_lower in guardada_lower) or
+                (guardada_lower in nom_lower)):
                 return {
                     "nombre": imp["nombre"],
                     "conectada": not imp.get("is_offline", False),
                     "is_default": imp.get("is_default", False),
                     "configurada_manualmente": True,
+                    "tipo": imp.get("tipo", "spooler"),
+                    "puerto": imp.get("puerto"),
                 }
 
-    # Búsqueda por palabras clave térmicas
+    # Búsqueda por palabras clave térmicas (soporta tanto nombres de impresora como puertos COM MP80)
     for imp in impresoras:
         nombre_lower = imp["nombre"].lower()
         for kw in PALABRAS_CLAVE_TERMICAS:
@@ -187,6 +321,8 @@ def detectar_impresora_termica() -> Optional[Dict]:
                     "conectada": not imp.get("is_offline", False),
                     "is_default": imp.get("is_default", False),
                     "configurada_manualmente": False,
+                    "tipo": imp.get("tipo", "spooler"),
+                    "puerto": imp.get("puerto"),
                 }
 
     return None
@@ -198,6 +334,13 @@ def esta_impresora_conectada(nombre_impresora: Optional[str] = None) -> bool:
     if not target:
         det = detectar_impresora_termica()
         return bool(det and det.get("conectada", False))
+
+    # Si es un puerto COM (ej. 'COM5' o 'COM5 (MP80-12 Bluetooth)')
+    match = re.search(r"\bCOM\d+\b", target.upper())
+    if match:
+        puerto_buscado = match.group(0)
+        puertos_activos = listar_puertos_com_sistema()
+        return any(p.get("puerto") == puerto_buscado for p in puertos_activos)
 
     impresoras = listar_impresoras_sistema()
     for imp in impresoras:
@@ -408,14 +551,110 @@ def generar_comandos_escpos(venta_id: int, divisa: str = "USD") -> bytes:
     return bytes(buffer)
 
 
+def enviar_datos_crudos_com(
+    puerto: str,
+    datos: bytes,
+    timeout_ms: int = 6000
+) -> Tuple[bool, str]:
+    """Envía una secuencia de bytes crudos (ESC/POS) directamente a un puerto COM (Serial o Bluetooth SPP)."""
+    if not datos:
+        return False, "No hay datos para enviar a la impresora."
+
+    sistema = platform.system()
+    if sistema != "Windows":
+        return False, "Impresión directa por puerto COM solo implementada para Windows."
+
+    # Extraer el identificador del puerto (ej: de 'COM5 (MP80-12 Bluetooth)' -> 'COM5')
+    match = re.search(r"\bCOM\d+\b", (puerto or "").upper())
+    puerto_limpio = match.group(0) if match else puerto.strip().upper()
+    dispositivo_path = rf"\\.\{puerto_limpio}"
+
+    kernel32 = ctypes.windll.kernel32
+
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    OPEN_EXISTING = 3
+    FILE_ATTRIBUTE_NORMAL = 0x80
+
+    hPort = kernel32.CreateFileW(
+        dispositivo_path,
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        None,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        None
+    )
+
+    if hPort == -1 or hPort == 0:
+        err = kernel32.GetLastError()
+        if err == 121:  # ERROR_SEM_TIMEOUT
+            return False, (
+                f"Tiempo de espera agotado al conectar con {puerto_limpio} (Bluetooth). "
+                "Verifique que la impresora MP80-12 esté encendida, con batería y dentro del alcance."
+            )
+        elif err == 2:  # ERROR_FILE_NOT_FOUND
+            return False, (
+                f"El puerto {puerto_limpio} no está disponible. "
+                "Verifique que el dispositivo Bluetooth esté emparejado o el cable conectado."
+            )
+        elif err == 5:  # ERROR_ACCESS_DENIED
+            return False, (
+                f"Acceso denegado a {puerto_limpio}. El puerto puede estar ocupado por otro programa."
+            )
+        return False, f"Error al abrir puerto {puerto_limpio} (Código Windows {err})."
+
+    try:
+        # Configurar timeouts
+        class COMMTIMEOUTS(ctypes.Structure):
+            _fields_ = [
+                ("ReadIntervalTimeout", wintypes.DWORD),
+                ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
+                ("ReadTotalTimeoutConstant", wintypes.DWORD),
+                ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
+                ("WriteTotalTimeoutConstant", wintypes.DWORD),
+            ]
+
+        timeouts = COMMTIMEOUTS(0, 0, 1000, 0, timeout_ms)
+        kernel32.SetCommTimeouts(hPort, ctypes.byref(timeouts))
+
+        # Configurar parámetros serie (9600 8-N-1)
+        class DCB(ctypes.Structure):
+            _fields_ = [("DCBlength", wintypes.DWORD), ("raw", ctypes.c_byte * 128)]
+
+        dcb = DCB()
+        dcb.DCBlength = ctypes.sizeof(DCB)
+        if kernel32.BuildCommDCBW("baud=9600 parity=N data=8 stop=1", ctypes.byref(dcb)):
+            kernel32.SetCommState(hPort, ctypes.byref(dcb))
+
+        # Escribir datos
+        escritos = wintypes.DWORD(0)
+        datos_buf = ctypes.create_string_buffer(datos)
+        ok = kernel32.WriteFile(hPort, datos_buf, len(datos), ctypes.byref(escritos), None)
+
+        if not ok or escritos.value == 0:
+            err = kernel32.GetLastError()
+            return False, f"Fallo al transmitir datos a {puerto_limpio} (Error Windows: {err})."
+
+        kernel32.FlushFileBuffers(hPort)
+        return True, f"Ticket enviado con éxito a '{puerto_limpio}' ({escritos.value} bytes transmitidos)."
+
+    finally:
+        kernel32.CloseHandle(hPort)
+
+
 def enviar_datos_crudos_impresora(
     nombre_impresora: str,
     datos: bytes,
     nombre_documento: str = "Ticket de Venta"
 ) -> Tuple[bool, str]:
-    """Envía una secuencia de bytes crudos directamente a la cola de la impresora en Windows."""
+    """Envía una secuencia de bytes crudos a la impresora térmica (vía COM/Bluetooth o Spooler de Windows)."""
     if not datos:
         return False, "No hay datos para enviar a la impresora."
+
+    # Si el nombre corresponde a un puerto COM (ej: 'COM5' o 'COM5 (MP80-12 Bluetooth)')
+    if re.search(r"\bCOM\d+\b", (nombre_impresora or "").upper()):
+        return enviar_datos_crudos_com(nombre_impresora, datos)
 
     sistema = platform.system()
     if sistema == "Windows":

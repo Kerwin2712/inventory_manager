@@ -167,3 +167,43 @@ def test_imprimir_ticket_prueba_sin_impresora():
         ok, msg = imprimir_ticket_prueba()
         assert ok is False
         assert "No se detectó ninguna impresora" in msg
+
+
+def test_detectar_impresora_puerto_com_bluetooth():
+    """Detecta automáticamente una impresora térmica conectada vía puerto COM Bluetooth (MP80-12)."""
+    set_setting(CLAVE_IMPRESORA_TERMICA, "")
+    impresoras_falsas = [
+        {"nombre": "Microsoft Print to PDF", "is_default": True, "is_offline": False, "tipo": "spooler"},
+        {"nombre": "COM5 (MP80-12 Bluetooth)", "puerto": "COM5", "is_default": False, "is_offline": False, "tipo": "serial"},
+    ]
+
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras_falsas):
+        det = detectar_impresora_termica()
+        assert det is not None
+        assert det["nombre"] == "COM5 (MP80-12 Bluetooth)"
+        assert det["conectada"] is True
+        assert det["tipo"] == "serial"
+        assert det["puerto"] == "COM5"
+
+
+def test_esta_impresora_conectada_puerto_com():
+    """Verifica el estado de conexión de un puerto COM mediante listar_puertos_com_sistema."""
+    puertos_falsos = [
+        {"puerto": "COM5", "nombre": "COM5 (MP80-12 Bluetooth)"}
+    ]
+    with patch("services.printer_service.listar_puertos_com_sistema", return_value=puertos_falsos):
+        assert esta_impresora_conectada("COM5") is True
+        assert esta_impresora_conectada("COM5 (MP80-12 Bluetooth)") is True
+        assert esta_impresora_conectada("COM9") is False
+
+
+def test_enviar_datos_crudos_com_timeout():
+    """Verifica que el error 121 (timeout Bluetooth) entregue un mensaje claro al usuario."""
+    from services.printer_service import enviar_datos_crudos_com
+    with patch("ctypes.windll.kernel32.CreateFileW", return_value=-1), \
+         patch("ctypes.windll.kernel32.GetLastError", return_value=121):
+        ok, msg = enviar_datos_crudos_com("COM5", b"test")
+        assert ok is False
+        assert "Tiempo de espera agotado" in msg
+        assert "MP80-12" in msg
+
