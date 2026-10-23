@@ -587,26 +587,37 @@ class CarteraView(BaseView):
             if _imprimiendo_cli:
                 return
             _imprimiendo_cli = True
+            p = self.get_current_page(ev)
             btn_imprimir_cli.disabled = True
             btn_imprimir_cli.tooltip = "Enviando a la impresora..."
             try:
                 btn_imprimir_cli.update()
             except Exception:
                 pass
-            try:
-                ok, msg = imprimir_reporte_clientes(limite=60)
-                if ok:
-                    self.show_alert_success(ev, "¡Directorio de clientes enviado a la impresora térmica!")
-                else:
-                    self.show_alert_error(ev, f"Error al imprimir clientes: {msg}")
-            finally:
-                _imprimiendo_cli = False
-                btn_imprimir_cli.disabled = False
-                btn_imprimir_cli.tooltip = "Imprimir directorio en térmica (80mm)"
+            _repintar(p)
+
+            def _tarea():
+                nonlocal _imprimiendo_cli
                 try:
-                    btn_imprimir_cli.update()
-                except Exception:
-                    pass
+                    ok, msg = imprimir_reporte_clientes(limite=60)
+                    if ok:
+                        self.show_alert_success(ev, "¡Directorio de clientes enviado a la impresora térmica!")
+                    else:
+                        self.show_alert_error(ev, f"Error al imprimir clientes: {msg}")
+                except Exception as ex:
+                    self.show_alert_error(ev, f"Error al imprimir clientes: {ex}")
+                finally:
+                    _imprimiendo_cli = False
+                    btn_imprimir_cli.disabled = False
+                    btn_imprimir_cli.tooltip = "Imprimir directorio en térmica (80mm)"
+                    try:
+                        btn_imprimir_cli.update()
+                    except Exception:
+                        pass
+                    _repintar(p)
+
+            import threading
+            threading.Thread(target=_tarea, daemon=True).start()
 
         btn_imprimir_cli = ft.IconButton(
             icon=ft.Icons.PRINT_ROUNDED,

@@ -34,6 +34,16 @@ from services.printer_service import (
     limpiar_cache_impresora,
 )
 
+
+def _repintar(pagina) -> None:
+    """Fuerza un redibujado explícito de la página para que los cambios en hilos secundarios se reflejen sin Alt+Tab."""
+    try:
+        if pagina:
+            pagina.update()
+    except (RuntimeError, AttributeError, AssertionError):
+        pass
+
+
 class DashboardView(BaseView):
     """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
 
@@ -776,6 +786,8 @@ class DashboardView(BaseView):
             border_radius=10,
         )
 
+        pagina_activa = self.get_current_page(e)
+
         def _actualizar_card_estado(info):
             if info and info.get("conectada"):
                 card_estado.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.GREEN_400)
@@ -811,6 +823,7 @@ class DashboardView(BaseView):
                 card_estado.update()
             except Exception:
                 pass
+            _repintar(pagina_activa)
 
         info_inicial = detectar_impresora_termica(verificar_online=False)
         _actualizar_card_estado(info_inicial)
@@ -832,13 +845,16 @@ class DashboardView(BaseView):
                 dlg_conf.update()
             except Exception:
                 pass
+            _repintar(pagina_activa)
 
         def recargar_impresoras(ev):
             nonlocal procesando_accion
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(ev) or pagina_activa
             _bloquear_botones(True, "Buscando y verificando impresoras en el sistema...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion
@@ -873,6 +889,7 @@ class DashboardView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
@@ -894,14 +911,16 @@ class DashboardView(BaseView):
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(ev) or pagina_activa
             _bloquear_botones(True, "Enviando ticket a la impresora...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion
                 try:
                     sel = dd_impresoras.value or None
                     ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-                    nueva_info = detectar_impresora_termica(verificar_online=True)
+                    nueva_info = detectar_impresora_termica(verificar_online=False)
                     _actualizar_card_estado(nueva_info)
                     if ok:
                         self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
@@ -910,6 +929,7 @@ class DashboardView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
@@ -1135,29 +1155,49 @@ class DashboardView(BaseView):
         if getattr(self, "_imprimiendo_ventas_diarias", False):
             return
         self._imprimiendo_ventas_diarias = True
+        p = self.get_current_page(e)
         self.show_alert_info("Enviando reporte de ventas del día a la impresora térmica...", e)
-        try:
-            ok, msg = imprimir_reporte_ventas_diarias()
-            if ok:
-                self.show_alert_success("¡Reporte de Ventas Diarias impreso con éxito!", e)
-            else:
-                self.show_alert_error(f"Error al imprimir ventas diarias: {msg}", e)
-        finally:
-            self._imprimiendo_ventas_diarias = False
+        _repintar(p)
+
+        def _tarea():
+            try:
+                ok, msg = imprimir_reporte_ventas_diarias()
+                if ok:
+                    self.show_alert_success("¡Reporte de Ventas Diarias impreso con éxito!", e)
+                else:
+                    self.show_alert_error(f"Error al imprimir ventas diarias: {msg}", e)
+            except Exception as ex:
+                self.show_alert_error(f"Error al imprimir ventas diarias: {ex}", e)
+            finally:
+                self._imprimiendo_ventas_diarias = False
+                _repintar(p)
+
+        import threading
+        threading.Thread(target=_tarea, daemon=True).start()
 
     def _handle_imprimir_auditoria(self, e):
         if getattr(self, "_imprimiendo_auditoria", False):
             return
         self._imprimiendo_auditoria = True
+        p = self.get_current_page(e)
         self.show_alert_info("Enviando reporte de stock crítico a la impresora térmica...", e)
-        try:
-            ok, msg = imprimir_reporte_auditoria(stock_minimo=obtener_stock_minimo())
-            if ok:
-                self.show_alert_success("¡Reporte de Auditoría Preventiva impreso con éxito!", e)
-            else:
-                self.show_alert_error(f"Error al imprimir auditoría: {msg}", e)
-        finally:
-            self._imprimiendo_auditoria = False
+        _repintar(p)
+
+        def _tarea():
+            try:
+                ok, msg = imprimir_reporte_auditoria(stock_minimo=obtener_stock_minimo())
+                if ok:
+                    self.show_alert_success("¡Reporte de Auditoría Preventiva impreso con éxito!", e)
+                else:
+                    self.show_alert_error(f"Error al imprimir auditoría: {msg}", e)
+            except Exception as ex:
+                self.show_alert_error(f"Error al imprimir auditoría: {ex}", e)
+            finally:
+                self._imprimiendo_auditoria = False
+                _repintar(p)
+
+        import threading
+        threading.Thread(target=_tarea, daemon=True).start()
 
     def build_ventas_diarias(self) -> ft.Control:
         """Ventana "Ventas Diarias" del Inicio con selector de vista (separado, agrupado, tarjetas),

@@ -2,6 +2,16 @@ import flet as ft
 from ui.views.base_view import BaseView
 from services.user_service import create_user, get_all_users, update_user
 
+
+def _repintar(pagina) -> None:
+    """Fuerza un redibujado explícito de la página para que los cambios en hilos secundarios se reflejen sin Alt+Tab."""
+    try:
+        if pagina:
+            pagina.update()
+    except (RuntimeError, AttributeError, AssertionError):
+        pass
+
+
 class AdminUsersView(BaseView):
     """Vista exclusiva para que el usuario 'admin' inicial cree y gestione otros usuarios."""
 
@@ -382,6 +392,8 @@ class AdminUsersView(BaseView):
             border_radius=10,
         )
 
+        pagina_activa = self.get_current_page(e)
+
         def _actualizar_card_estado(info):
             if info and info.get("conectada"):
                 card_estado.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.GREEN_400)
@@ -417,6 +429,7 @@ class AdminUsersView(BaseView):
                 card_estado.update()
             except Exception:
                 pass
+            _repintar(pagina_activa)
 
         info_inicial = detectar_impresora_termica(verificar_online=False)
         _actualizar_card_estado(info_inicial)
@@ -438,13 +451,16 @@ class AdminUsersView(BaseView):
                 dlg_conf.update()
             except Exception:
                 pass
+            _repintar(pagina_activa)
 
         def recargar_impresoras(ev):
             nonlocal procesando_accion
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(ev) or pagina_activa
             _bloquear_botones(True, "Buscando y verificando impresoras en el sistema...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion
@@ -479,6 +495,7 @@ class AdminUsersView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
@@ -500,14 +517,16 @@ class AdminUsersView(BaseView):
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(ev) or pagina_activa
             _bloquear_botones(True, "Enviando ticket a la impresora...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion
                 try:
                     sel = dd_impresoras.value or None
                     ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-                    nueva_info = detectar_impresora_termica(verificar_online=True)
+                    nueva_info = detectar_impresora_termica(verificar_online=False)
                     _actualizar_card_estado(nueva_info)
                     if ok:
                         self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
@@ -516,6 +535,7 @@ class AdminUsersView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()

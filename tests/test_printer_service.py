@@ -18,8 +18,16 @@ from services.printer_service import (
     guardar_impresora_termica_configurada,
     generar_comandos_escpos,
     imprimir_ticket_prueba,
+    limpiar_cache_impresora,
     CLAVE_IMPRESORA_TERMICA,
 )
+
+
+@pytest.fixture(autouse=True)
+def limpiar_cache_test():
+    limpiar_cache_impresora()
+    yield
+    limpiar_cache_impresora()
 
 
 @pytest.fixture

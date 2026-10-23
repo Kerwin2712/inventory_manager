@@ -18,6 +18,7 @@ import os
 import platform
 import re
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
@@ -27,6 +28,9 @@ from core.database import get_connection, get_setting, set_setting
 
 # Configuración de clave en base de datos para la impresora seleccionada
 CLAVE_IMPRESORA_TERMICA = "printer_thermal_name"
+
+# Bloqueo para evitar colisiones y accesos simultáneos al puerto COM entre hilos de sondeo e impresión
+_PORT_LOCK = threading.RLock()
 
 # Caché en memoria para evitar sondeos repetidos que ralenticen la interfaz
 _PROBE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PrinterProbe")
@@ -303,22 +307,24 @@ def probar_conexion_puerto_com(puerto: str, timeout_sec: float = 2.2) -> bool:
     FILE_ATTRIBUTE_NORMAL = 0x80
 
     def _intentar():
-        try:
-            h = kernel32.CreateFileW(
-                dispositivo_path,
-                GENERIC_READ | GENERIC_WRITE,
-                0,
-                None,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                None
-            )
-            if h != -1 and h != 0:
-                kernel32.CloseHandle(h)
-                return True
-        except Exception:
-            pass
-        return False
+        with _PORT_LOCK:
+            try:
+                h = kernel32.CreateFileW(
+                    dispositivo_path,
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None
+                )
+                if h != -1 and h != 0:
+                    kernel32.CloseHandle(h)
+                    time.sleep(0.15)
+                    return True
+            except Exception:
+                pass
+            return False
 
     f = _PROBE_EXECUTOR.submit(_intentar)
     conectada = False
@@ -392,7 +398,14 @@ def detectar_impresora_termica(verificar_online: bool = True, forzar_verificacio
     puerto = candidata.get("puerto")
     conectada = not candidata.get("is_offline", False)
     if tipo == "serial" and puerto:
-        conectada = esta_impresora_conectada(puerto, forzar_verificacion=verificar_online or forzar_verificacion)
+        if verificar_online or forzar_verificacion:
+            conectada = esta_impresora_conectada(puerto, forzar_verificacion=forzar_verificacion)
+        else:
+            cached = _CACHE_ESTADO_CONEXION.get(puerto)
+            if cached and (time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
+                conectada = cached.get("conectada", True)
+            else:
+                conectada = not candidata.get("is_offline", False)
 
     return {
         "nombre": candidata["nombre"],
@@ -665,73 +678,86 @@ def enviar_datos_crudos_com(
     OPEN_EXISTING = 3
     FILE_ATTRIBUTE_NORMAL = 0x80
 
-    hPort = kernel32.CreateFileW(
-        dispositivo_path,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        None,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        None
-    )
-
-    if hPort == -1 or hPort == 0:
-        _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": False, "timestamp": time.time()}
-        err = kernel32.GetLastError()
-        if err == 121:  # ERROR_SEM_TIMEOUT
-            return False, (
-                f"Tiempo de espera agotado al conectar con {puerto_limpio} (Bluetooth). "
-                "Verifique que la impresora MP80-12 esté encendida, con batería y dentro del alcance."
+    with _PORT_LOCK:
+        hPort = -1
+        err = 0
+        # Reintentar hasta 3 veces si el driver Bluetooth de Windows aún está cerrando la conexión previa (error 5 o 32)
+        for intento in range(3):
+            hPort = kernel32.CreateFileW(
+                dispositivo_path,
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None
             )
-        elif err == 2:  # ERROR_FILE_NOT_FOUND
-            return False, (
-                f"El puerto {puerto_limpio} no está disponible. "
-                "Verifique que el dispositivo Bluetooth esté emparejado o el cable conectado."
-            )
-        elif err == 5:  # ERROR_ACCESS_DENIED
-            return False, (
-                f"Acceso denegado a {puerto_limpio}. El puerto puede estar ocupado por otro programa."
-            )
-        return False, f"Error al abrir puerto {puerto_limpio} (Código Windows {err})."
-
-    try:
-        # Configurar timeouts
-        class COMMTIMEOUTS(ctypes.Structure):
-            _fields_ = [
-                ("ReadIntervalTimeout", wintypes.DWORD),
-                ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
-                ("ReadTotalTimeoutConstant", wintypes.DWORD),
-                ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
-                ("WriteTotalTimeoutConstant", wintypes.DWORD),
-            ]
-
-        timeouts = COMMTIMEOUTS(0, 0, 1000, 0, timeout_ms)
-        kernel32.SetCommTimeouts(hPort, ctypes.byref(timeouts))
-
-        # Configurar parámetros serie (9600 8-N-1)
-        class DCB(ctypes.Structure):
-            _fields_ = [("DCBlength", wintypes.DWORD), ("raw", ctypes.c_byte * 128)]
-
-        dcb = DCB()
-        dcb.DCBlength = ctypes.sizeof(DCB)
-        if kernel32.BuildCommDCBW("baud=9600 parity=N data=8 stop=1", ctypes.byref(dcb)):
-            kernel32.SetCommState(hPort, ctypes.byref(dcb))
-
-        # Escribir datos
-        escritos = wintypes.DWORD(0)
-        datos_buf = ctypes.create_string_buffer(datos)
-        ok = kernel32.WriteFile(hPort, datos_buf, len(datos), ctypes.byref(escritos), None)
-
-        if not ok or escritos.value == 0:
+            if hPort != -1 and hPort != 0:
+                break
             err = kernel32.GetLastError()
-            return False, f"Fallo al transmitir datos a {puerto_limpio} (Error Windows: {err})."
+            if err in (5, 32, 121) and intento < 2:
+                time.sleep(0.35)
+                continue
+            break
 
-        kernel32.FlushFileBuffers(hPort)
-        _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": True, "timestamp": time.time()}
-        return True, f"Ticket enviado con éxito a '{puerto_limpio}' ({escritos.value} bytes transmitidos)."
+        if hPort == -1 or hPort == 0:
+            _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": False, "timestamp": time.time()}
+            if err == 121:  # ERROR_SEM_TIMEOUT
+                return False, (
+                    f"Tiempo de espera agotado al conectar con {puerto_limpio} (Bluetooth). "
+                    "Verifique que la impresora MP80-12 esté encendida, con batería y dentro del alcance."
+                )
+            elif err == 2:  # ERROR_FILE_NOT_FOUND
+                return False, (
+                    f"El puerto {puerto_limpio} no está disponible. "
+                    "Verifique que el dispositivo Bluetooth esté emparejado o el cable conectado."
+                )
+            elif err in (5, 32):  # ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION
+                return False, (
+                    f"Acceso denegado a {puerto_limpio}. El puerto puede estar ocupado por otro programa o liberándose."
+                )
+            return False, f"Error al abrir puerto {puerto_limpio} (Código Windows {err})."
 
-    finally:
-        kernel32.CloseHandle(hPort)
+        try:
+            # Configurar timeouts
+            class COMMTIMEOUTS(ctypes.Structure):
+                _fields_ = [
+                    ("ReadIntervalTimeout", wintypes.DWORD),
+                    ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
+                    ("ReadTotalTimeoutConstant", wintypes.DWORD),
+                    ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
+                    ("WriteTotalTimeoutConstant", wintypes.DWORD),
+                ]
+
+            timeouts = COMMTIMEOUTS(0, 0, 1000, 0, timeout_ms)
+            kernel32.SetCommTimeouts(hPort, ctypes.byref(timeouts))
+
+            # Configurar parámetros serie (9600 8-N-1)
+            class DCB(ctypes.Structure):
+                _fields_ = [("DCBlength", wintypes.DWORD), ("raw", ctypes.c_byte * 128)]
+
+            dcb = DCB()
+            dcb.DCBlength = ctypes.sizeof(DCB)
+            if kernel32.BuildCommDCBW("baud=9600 parity=N data=8 stop=1", ctypes.byref(dcb)):
+                kernel32.SetCommState(hPort, ctypes.byref(dcb))
+
+            # Escribir datos
+            escritos = wintypes.DWORD(0)
+            datos_buf = ctypes.create_string_buffer(datos)
+            ok = kernel32.WriteFile(hPort, datos_buf, len(datos), ctypes.byref(escritos), None)
+
+            if not ok or escritos.value == 0:
+                err = kernel32.GetLastError()
+                return False, f"Fallo al transmitir datos a {puerto_limpio} (Error Windows: {err})."
+
+            kernel32.FlushFileBuffers(hPort)
+            _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": True, "timestamp": time.time()}
+            return True, f"Ticket enviado con éxito a '{puerto_limpio}' ({escritos.value} bytes transmitidos)."
+
+        finally:
+            kernel32.CloseHandle(hPort)
+            # Pequeña pausa para que Windows RFCOMM/Bluetooth libere el handle en el kernel antes de la siguiente operación
+            time.sleep(0.15)
 
 
 def enviar_datos_crudos_impresora(
@@ -842,7 +868,7 @@ def imprimir_ticket_termico(
     """
     impresora_target = (nombre_impresora or "").strip()
     if not impresora_target:
-        det = detectar_impresora_termica()
+        det = detectar_impresora_termica(verificar_online=False)
         if not det:
             return False, "No se detectó ninguna impresora térmica conectada en el sistema."
         impresora_target = det["nombre"]
@@ -865,7 +891,7 @@ def imprimir_ticket_prueba(nombre_impresora: Optional[str] = None) -> Tuple[bool
     """Imprime un ticket de prueba corto para verificar la conexión y el avance de papel."""
     impresora_target = (nombre_impresora or "").strip()
     if not impresora_target:
-        det = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
+        det = detectar_impresora_termica(verificar_online=False)
         if not det:
             return False, "No se detectó ninguna impresora térmica conectada."
         impresora_target = det["nombre"]
@@ -1010,7 +1036,7 @@ def imprimir_reporte_ventas_diarias(
     """Imprime el reporte de cierre o ventas diarias en la impresora térmica de 80mm."""
     impresora_target = (nombre_impresora or "").strip()
     if not impresora_target:
-        det = detectar_impresora_termica()
+        det = detectar_impresora_termica(verificar_online=False)
         if not det:
             return False, "No se detectó ninguna impresora térmica conectada."
         impresora_target = det["nombre"]
@@ -1110,7 +1136,7 @@ def imprimir_reporte_auditoria(
     """Imprime el reporte de auditoría preventiva / stock crítico en la impresora térmica de 80mm."""
     impresora_target = (nombre_impresora or "").strip()
     if not impresora_target:
-        det = detectar_impresora_termica()
+        det = detectar_impresora_termica(verificar_online=False)
         if not det:
             return False, "No se detectó ninguna impresora térmica conectada."
         impresora_target = det["nombre"]
@@ -1212,7 +1238,7 @@ def imprimir_reporte_inventario(
     """Imprime el catálogo resumido de inventario en la impresora térmica de 80mm."""
     impresora_target = (nombre_impresora or "").strip()
     if not impresora_target:
-        det = detectar_impresora_termica()
+        det = detectar_impresora_termica(verificar_online=False)
         if not det:
             return False, "No se detectó ninguna impresora térmica conectada."
         impresora_target = det["nombre"]
@@ -1303,7 +1329,7 @@ def imprimir_reporte_clientes(
     """Imprime la lista resumida de clientes en la impresora térmica de 80mm."""
     impresora_target = (nombre_impresora or "").strip()
     if not impresora_target:
-        det = detectar_impresora_termica()
+        det = detectar_impresora_termica(verificar_online=False)
         if not det:
             return False, "No se detectó ninguna impresora térmica conectada."
         impresora_target = det["nombre"]

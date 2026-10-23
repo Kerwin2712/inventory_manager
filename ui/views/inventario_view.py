@@ -1276,37 +1276,48 @@ class InventarioView(BaseView):
             if _imprimiendo_inv:
                 return
             _imprimiendo_inv = True
+            p = self.get_current_page(ev)
             btn_imprimir_inv.disabled = True
             btn_imprimir_inv.tooltip = "Enviando a la impresora..."
             try:
                 btn_imprimir_inv.update()
             except Exception:
                 pass
-            try:
-                prods_imprimir = None
-                codigos_sel = self._seleccion.seleccionados
-                if codigos_sel:
-                    prods_imprimir = [
-                        self._productos_en_pantalla[c]
-                        for c in codigos_sel
-                        if c in self._productos_en_pantalla
-                    ]
-                ok, msg = imprimir_reporte_inventario(
-                    productos=prods_imprimir,
-                    limite=100
-                )
-                if ok:
-                    self.show_alert_success(ev, "¡Catálogo de inventario enviado a la impresora térmica!")
-                else:
-                    self.show_alert_error(ev, f"Error al imprimir inventario: {msg}")
-            finally:
-                _imprimiendo_inv = False
-                btn_imprimir_inv.disabled = False
-                btn_imprimir_inv.tooltip = "Imprimir catálogo en térmica (80mm)"
+            _repintar(p)
+
+            def _tarea():
+                nonlocal _imprimiendo_inv
                 try:
-                    btn_imprimir_inv.update()
-                except Exception:
-                    pass
+                    prods_imprimir = None
+                    codigos_sel = self._seleccion.seleccionados
+                    if codigos_sel:
+                        prods_imprimir = [
+                            self._productos_en_pantalla[c]
+                            for c in codigos_sel
+                            if c in self._productos_en_pantalla
+                        ]
+                    ok, msg = imprimir_reporte_inventario(
+                        productos=prods_imprimir,
+                        limite=100
+                    )
+                    if ok:
+                        self.show_alert_success(ev, "¡Catálogo de inventario enviado a la impresora térmica!")
+                    else:
+                        self.show_alert_error(ev, f"Error al imprimir inventario: {msg}")
+                except Exception as ex:
+                    self.show_alert_error(ev, f"Error al imprimir inventario: {ex}")
+                finally:
+                    _imprimiendo_inv = False
+                    btn_imprimir_inv.disabled = False
+                    btn_imprimir_inv.tooltip = "Imprimir catálogo en térmica (80mm)"
+                    try:
+                        btn_imprimir_inv.update()
+                    except Exception:
+                        pass
+                    _repintar(p)
+
+            import threading
+            threading.Thread(target=_tarea, daemon=True).start()
 
         btn_imprimir_inv = ft.IconButton(
             icon=ft.Icons.PRINT_ROUNDED,

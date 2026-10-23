@@ -3074,6 +3074,8 @@ class VentasView(BaseView):
             ft.Text("Procesando...", size=12, italic=True)
         ], visible=False, tight=True, spacing=8)
 
+        pagina_dialogo = self.get_current_page(e) or self._page_ref
+
         def _bloquear_botones_dialogo(bloqueado: bool, mensaje: str = "Procesando..."):
             for btn in botones_accion:
                 if hasattr(btn, "disabled"):
@@ -3085,6 +3087,7 @@ class VentasView(BaseView):
                 dialog.update()
             except Exception:
                 pass
+            _repintar(pagina_dialogo)
 
         def cerrar_dialogo(e_dialog):
             nonlocal procesando_accion
@@ -3135,34 +3138,45 @@ class VentasView(BaseView):
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(e_dialog) or pagina_dialogo
             _bloquear_botones_dialogo(True, "Enviando ticket a la impresora térmica...")
+            _repintar(p)
 
             self.divisa_impresion_pdf = dd_divisa.value or "USD"
             formato_papel = dd_formato_papel.value or "ticket_80mm"
-
             target_imp = nombre_impresora if impresora_conectada else None
-            try:
-                ok, mensaje = imprimir_ticket_termico(
-                    venta_id=self.venta_id_reciente,
-                    divisa=self.divisa_impresion_pdf,
-                    nombre_impresora=target_imp
-                )
-                self._close_dialog(e_dialog, dialog=dialog)
-                if ok:
-                    self.show_alert_success(
-                        e_dialog,
-                        f"¡Ticket N° {self.venta_id_reciente:06d} enviado a la impresora térmica '{nombre_impresora}'!"
+
+            def _tarea_imprimir():
+                nonlocal procesando_accion
+                try:
+                    ok, mensaje = imprimir_ticket_termico(
+                        venta_id=self.venta_id_reciente,
+                        divisa=self.divisa_impresion_pdf,
+                        nombre_impresora=target_imp
                     )
-                else:
-                    self.show_alert_error(
-                        e_dialog,
-                        f"No se pudo comunicar con la impresora térmica: {mensaje}"
-                    )
+                    self._close_dialog(e_dialog, dialog=dialog)
+                    if ok:
+                        self.show_alert_success(
+                            e_dialog,
+                            f"¡Ticket N° {self.venta_id_reciente:06d} enviado a la impresora térmica '{nombre_impresora}'!"
+                        )
+                    else:
+                        self.show_alert_error(
+                            e_dialog,
+                            f"No se pudo comunicar con la impresora térmica: {mensaje}"
+                        )
+                        self.abrir_contingencia_pdf(e_dialog, self.divisa_impresion_pdf, formato_papel)
+                except Exception as ex:
+                    self._close_dialog(e_dialog, dialog=dialog)
+                    self.show_alert_error(e_dialog, f"Error durante la impresión: {ex}")
                     self.abrir_contingencia_pdf(e_dialog, self.divisa_impresion_pdf, formato_papel)
-            except Exception as ex:
-                self._close_dialog(e_dialog, dialog=dialog)
-                self.show_alert_error(e_dialog, f"Error durante la impresión: {ex}")
-                self.abrir_contingencia_pdf(e_dialog, self.divisa_impresion_pdf, formato_papel)
+                finally:
+                    procesando_accion = False
+                    _bloquear_botones_dialogo(False)
+                    _repintar(p)
+
+            import threading
+            threading.Thread(target=_tarea_imprimir, daemon=True).start()
 
         # Tarjeta visual con el estado de conexión de la impresora térmica
         banner_impresora = ft.Container(
@@ -3175,7 +3189,9 @@ class VentasView(BaseView):
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(e_btn) or pagina_dialogo
             _bloquear_botones_dialogo(True, "Buscando y verificando conexión con la impresora...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion, impresora_conectada, nombre_impresora
@@ -3200,6 +3216,7 @@ class VentasView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones_dialogo(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
@@ -3285,6 +3302,7 @@ class VentasView(BaseView):
                 dialog.update()
             except Exception:
                 pass
+            _repintar(pagina_dialogo)
 
         dialog = ft.AlertDialog(
             title=ft.Row([
@@ -3364,6 +3382,8 @@ class VentasView(BaseView):
             border_radius=10,
         )
 
+        pagina_conf = self.get_current_page(e) or self._page_ref
+
         def _actualizar_card_estado(info):
             if info and info.get("conectada"):
                 card_estado.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.GREEN_400)
@@ -3399,6 +3419,7 @@ class VentasView(BaseView):
                 card_estado.update()
             except Exception:
                 pass
+            _repintar(pagina_conf)
 
         info_inicial = detectar_impresora_termica(verificar_online=False)
         _actualizar_card_estado(info_inicial)
@@ -3421,13 +3442,16 @@ class VentasView(BaseView):
                 dlg_conf.update()
             except Exception:
                 pass
+            _repintar(pagina_conf)
 
         def recargar_impresoras(ev):
             nonlocal procesando_accion
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(ev) or pagina_conf
             _bloquear_botones(True, "Buscando y verificando impresoras en el sistema...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion
@@ -3464,6 +3488,7 @@ class VentasView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
@@ -3492,14 +3517,16 @@ class VentasView(BaseView):
             if procesando_accion:
                 return
             procesando_accion = True
+            p = self.get_current_page(ev) or pagina_conf
             _bloquear_botones(True, "Enviando ticket de prueba a la impresora...")
+            _repintar(p)
 
             def _tarea():
                 nonlocal procesando_accion
                 try:
                     sel = dd_impresoras.value or None
                     ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-                    nueva_info = detectar_impresora_termica(verificar_online=True)
+                    nueva_info = detectar_impresora_termica(verificar_online=False)
                     _actualizar_card_estado(nueva_info)
                     self._actualizar_boton_impresora_cabecera(nueva_info)
 
@@ -3510,6 +3537,7 @@ class VentasView(BaseView):
                 finally:
                     procesando_accion = False
                     _bloquear_botones(False)
+                    _repintar(p)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
