@@ -21,6 +21,7 @@ from services import deudas_service
 # se vuelve a comparar ningún hash, para que exista una sola implementación de
 # esa comprobación en todo el proyecto.
 from services.user_service import authenticate_user
+from services.printer_service import imprimir_reporte_clientes
 
 
 
@@ -580,13 +581,52 @@ class CarteraView(BaseView):
         # destino de las flechas izquierda/derecha en esta pestaña (un solo
         # dueño por eje).
         self._cli_scroll_horizontal = ft.Row(controls=[self.dt_clientes], scroll=ft.ScrollMode.AUTO)
+        _imprimiendo_cli = False
+        def _on_imprimir_clientes(ev):
+            nonlocal _imprimiendo_cli
+            if _imprimiendo_cli:
+                return
+            _imprimiendo_cli = True
+            btn_imprimir_cli.disabled = True
+            btn_imprimir_cli.tooltip = "Enviando a la impresora..."
+            try:
+                btn_imprimir_cli.update()
+            except Exception:
+                pass
+            try:
+                ok, msg = imprimir_reporte_clientes(limite=60)
+                if ok:
+                    self.show_alert_success(ev, "¡Directorio de clientes enviado a la impresora térmica!")
+                else:
+                    self.show_alert_error(ev, f"Error al imprimir clientes: {msg}")
+            finally:
+                _imprimiendo_cli = False
+                btn_imprimir_cli.disabled = False
+                btn_imprimir_cli.tooltip = "Imprimir directorio en térmica (80mm)"
+                try:
+                    btn_imprimir_cli.update()
+                except Exception:
+                    pass
+
+        btn_imprimir_cli = ft.IconButton(
+            icon=ft.Icons.PRINT_ROUNDED,
+            icon_color=accent,
+            tooltip="Imprimir directorio en térmica (80mm)",
+            on_click=_on_imprimir_clientes
+        )
+
+        header_clientes = ft.Row([
+            ft.Text("Directorio General de Clientes", size=18, weight=ft.FontWeight.BOLD, color=text_color),
+            btn_imprimir_cli
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
         self._cli_scroll_vertical = ft.Column(
             controls=[
                 search_bar,
                 self.cli_result_container,
                 self.cli_form_container,
                 ft.Container(height=5),
-                ft.Text("Directorio General de Clientes", size=18, weight=ft.FontWeight.BOLD, color=text_color),
+                header_clientes,
                 self.create_card(
                     content=ft.Column(
                         controls=[

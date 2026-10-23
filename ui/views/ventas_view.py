@@ -625,21 +625,25 @@ class VentasView(BaseView):
             content=self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
         )
 
+        fila_superior = ft.Row(
+            controls=[
+                ft.Row([self.dd_carritos, btn_nuevo_carrito, btn_eliminar_carrito], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                self.tipo_venta_selector,
+                ft.Row([btn_impresora_header, tasa_badge], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True
+        )
+
         cabecera_card = self.create_card(
             content=ft.Column(
                 controls=[
+                    fila_superior,
+                    ft.Divider(height=8, color=self.get_border_color()),
                     self.tira_carritos_container,
-                    ft.Row(
-                        controls=[
-                            ft.Row([self.dd_carritos, btn_nuevo_carrito, btn_eliminar_carrito], spacing=5),
-                            self.tipo_venta_selector,
-                            ft.Row([btn_impresora_header, tasa_badge], spacing=8)
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        wrap=True
-                    ),
                 ],
-                spacing=10,
+                spacing=8,
             ),
             padding=12,
             border_radius=16
@@ -3044,10 +3048,38 @@ class VentasView(BaseView):
             border_radius=12
         )
 
+        procesando_accion = False
+
+        lbl_estado = ft.Row([
+            ft.ProgressRing(width=16, height=16, stroke_width=2),
+            ft.Text("Procesando...", size=12, italic=True)
+        ], visible=False, tight=True, spacing=8)
+
+        def _bloquear_botones_dialogo(bloqueado: bool, mensaje: str = "Procesando..."):
+            for btn in botones_accion:
+                if hasattr(btn, "disabled"):
+                    btn.disabled = bloqueado
+            lbl_estado.visible = bloqueado
+            if len(lbl_estado.controls) > 1 and hasattr(lbl_estado.controls[1], "value"):
+                lbl_estado.controls[1].value = mensaje
+            try:
+                dialog.update()
+            except Exception:
+                pass
+
         def cerrar_dialogo(e_dialog):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
             self._close_dialog(e_dialog, dialog=dialog)
 
         def confirmar_generar_pdf(e_dialog):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones_dialogo(True, "Generando comprobante en PDF...")
+
             self.divisa_impresion_pdf = dd_divisa.value or "USD"
             formato_papel = dd_formato_papel.value or "ticket_80mm"
             self._close_dialog(e_dialog, dialog=dialog)
@@ -3080,27 +3112,37 @@ class VentasView(BaseView):
                     self.show_alert_error(e_dialog, f"Error al generar comprobante PDF: {ex}")
 
         def confirmar_imprimir_termica(e_dialog):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones_dialogo(True, "Enviando ticket a la impresora térmica...")
+
             self.divisa_impresion_pdf = dd_divisa.value or "USD"
             formato_papel = dd_formato_papel.value or "ticket_80mm"
-            self._close_dialog(e_dialog, dialog=dialog)
 
             target_imp = nombre_impresora if impresora_conectada else None
-            ok, mensaje = imprimir_ticket_termico(
-                venta_id=self.venta_id_reciente,
-                divisa=self.divisa_impresion_pdf,
-                nombre_impresora=target_imp
-            )
-            if ok:
-                self.show_alert_success(
-                    e_dialog,
-                    f"¡Ticket N° {self.venta_id_reciente:06d} enviado a la impresora térmica '{nombre_impresora}'!"
+            try:
+                ok, mensaje = imprimir_ticket_termico(
+                    venta_id=self.venta_id_reciente,
+                    divisa=self.divisa_impresion_pdf,
+                    nombre_impresora=target_imp
                 )
-            else:
-                # Falla en la comunicación con la impresora: ofrecer contingencia PDF inmediatamente
-                self.show_alert_error(
-                    e_dialog,
-                    f"No se pudo comunicar con la impresora térmica: {mensaje}"
-                )
+                self._close_dialog(e_dialog, dialog=dialog)
+                if ok:
+                    self.show_alert_success(
+                        e_dialog,
+                        f"¡Ticket N° {self.venta_id_reciente:06d} enviado a la impresora térmica '{nombre_impresora}'!"
+                    )
+                else:
+                    self.show_alert_error(
+                        e_dialog,
+                        f"No se pudo comunicar con la impresora térmica: {mensaje}"
+                    )
+                    self.abrir_contingencia_pdf(e_dialog, self.divisa_impresion_pdf, formato_papel)
+            except Exception as ex:
+                self._close_dialog(e_dialog, dialog=dialog)
+                self.show_alert_error(e_dialog, f"Error durante la impresión: {ex}")
                 self.abrir_contingencia_pdf(e_dialog, self.divisa_impresion_pdf, formato_papel)
 
         # Tarjeta visual con el estado de conexión de la impresora térmica
@@ -3188,6 +3230,7 @@ class VentasView(BaseView):
                 ft.Text("Seleccione la divisa y formato para el comprobante:"),
                 dd_divisa,
                 dd_formato_papel,
+                lbl_estado,
             ], tight=True, spacing=10),
             actions=botones_accion,
             actions_alignment=ft.MainAxisAlignment.END
@@ -3241,37 +3284,88 @@ class VentasView(BaseView):
             border_radius=12
         )
 
+        procesando_accion = False
+
+        lbl_estado = ft.Row([
+            ft.ProgressRing(width=16, height=16, stroke_width=2),
+            ft.Text("Procesando...", size=12, italic=True)
+        ], visible=False, tight=True, spacing=8)
+
+        btn_cerrar = ft.TextButton("Cerrar")
+        btn_probar = ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT)
+        btn_guardar = ft.Button("Guardar", icon=ft.Icons.CHECK,
+                                  style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE))
+
+        def _bloquear_botones(bloqueado: bool, mensaje: str = "Procesando..."):
+            btn_cerrar.disabled = bloqueado
+            btn_probar.disabled = bloqueado
+            btn_guardar.disabled = bloqueado
+            lbl_estado.visible = bloqueado
+            if len(lbl_estado.controls) > 1 and hasattr(lbl_estado.controls[1], "value"):
+                lbl_estado.controls[1].value = mensaje
+            try:
+                dlg_conf.update()
+            except Exception:
+                pass
+
         def guardar_config(ev):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Guardando configuración...")
             seleccion = dd_impresoras.value or ""
             guardar_impresora_termica_configurada(seleccion)
             self._close_dialog(ev, dialog=dlg_conf)
             self.show_alert_success(ev, f"Configuración de impresora guardada: {seleccion or 'Detección automática'}")
+
+            # Actualizar botón de estado en la cabecera si existe
+            if hasattr(self, "_btn_impresora_termica") and self._btn_impresora_termica:
+                info = detectar_impresora_termica()
+                conectada = bool(info and info.get("conectada", False))
+                self._btn_impresora_termica.icon = ft.Icons.PRINT if conectada else ft.Icons.PRINT_DISABLED_OUTLINED
+                self._btn_impresora_termica.icon_color = ft.Colors.GREEN_400 if conectada else ft.Colors.GREY_500
+                self._btn_impresora_termica.tooltip = f"Térmica: {info['nombre']} (Conectada)" if conectada else "Térmica: Desconectada"
+                try:
+                    self._btn_impresora_termica.update()
+                except Exception:
+                    pass
+
             if dialog_padre:
                 # Refrescar diálogo padre si está abierto
                 self._close_dialog(ev, dialog=dialog_padre)
                 self.mostrar_dialogo_pdf(ev)
 
         def probar_impresion(ev):
-            sel = dd_impresoras.value or None
-            ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-            if ok:
-                self.show_alert_success(ev, "Ticket de prueba enviado con éxito.")
-            else:
-                self.show_alert_error(ev, f"Error al enviar prueba: {msg}")
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Enviando ticket de prueba a la impresora...")
+            try:
+                sel = dd_impresoras.value or None
+                ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
+                if ok:
+                    self.show_alert_success(ev, "Ticket de prueba enviado con éxito a la impresora.")
+                else:
+                    self.show_alert_error(ev, f"Error al enviar prueba: {msg}")
+            finally:
+                procesando_accion = False
+                _bloquear_botones(False)
+
+        btn_cerrar.on_click = lambda ev: self._close_dialog(ev, dialog=dlg_conf)
+        btn_probar.on_click = probar_impresion
+        btn_guardar.on_click = guardar_config
 
         dlg_conf = ft.AlertDialog(
             title=ft.Row([ft.Icon(ft.Icons.PRINT_ROUNDED, color=ft.Colors.BLUE_400), ft.Text("Configurar Impresora Térmica")]),
             content=ft.Column([
                 ft.Text("Seleccione la impresora para emitir los tickets de venta (80mm)."),
                 dd_impresoras,
+                lbl_estado,
                 ft.Text("Compatible con MP80-12, MPT-II, POS-80 (USB / Bluetooth).", size=11, color=self.get_subtext_color()),
             ], tight=True, spacing=12),
-            actions=[
-                ft.TextButton("Cerrar", on_click=lambda ev: self._close_dialog(ev, dialog=dlg_conf)),
-                ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT, on_click=probar_impresion),
-                ft.Button("Guardar", icon=ft.Icons.CHECK, on_click=guardar_config,
-                          style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)),
-            ],
+            actions=[btn_cerrar, btn_probar, btn_guardar],
             actions_alignment=ft.MainAxisAlignment.END
         )
         self._open_dialog(dlg_conf, e)

@@ -29,6 +29,8 @@ from services.printer_service import (
     listar_impresoras_sistema,
     guardar_impresora_termica_configurada,
     obtener_impresora_termica_configurada,
+    imprimir_reporte_ventas_diarias,
+    imprimir_reporte_auditoria,
 )
 
 class DashboardView(BaseView):
@@ -126,6 +128,24 @@ class DashboardView(BaseView):
         # pantalla.
         self._scroll_inicio_v = None
         self._scroll_inicio_h = None
+
+        # ── Estado de la lista de Ventas Diarias ─────────────────────────────
+        self._modo_vista_ventas_diarias = "separado"  # "separado", "agrupado", "tarjetas"
+        self._columnas_ocultables_ventas_diarias = [
+            "fecha_hora", "descripcion_corta", "metodo_pago",
+            "referencia_pago", "cantidad_articulos", "monto_total",
+        ]
+        self._columnas_labels_ventas_diarias = {
+            "fecha_hora": "Fecha y hora",
+            "descripcion_corta": "Descripción Corta",
+            "metodo_pago": "Método de Pago",
+            "referencia_pago": "Referencia de Pago",
+            "cantidad_articulos": "Cantidad de Artículos",
+            "monto_total": "Monto Total Pagado",
+        }
+        self._columnas_visibles_ventas_diarias = {
+            k: True for k in self._columnas_ocultables_ventas_diarias
+        }
 
         # ── Estado de la lista de Auditoría Preventiva ──────────────────────
         # Modo de vista elegido y alertas que hay en pantalla, indexadas por
@@ -727,7 +747,35 @@ class DashboardView(BaseView):
             border_radius=12
         )
 
+        procesando_accion = False
+
+        lbl_estado = ft.Row([
+            ft.ProgressRing(width=16, height=16, stroke_width=2),
+            ft.Text("Procesando...", size=12, italic=True)
+        ], visible=False, tight=True, spacing=8)
+
+        btn_cerrar = ft.TextButton("Cerrar")
+        btn_probar = ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT)
+        btn_guardar = ft.Button("Guardar", icon=ft.Icons.CHECK,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE))
+
+        def _bloquear_botones(bloqueado: bool, mensaje: str = "Procesando..."):
+            btn_cerrar.disabled = bloqueado
+            btn_probar.disabled = bloqueado
+            btn_guardar.disabled = bloqueado
+            lbl_estado.visible = bloqueado
+            lbl_estado.controls[1].value = mensaje
+            try:
+                dlg_conf.update()
+            except Exception:
+                pass
+
         def guardar_config(ev):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Guardando configuración...")
             seleccion = dd_impresoras.value or ""
             guardar_impresora_termica_configurada(seleccion)
             self.cerrar_dialogo(dlg_conf, ev)
@@ -735,26 +783,35 @@ class DashboardView(BaseView):
             self.rebuild_ui()
 
         def probar_impresion(ev):
-            sel = dd_impresoras.value or None
-            ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-            if ok:
-                self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
-            else:
-                self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Enviando ticket a la impresora...")
+            try:
+                sel = dd_impresoras.value or None
+                ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
+                if ok:
+                    self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
+                else:
+                    self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+            finally:
+                procesando_accion = False
+                _bloquear_botones(False)
+
+        btn_cerrar.on_click = lambda ev: self.cerrar_dialogo(dlg_conf, ev)
+        btn_probar.on_click = probar_impresion
+        btn_guardar.on_click = guardar_config
 
         dlg_conf = ft.AlertDialog(
             title=ft.Row([ft.Icon(ft.Icons.PRINT_ROUNDED, color=ft.Colors.BLUE_400), ft.Text("Configurar Impresora Térmica")]),
             content=ft.Column([
                 ft.Text("Seleccione la impresora para emitir los tickets de venta (80mm)."),
                 dd_impresoras,
+                lbl_estado,
                 ft.Text("Compatible con MP80-12, MPT-II, POS-80 (USB / Bluetooth).", size=11, color=self.get_subtext_color()),
             ], tight=True, spacing=12),
-            actions=[
-                ft.TextButton("Cerrar", on_click=lambda ev: self.cerrar_dialogo(dlg_conf, ev)),
-                ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT, on_click=probar_impresion),
-                ft.Button("Guardar", icon=ft.Icons.CHECK, on_click=guardar_config,
-                          style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)),
-            ],
+            actions=[btn_cerrar, btn_probar, btn_guardar],
             actions_alignment=ft.MainAxisAlignment.END
         )
         self.abrir_dialogo(dlg_conf, e)
@@ -920,93 +977,247 @@ class DashboardView(BaseView):
             wrap=True,
         )
 
-    def build_ventas_diarias(self) -> ft.Control:
-        """Ventana "Ventas Diarias" del Inicio (nueva función 1 de la
-        especificación 17/10/2026): todas las ventas del día de hoy en forma de
-        lista, la más reciente arriba y la más vieja abajo.
+    def _build_selector_columnas_ventas_diarias(self, accent, text_color) -> ft.PopupMenuButton:
+        items = []
+        for key in self._columnas_ocultables_ventas_diarias:
+            item = ft.PopupMenuItem(
+                content=ft.Text(self._columnas_labels_ventas_diarias[key]),
+                checked=self._columnas_visibles_ventas_diarias.get(key, True),
+                on_click=lambda e, k=key: self._toggle_columna_ventas_diarias(k, e),
+            )
+            items.append(item)
 
-        Va entre las cuatro tarjetas y la Auditoría Preventiva, y a ancho
-        completo como ellas. Las columnas llevan ancho fijo (suman ~1120 px) y
-        la descripción se parte en dos líneas al estilo "agrupado" del
-        Inventario, porque el requisito explícito es que no haga falta un
-        deslizable horizontal para leer toda la información de la fila."""
+        return ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN_ROUNDED,
+            icon_color=accent,
+            tooltip="Mostrar/ocultar columnas de ventas diarias",
+            items=items,
+        )
+
+    def _toggle_columna_ventas_diarias(self, key: str, e=None):
+        visibles = [k for k in self._columnas_ocultables_ventas_diarias if self._columnas_visibles_ventas_diarias.get(k, True)]
+        if self._columnas_visibles_ventas_diarias.get(key, True) and len(visibles) <= 1:
+            self.show_alert_info("Debe quedar al menos una columna visible.", e)
+            return
+        self._columnas_visibles_ventas_diarias[key] = not self._columnas_visibles_ventas_diarias.get(key, True)
+        self.rebuild_ui()
+
+    def _handle_cambio_modo_ventas_diarias(self, e):
+        if e.control.selected:
+            self._modo_vista_ventas_diarias = list(e.control.selected)[0]
+            self.rebuild_ui()
+
+    def _handle_imprimir_ventas_diarias(self, e):
+        if getattr(self, "_imprimiendo_ventas_diarias", False):
+            return
+        self._imprimiendo_ventas_diarias = True
+        self.show_alert_info("Enviando reporte de ventas del día a la impresora térmica...", e)
+        try:
+            ok, msg = imprimir_reporte_ventas_diarias()
+            if ok:
+                self.show_alert_success("¡Reporte de Ventas Diarias impreso con éxito!", e)
+            else:
+                self.show_alert_error(f"Error al imprimir ventas diarias: {msg}", e)
+        finally:
+            self._imprimiendo_ventas_diarias = False
+
+    def _handle_imprimir_auditoria(self, e):
+        if getattr(self, "_imprimiendo_auditoria", False):
+            return
+        self._imprimiendo_auditoria = True
+        self.show_alert_info("Enviando reporte de stock crítico a la impresora térmica...", e)
+        try:
+            ok, msg = imprimir_reporte_auditoria(stock_minimo=obtener_stock_minimo())
+            if ok:
+                self.show_alert_success("¡Reporte de Auditoría Preventiva impreso con éxito!", e)
+            else:
+                self.show_alert_error(f"Error al imprimir auditoría: {msg}", e)
+        finally:
+            self._imprimiendo_auditoria = False
+
+    def build_ventas_diarias(self) -> ft.Control:
+        """Ventana "Ventas Diarias" del Inicio con selector de vista (separado, agrupado, tarjetas),
+        selector de columnas visibles e impresión directa en impresora térmica de 80mm."""
         text_color = self.get_text_color()
         subtext = self.get_subtext_color()
         accent = self.get_accent_color()
+        border = self.get_border_color()
 
         ventas = obtener_ventas_del_dia()
 
         if ventas:
-            filas = []
-            for venta in ventas:
-                cantidad = venta["cantidad_articulos"]
-                # Las cantidades son REAL (hay productos que se venden por
-                # fracción): solo se muestran decimales cuando existen.
-                cantidad_txt = (
-                    f"{cantidad:,.0f}" if float(cantidad).is_integer() else f"{cantidad:,.2f}"
-                )
-                simbolo = "Bs" if venta["moneda"] == "Bs" else "$"
-                referencia = venta["referencia_pago"]
+            if self._modo_vista_ventas_diarias == "agrupado":
+                grupos = {}
+                for v in ventas:
+                    met = v.get("metodo_pago") or "Efectivo"
+                    if met not in grupos:
+                        grupos[met] = []
+                    grupos[met].append(v)
 
-                filas.append(
-                    ft.DataRow(cells=[
-                        ft.DataCell(ft.Container(
-                            content=ft.Text(venta["fecha_hora"], size=12, color=text_color, weight=ft.FontWeight.W_600),
-                            width=150,
-                        )),
-                        ft.DataCell(ft.Container(
-                            content=ft.Text(
-                                venta["descripcion_corta"], size=13, color=text_color,
-                                # Dos líneas: un carrito con varios artículos
-                                # concatena todos sus nombres cortos y una sola
-                                # línea los dejaría casi todos fuera.
-                                max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
-                            ),
-                            width=380,
-                            padding=ft.Padding.symmetric(vertical=6),
-                        )),
-                        ft.DataCell(ft.Container(
-                            content=ft.Text(venta["metodo_pago"], size=12, color=text_color),
-                            width=140,
-                        )),
-                        ft.DataCell(ft.Container(
-                            # En Efectivo no hay comprobante que mostrar: el
-                            # guion deja claro que la casilla no quedó vacía
-                            # por un dato perdido.
-                            content=ft.Text(
-                                referencia or "-", size=12,
-                                color=text_color if referencia else subtext,
-                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-                            ),
-                            width=160,
-                        )),
-                        ft.DataCell(ft.Container(
-                            content=ft.Text(cantidad_txt, size=12, color=text_color, weight=ft.FontWeight.W_600),
-                            width=130,
-                        )),
-                        ft.DataCell(ft.Container(
-                            content=ft.Text(
-                                f"{simbolo} {venta['monto_total']:,.2f}",
-                                size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400,
-                            ),
-                            width=160,
-                        )),
-                    ])
-                )
+                bloques_grupos = []
+                for met, items_grupo in grupos.items():
+                    tot_usd = sum(float(x.get("monto_total") or 0.0) for x in items_grupo if x.get("moneda") != "Bs")
+                    tot_bs = sum(float(x.get("monto_total") or 0.0) for x in items_grupo if x.get("moneda") == "Bs")
 
-            contenido = ft.DataTable(
-                columns=[
-                    ft.DataColumn(ft.Text("Fecha y hora", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Descripción Corta", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Método de Pago", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Referencia de Pago", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Cantidad de Artículos", color=text_color, weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Monto Total Pagado", color=text_color, weight=ft.FontWeight.BOLD)),
-                ],
-                rows=filas,
-                data_row_min_height=56,
-                data_row_max_height=80,
-            )
+                    resumen_txt = []
+                    if tot_usd > 0:
+                        resumen_txt.append(f"$ {tot_usd:,.2f}")
+                    if tot_bs > 0:
+                        resumen_txt.append(f"Bs. {tot_bs:,.2f}")
+                    txt_totales = " / ".join(resumen_txt) if resumen_txt else "$ 0.00"
+
+                    filas_grp = []
+                    for v in items_grupo:
+                        simbolo = "Bs" if v["moneda"] == "Bs" else "$"
+                        filas_grp.append(
+                            ft.Container(
+                                content=ft.Row([
+                                    ft.Text(v["fecha_hora"], size=11, color=subtext, width=120),
+                                    ft.Text(f"#{v['venta_id']:05d}", size=11, weight=ft.FontWeight.BOLD, color=text_color, width=70),
+                                    ft.Text(v["descripcion_corta"], size=12, color=text_color, expand=True, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ft.Text(v["referencia_pago"] or "-", size=11, color=subtext, width=110, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ft.Text(f"{simbolo} {v['monto_total']:,.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400, width=100, text_align=ft.TextAlign.RIGHT),
+                                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                                padding=ft.Padding.symmetric(vertical=4, horizontal=8),
+                                border=ft.Border.only(bottom=ft.BorderSide(1, border)),
+                            )
+                        )
+
+                    bloques_grupos.append(
+                        ft.Container(
+                            content=ft.Column([
+                                ft.Row([
+                                    ft.Row([
+                                        ft.Icon(ft.Icons.PAYMENTS_OUTLINED, color=accent, size=18),
+                                        ft.Text(met, size=13, weight=ft.FontWeight.BOLD, color=text_color),
+                                        ft.Container(
+                                            content=ft.Text(f"{len(items_grupo)} venta(s)", size=10, weight=ft.FontWeight.W_600, color=accent),
+                                            bgcolor=ft.Colors.with_opacity(0.12, accent),
+                                            padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+                                            border_radius=8,
+                                        ),
+                                    ], spacing=6),
+                                    ft.Text(f"Subtotal: {txt_totales}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+                                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                ft.Column(filas_grp, spacing=2),
+                            ], spacing=6),
+                            padding=10,
+                            bgcolor=self.get_card_bg(),
+                            border=ft.Border.all(1, border),
+                            border_radius=12,
+                        )
+                    )
+                contenido = ft.Column(bloques_grupos, spacing=10)
+
+            elif self._modo_vista_ventas_diarias == "tarjetas":
+                tarjetas_items = []
+                for venta in ventas:
+                    simbolo = "Bs" if venta["moneda"] == "Bs" else "$"
+
+                    tarjetas_items.append(
+                        ft.Container(
+                            content=ft.Column([
+                                ft.Row([
+                                    ft.Row([
+                                        ft.Icon(ft.Icons.RECEIPT_LONG, size=14, color=accent),
+                                        ft.Text(f"#{venta['venta_id']:05d}", size=11, weight=ft.FontWeight.BOLD, color=text_color),
+                                    ], spacing=4),
+                                    ft.Text(venta["fecha_hora"][-5:], size=11, color=subtext),
+                                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                ft.Text(
+                                    venta["descripcion_corta"], size=12, color=text_color,
+                                    max_lines=2, overflow=ft.TextOverflow.ELLIPSIS
+                                ),
+                                ft.Row([
+                                    ft.Container(
+                                        content=ft.Text(venta["metodo_pago"], size=10, weight=ft.FontWeight.W_500, color=subtext),
+                                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                        border=ft.Border.all(1, border),
+                                        border_radius=6,
+                                    ),
+                                    ft.Text(
+                                        f"{simbolo} {venta['monto_total']:,.2f}",
+                                        size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400
+                                    ),
+                                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                            ], spacing=6),
+                            padding=12,
+                            width=260,
+                            bgcolor=self.get_card_bg(),
+                            border=ft.Border.all(1, border),
+                            border_radius=12,
+                        )
+                    )
+                contenido = ft.Row(tarjetas_items, wrap=True, spacing=10)
+
+            else:
+                columnas_activas = [k for k in self._columnas_ocultables_ventas_diarias if self._columnas_visibles_ventas_diarias.get(k, True)]
+                filas = []
+                for venta in ventas:
+                    cantidad = venta["cantidad_articulos"]
+                    cantidad_txt = (
+                        f"{cantidad:,.0f}" if float(cantidad).is_integer() else f"{cantidad:,.2f}"
+                    )
+                    simbolo = "Bs" if venta["moneda"] == "Bs" else "$"
+                    referencia = venta["referencia_pago"]
+
+                    celdas = []
+                    for col_key in columnas_activas:
+                        if col_key == "fecha_hora":
+                            celdas.append(ft.DataCell(ft.Container(
+                                content=ft.Text(venta["fecha_hora"], size=12, color=text_color, weight=ft.FontWeight.W_600),
+                                width=150,
+                            )))
+                        elif col_key == "descripcion_corta":
+                            celdas.append(ft.DataCell(ft.Container(
+                                content=ft.Text(
+                                    venta["descripcion_corta"], size=13, color=text_color,
+                                    max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                                ),
+                                width=380,
+                                padding=ft.Padding.symmetric(vertical=6),
+                            )))
+                        elif col_key == "metodo_pago":
+                            celdas.append(ft.DataCell(ft.Container(
+                                content=ft.Text(venta["metodo_pago"], size=12, color=text_color),
+                                width=140,
+                            )))
+                        elif col_key == "referencia_pago":
+                            celdas.append(ft.DataCell(ft.Container(
+                                content=ft.Text(
+                                    referencia or "-", size=12,
+                                    color=text_color if referencia else subtext,
+                                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                                ),
+                                width=160,
+                            )))
+                        elif col_key == "cantidad_articulos":
+                            celdas.append(ft.DataCell(ft.Container(
+                                content=ft.Text(cantidad_txt, size=12, color=text_color, weight=ft.FontWeight.W_600),
+                                width=130,
+                            )))
+                        elif col_key == "monto_total":
+                            celdas.append(ft.DataCell(ft.Container(
+                                content=ft.Text(
+                                    f"{simbolo} {venta['monto_total']:,.2f}",
+                                    size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400,
+                                ),
+                                width=160,
+                            )))
+
+                    filas.append(ft.DataRow(cells=celdas))
+
+                columnas_dt = [
+                    ft.DataColumn(ft.Text(self._columnas_labels_ventas_diarias[k], color=text_color, weight=ft.FontWeight.BOLD))
+                    for k in columnas_activas
+                ]
+
+                contenido = ft.DataTable(
+                    columns=columnas_dt,
+                    rows=filas,
+                    data_row_min_height=56,
+                    data_row_max_height=80,
+                )
         else:
             contenido = ft.Container(
                 content=ft.Column([
@@ -1016,6 +1227,35 @@ class DashboardView(BaseView):
                 padding=30,
             )
 
+        btn_imprimir_ventas = ft.IconButton(
+            icon=ft.Icons.PRINT_ROUNDED,
+            icon_color=accent,
+            tooltip="Imprimir Reporte Diario en Térmica (80mm)",
+            on_click=self._handle_imprimir_ventas_diarias,
+        )
+
+        btn_modo_vista = ft.SegmentedButton(
+            selected=[self._modo_vista_ventas_diarias],
+            segments=[
+                ft.Segment(
+                    value="separado",
+                    label=ft.Text("Separado", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_COLUMN_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="agrupado",
+                    label=ft.Text("Agrupado", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.VIEW_LIST_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="tarjetas",
+                    label=ft.Text("Tarjetas", size=11, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.GRID_VIEW_ROUNDED, size=16),
+                ),
+            ],
+            on_change=self._handle_cambio_modo_ventas_diarias,
+        )
+
         tarjeta = self.create_card(
             content=ft.Column(
                 controls=[
@@ -1024,11 +1264,16 @@ class DashboardView(BaseView):
                             ft.Row([
                                 ft.Icon(ft.Icons.RECEIPT_LONG_ROUNDED, color=accent),
                                 ft.Text("Ventas Diarias", size=15, weight=ft.FontWeight.BOLD, color=text_color),
-                            ], spacing=10),
-                            ft.Text(
-                                f"{len(ventas)} venta(s) hoy", size=12,
-                                color=subtext, weight=ft.FontWeight.W_600,
-                            ),
+                                ft.Text(
+                                    f"{len(ventas)} venta(s) hoy", size=12,
+                                    color=subtext, weight=ft.FontWeight.W_600,
+                                ),
+                            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            ft.Row([
+                                btn_imprimir_ventas,
+                                btn_modo_vista,
+                                self._build_selector_columnas_ventas_diarias(accent, text_color),
+                            ], spacing=6, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         wrap=True,
@@ -1043,9 +1288,6 @@ class DashboardView(BaseView):
             col={"sm": 12, "lg": 12},
         )
 
-        # Igual que `build_data_sections`: el `ResponsiveRow` es lo que hace que
-        # la tarjeta se estire de izquierda a derecha (un Container suelto en un
-        # Column se encoge al ancho de su contenido).
         return ft.ResponsiveRow(controls=[tarjeta], spacing=20)
 
     def build_data_sections(self) -> ft.Control:
@@ -1920,6 +2162,12 @@ class DashboardView(BaseView):
                                 self._nav_h_auditoria,
                                 self._btn_modo_vista_auditoria,
                                 self._build_selector_columnas_auditoria(accent, text_color),
+                                ft.IconButton(
+                                    icon=ft.Icons.PRINT_ROUNDED,
+                                    icon_color=accent,
+                                    tooltip="Imprimir Reporte de Stock Crítico en Térmica (80mm)",
+                                    on_click=self._handle_imprimir_auditoria,
+                                ),
                                 inp_stock_minimo,
                                 btn_guardar_stock_minimo,
                                 # Seis grupos de controles en una sola barra:

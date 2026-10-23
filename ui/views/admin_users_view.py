@@ -352,7 +352,35 @@ class AdminUsersView(BaseView):
             border_radius=12
         )
 
+        procesando_accion = False
+
+        lbl_estado = ft.Row([
+            ft.ProgressRing(width=16, height=16, stroke_width=2),
+            ft.Text("Procesando...", size=12, italic=True)
+        ], visible=False, tight=True, spacing=8)
+
+        btn_cerrar = ft.TextButton("Cerrar")
+        btn_probar = ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT)
+        btn_guardar = ft.Button("Guardar", icon=ft.Icons.CHECK,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE))
+
+        def _bloquear_botones(bloqueado: bool, mensaje: str = "Procesando..."):
+            btn_cerrar.disabled = bloqueado
+            btn_probar.disabled = bloqueado
+            btn_guardar.disabled = bloqueado
+            lbl_estado.visible = bloqueado
+            lbl_estado.controls[1].value = mensaje
+            try:
+                dlg_conf.update()
+            except Exception:
+                pass
+
         def guardar_config(ev):
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Guardando configuración...")
             seleccion = dd_impresoras.value or ""
             guardar_impresora_termica_configurada(seleccion)
             self.cerrar_dialogo(dlg_conf, ev)
@@ -360,26 +388,35 @@ class AdminUsersView(BaseView):
             self.rebuild_ui()
 
         def probar_impresion(ev):
-            sel = dd_impresoras.value or None
-            ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-            if ok:
-                self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
-            else:
-                self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+            nonlocal procesando_accion
+            if procesando_accion:
+                return
+            procesando_accion = True
+            _bloquear_botones(True, "Enviando ticket a la impresora...")
+            try:
+                sel = dd_impresoras.value or None
+                ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
+                if ok:
+                    self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
+                else:
+                    self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+            finally:
+                procesando_accion = False
+                _bloquear_botones(False)
+
+        btn_cerrar.on_click = lambda ev: self.cerrar_dialogo(dlg_conf, ev)
+        btn_probar.on_click = probar_impresion
+        btn_guardar.on_click = guardar_config
 
         dlg_conf = ft.AlertDialog(
             title=ft.Row([ft.Icon(ft.Icons.PRINT_ROUNDED, color=ft.Colors.BLUE_400), ft.Text("Configurar Impresora Térmica")]),
             content=ft.Column([
                 ft.Text("Seleccione la impresora para emitir los tickets de venta (80mm)."),
                 dd_impresoras,
+                lbl_estado,
                 ft.Text("Compatible con MP80-12, MPT-II, POS-80 (USB / Bluetooth).", size=11, color=self.get_subtext_color()),
             ], tight=True, spacing=12),
-            actions=[
-                ft.TextButton("Cerrar", on_click=lambda ev: self.cerrar_dialogo(dlg_conf, ev)),
-                ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT, on_click=probar_impresion),
-                ft.Button("Guardar", icon=ft.Icons.CHECK, on_click=guardar_config,
-                          style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)),
-            ],
+            actions=[btn_cerrar, btn_probar, btn_guardar],
             actions_alignment=ft.MainAxisAlignment.END
         )
         self.abrir_dialogo(dlg_conf, e)

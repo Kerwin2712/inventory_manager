@@ -207,3 +207,54 @@ def test_enviar_datos_crudos_com_timeout():
         assert "Tiempo de espera agotado" in msg
         assert "MP80-12" in msg
 
+
+def test_generar_comandos_reportes_termicos():
+    """Verifica la generación de comandos ESC/POS para los reportes de ventas, auditoría, inventario y clientes."""
+    from services.printer_service import (
+        generar_comandos_reporte_ventas_diarias,
+        generar_comandos_reporte_auditoria,
+        generar_comandos_reporte_inventario,
+        generar_comandos_reporte_clientes,
+    )
+
+    # 1. Reporte de ventas diarias
+    ventas = [
+        {"id": 1, "tipo_venta": "Formal", "fecha": "2026-10-23 10:00:00", "metodo_pago": "Efectivo", "monto_cobrado": 25.0, "total_usd": 25.0, "total_bcv": 1000.0},
+        {"id": 2, "tipo_venta": "Mostrador", "fecha": "2026-10-23 11:30:00", "metodo_pago": "Pago Movil", "monto_cobrado": 15.0, "total_usd": 15.0, "total_bcv": 600.0},
+    ]
+    datos_ventas = generar_comandos_reporte_ventas_diarias(ventas=ventas)
+    assert isinstance(datos_ventas, bytes)
+    assert b"VENTAS DEL DIA / CIERRE" in datos_ventas
+    assert b"DESGLOSE POR METODO DE PAGO" in datos_ventas
+    assert b"Efectivo" in datos_ventas
+    assert b"Pago Movil" in datos_ventas
+
+    # 2. Reporte de auditoría preventiva
+    alertas = [
+        {"codigo": "P-01", "descripcion": "Aceite 20W50", "existencia": 2, "minimo": 10, "departamento": "Lubricantes"}
+    ]
+    datos_auditoria = generar_comandos_reporte_auditoria(alertas=alertas)
+    assert isinstance(datos_auditoria, bytes)
+    assert b"AUDITORIA PREVENTIVA" in datos_auditoria
+    assert b"STOCK CRITICO / REPOSICION" in datos_auditoria
+    assert b"Aceite 20W50" in datos_auditoria
+
+    # 3. Reporte de inventario resumido
+    prods = [
+        {"codigo": "P-01", "nombre_referencia_corto": "Aceite 20W50", "existencia": 5, "precio_dolares": 7.5}
+    ]
+    datos_inv = generar_comandos_reporte_inventario(productos=prods)
+    assert isinstance(datos_inv, bytes)
+    assert b"INVENTARIO RESUMIDO" in datos_inv
+    assert b"Aceite 20W50" in datos_inv
+
+    # 4. Reporte de directorio de clientes
+    clientes = [
+        {"cedula_rif": "V-12345678", "nombre": "Carlos Perez", "telefono": "0414-0000000"}
+    ]
+    datos_cli = generar_comandos_reporte_clientes(clientes=clientes)
+    assert isinstance(datos_cli, bytes)
+    assert b"DIRECTORIO DE CLIENTES" in datos_cli
+    assert b"Carlos Perez" in datos_cli
+
+

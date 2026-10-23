@@ -38,6 +38,7 @@ from services.departamentos_service import (
 from services.preferencias_service import (
     obtener_vista_inventario, guardar_vista_inventario,
 )
+from services.printer_service import imprimir_reporte_inventario
 
 
 
@@ -1269,6 +1270,51 @@ class InventarioView(BaseView):
         btn_prev = ft.IconButton(ft.Icons.CHEVRON_LEFT, on_click=self._pagina_anterior)
         btn_next = ft.IconButton(ft.Icons.CHEVRON_RIGHT, on_click=self._pagina_siguiente)
 
+        _imprimiendo_inv = False
+        def _on_imprimir_inventario(ev):
+            nonlocal _imprimiendo_inv
+            if _imprimiendo_inv:
+                return
+            _imprimiendo_inv = True
+            btn_imprimir_inv.disabled = True
+            btn_imprimir_inv.tooltip = "Enviando a la impresora..."
+            try:
+                btn_imprimir_inv.update()
+            except Exception:
+                pass
+            try:
+                prods_imprimir = None
+                codigos_sel = self._seleccion.seleccionados
+                if codigos_sel:
+                    prods_imprimir = [
+                        self._productos_en_pantalla[c]
+                        for c in codigos_sel
+                        if c in self._productos_en_pantalla
+                    ]
+                ok, msg = imprimir_reporte_inventario(
+                    productos=prods_imprimir,
+                    limite=100
+                )
+                if ok:
+                    self.show_alert_success(ev, "¡Catálogo de inventario enviado a la impresora térmica!")
+                else:
+                    self.show_alert_error(ev, f"Error al imprimir inventario: {msg}")
+            finally:
+                _imprimiendo_inv = False
+                btn_imprimir_inv.disabled = False
+                btn_imprimir_inv.tooltip = "Imprimir catálogo en térmica (80mm)"
+                try:
+                    btn_imprimir_inv.update()
+                except Exception:
+                    pass
+
+        btn_imprimir_inv = ft.IconButton(
+            icon=ft.Icons.PRINT_ROUNDED,
+            icon_color=accent,
+            tooltip="Imprimir catálogo en térmica (80mm)",
+            on_click=_on_imprimir_inventario,
+        )
+
         self._tabla_panel = self.create_card(
             content=ft.Column(
                 controls=[
@@ -1283,6 +1329,7 @@ class InventarioView(BaseView):
                                 self._nav_h,
                                 self._btn_modo_vista,
                                 self._build_selector_columnas(accent, text_color),
+                                btn_imprimir_inv,
                             ], spacing=8),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,

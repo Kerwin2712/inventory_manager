@@ -13,6 +13,7 @@ Incluye:
 - Persistencia de la impresora preferida en app_settings.
 """
 import ctypes
+import datetime
 import os
 import platform
 import re
@@ -802,3 +803,429 @@ def imprimir_ticket_prueba(nombre_impresora: Optional[str] = None) -> Tuple[bool
         datos=bytes(buffer),
         nombre_documento="Prueba de Impresion Termica"
     )
+
+
+def generar_comandos_reporte_ventas_diarias(ventas: Optional[List[dict]] = None) -> bytes:
+    """Genera comandos ESC/POS para el reporte de cierre / ventas del día (80mm / 48 columnas)."""
+    if ventas is None:
+        from services.reportes_service import obtener_ventas_del_dia
+        ventas = obtener_ventas_del_dia()
+
+    ESC = b"\x1b"
+    GS = b"\x1d"
+    ALIGN_LEFT = ESC + b"a\x00"
+    ALIGN_CENTER = ESC + b"a\x01"
+    BOLD_ON = ESC + b"E\x01"
+    BOLD_OFF = ESC + b"E\x00"
+    DOUBLE_HEIGHT = ESC + b"!\x10"
+    NORMAL_SIZE = ESC + b"!\x00"
+
+    buffer = bytearray()
+    buffer.extend(ESC + b"@")
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(BOLD_ON)
+    buffer.extend(DOUBLE_HEIGHT)
+    buffer.extend(b"VENTAS DEL DIA / CIERRE\n")
+    buffer.extend(NORMAL_SIZE)
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"SISTEMA INTEGRADO DE VENTAS\n")
+    
+    fecha_emision = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    buffer.extend(f"Emision: {fecha_emision}\n".encode("cp437", errors="ignore"))
+    buffer.extend(b"------------------------------------------------\n")
+
+    if not ventas:
+        buffer.extend(ALIGN_CENTER)
+        buffer.extend(b"\nNo se registraron ventas hoy.\n\n")
+        buffer.extend(b"------------------------------------------------\n")
+        buffer.extend(b"\n\n\n\n\n")
+        buffer.extend(GS + b"V\x41\x03")
+        return bytes(buffer)
+
+    total_operaciones = len(ventas)
+    totales_por_metodo: Dict[str, Dict[str, float]] = {}
+    total_usd_general = 0.0
+    total_bs_general = 0.0
+
+    for v in ventas:
+        monto = float(v.get("monto_total") or v.get("monto_cobrado") or v.get("total_usd") or 0.0)
+        moneda = v.get("moneda", "USD")
+        metodo = v.get("metodo_pago", "Efectivo")
+
+        if metodo not in totales_por_metodo:
+            totales_por_metodo[metodo] = {"cantidad": 0, "monto_usd": 0.0, "monto_bs": 0.0}
+
+        totales_por_metodo[metodo]["cantidad"] += 1
+        if moneda == "Bs":
+            totales_por_metodo[metodo]["monto_bs"] += monto
+            total_bs_general += monto
+        else:
+            totales_por_metodo[metodo]["monto_usd"] += monto
+            total_usd_general += monto
+
+    buffer.extend(ALIGN_LEFT)
+    buffer.extend(BOLD_ON)
+    buffer.extend(b"RESUMEN GENERAL DEL DIA:\n")
+    buffer.extend(BOLD_OFF)
+    buffer.extend(f"Total Operaciones: {total_operaciones} ventas\n".encode("cp437", errors="ignore"))
+    if total_usd_general > 0:
+        buffer.extend(f"Total en Divisas ($):    $ {total_usd_general:,.2f}\n".encode("cp437", errors="ignore"))
+    if total_bs_general > 0:
+        buffer.extend(f"Total en Bolivares (Bs): Bs. {total_bs_general:,.2f}\n".encode("cp437", errors="ignore"))
+    buffer.extend(b"------------------------------------------------\n")
+
+    buffer.extend(BOLD_ON)
+    buffer.extend(b"DESGLOSE POR METODO DE PAGO:\n")
+    buffer.extend(BOLD_OFF)
+    for metodo, info in totales_por_metodo.items():
+        cant = info["cantidad"]
+        txt_monto = ""
+        if info["monto_usd"] > 0:
+            txt_monto += f"$ {info['monto_usd']:,.2f} "
+        if info["monto_bs"] > 0:
+            txt_monto += f"Bs. {info['monto_bs']:,.2f}"
+        linea = f"  * {metodo.ljust(18)} ({cant:2d}) {txt_monto.rjust(20)}\n"
+        buffer.extend(_limpiar_texto_impresora(linea).encode("cp437", errors="ignore"))
+
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(BOLD_ON)
+    buffer.extend(b"LISTA DE OPERACIONES:\n")
+    buffer.extend(b"HORA   ID       METODO                  TOTAL\n")
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"------------------------------------------------\n")
+
+    for v in ventas:
+        hora = str(v.get("fecha_hora") or v.get("fecha") or "")[-5:]
+        vid = f"#{v.get('venta_id') or v.get('id') or 0:05d}"
+        met = str(v.get("metodo_pago") or "")[:14]
+        simb = "Bs." if v.get("moneda") == "Bs" else "$"
+        monto_val = float(v.get("monto_total") or v.get("monto_cobrado") or v.get("total_usd") or 0.0)
+        monto_str = f"{simb} {monto_val:,.2f}"
+        linea = f"{hora}  {vid}  {met.ljust(14)} {monto_str.rjust(16)}\n"
+        buffer.extend(_limpiar_texto_impresora(linea).encode("cp437", errors="ignore"))
+
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(b"*** FIN DEL REPORTE DE VENTAS ***\n")
+    buffer.extend(b"\n\n\n\n\n")
+    buffer.extend(GS + b"V\x41\x03")
+
+    return bytes(buffer)
+
+
+def imprimir_reporte_ventas_diarias(
+    ventas: Optional[List[dict]] = None,
+    nombre_impresora: Optional[str] = None
+) -> Tuple[bool, str]:
+    """Imprime el reporte de cierre o ventas diarias en la impresora térmica de 80mm."""
+    impresora_target = (nombre_impresora or "").strip()
+    if not impresora_target:
+        det = detectar_impresora_termica()
+        if not det:
+            return False, "No se detectó ninguna impresora térmica conectada."
+        impresora_target = det["nombre"]
+
+    try:
+        datos = generar_comandos_reporte_ventas_diarias(ventas=ventas)
+    except Exception as ex:
+        return False, f"Error al generar reporte de ventas del día: {ex}"
+
+    return enviar_datos_crudos_impresora(
+        nombre_impresora=impresora_target,
+        datos=datos,
+        nombre_documento="Reporte Ventas Diarias"
+    )
+
+
+def generar_comandos_reporte_auditoria(
+    stock_minimo: Optional[float] = None,
+    alertas: Optional[List[dict]] = None,
+) -> bytes:
+    """Genera comandos ESC/POS para la auditoría preventiva de stock crítico/faltante (80mm)."""
+    from services.reportes_service import obtener_alertas_stock, obtener_stock_minimo
+    min_val = stock_minimo if stock_minimo is not None else obtener_stock_minimo()
+    if alertas is None:
+        alertas = obtener_alertas_stock(min_val)
+
+    ESC = b"\x1b"
+    GS = b"\x1d"
+    ALIGN_LEFT = ESC + b"a\x00"
+    ALIGN_CENTER = ESC + b"a\x01"
+    BOLD_ON = ESC + b"E\x01"
+    BOLD_OFF = ESC + b"E\x00"
+    DOUBLE_HEIGHT = ESC + b"!\x10"
+    NORMAL_SIZE = ESC + b"!\x00"
+
+    buffer = bytearray()
+    buffer.extend(ESC + b"@")
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(BOLD_ON)
+    buffer.extend(DOUBLE_HEIGHT)
+    buffer.extend(b"AUDITORIA PREVENTIVA\n")
+    buffer.extend(NORMAL_SIZE)
+    buffer.extend(b"STOCK CRITICO / REPOSICION\n")
+    buffer.extend(BOLD_OFF)
+    
+    fecha_emision = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    buffer.extend(f"Emision: {fecha_emision}\n".encode("cp437", errors="ignore"))
+    buffer.extend(f"Parametro Stock Minimo: < {min_val:.0f} unid.\n".encode("cp437", errors="ignore"))
+    buffer.extend(b"------------------------------------------------\n")
+
+    if not alertas:
+        buffer.extend(ALIGN_CENTER)
+        buffer.extend(b"\nNo hay productos en estado critico.\nInventario en niveles optimos.\n\n")
+        buffer.extend(b"------------------------------------------------\n")
+        buffer.extend(b"\n\n\n\n\n")
+        buffer.extend(GS + b"V\x41\x03")
+        return bytes(buffer)
+
+    buffer.extend(ALIGN_LEFT)
+    buffer.extend(BOLD_ON)
+    buffer.extend(b"CODIGO    DESCRIPCION CORTA        ACT / MIN\n")
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"------------------------------------------------\n")
+
+    for a in alertas:
+        codigo = str(a.get("codigo") or "")[:9].ljust(9)
+        nombre = str(a.get("nombre_corto") or a.get("descripcion_general") or a.get("descripcion") or "")[:23].ljust(23)
+        exist = f"{float(a.get('existencia') or 0):.0f}"
+        minimo = f"{float(a.get('minimo') or min_val):.0f}"
+        cantidades = f"{exist} / {minimo}".rjust(12)
+        linea = f"{codigo} {nombre} {cantidades}\n"
+        buffer.extend(_limpiar_texto_impresora(linea).encode("cp437", errors="ignore"))
+
+        prov = a.get("proveedor_nombre") or a.get("proveedor")
+        tel = a.get("proveedor_telefono") or a.get("contacto")
+        if prov:
+            sub = f"  Prov: {prov}" + (f" ({tel})" if tel else "")
+            buffer.extend(_limpiar_texto_impresora(f"{sub[:46]}\n").encode("cp437", errors="ignore"))
+
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(BOLD_ON)
+    buffer.extend(f"Total Articulos Criticos: {len(alertas)}\n".encode("cp437", errors="ignore"))
+    buffer.extend(BOLD_OFF)
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(b"*** FIN DE AUDITORIA PREVENTIVA ***\n")
+    buffer.extend(b"\n\n\n\n\n")
+    buffer.extend(GS + b"V\x41\x03")
+
+    return bytes(buffer)
+
+
+def imprimir_reporte_auditoria(
+    stock_minimo: Optional[float] = None,
+    alertas: Optional[List[dict]] = None,
+    nombre_impresora: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Imprime el reporte de auditoría preventiva / stock crítico en la impresora térmica de 80mm."""
+    impresora_target = (nombre_impresora or "").strip()
+    if not impresora_target:
+        det = detectar_impresora_termica()
+        if not det:
+            return False, "No se detectó ninguna impresora térmica conectada."
+        impresora_target = det["nombre"]
+
+    try:
+        datos = generar_comandos_reporte_auditoria(stock_minimo=stock_minimo, alertas=alertas)
+    except Exception as ex:
+        return False, f"Error al generar reporte de auditoría preventiva: {ex}"
+
+    return enviar_datos_crudos_impresora(
+        nombre_impresora=impresora_target,
+        datos=datos,
+        nombre_documento="Auditoria Preventiva Termica"
+    )
+
+
+def generar_comandos_reporte_inventario(
+    departamento: Optional[str] = None,
+    limite: int = 150,
+    productos: Optional[List[dict]] = None,
+) -> bytes:
+    """Genera comandos ESC/POS de catálogo resumido de productos para 80mm."""
+    if productos is None:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        if departamento:
+            cursor.execute("""
+                SELECT codigo, nombre_referencia_corto, descripcion_general, existencia, precio_dolares
+                FROM productos
+                WHERE departamento = ?
+                ORDER BY codigo
+                LIMIT ?
+            """, (departamento, limite))
+        else:
+            cursor.execute("""
+                SELECT codigo, nombre_referencia_corto, descripcion_general, existencia, precio_dolares
+                FROM productos
+                ORDER BY departamento, codigo
+                LIMIT ?
+            """, (limite,))
+        productos = cursor.fetchall()
+
+    ESC = b"\x1b"
+    GS = b"\x1d"
+    ALIGN_LEFT = ESC + b"a\x00"
+    ALIGN_CENTER = ESC + b"a\x01"
+    BOLD_ON = ESC + b"E\x01"
+    BOLD_OFF = ESC + b"E\x00"
+    DOUBLE_HEIGHT = ESC + b"!\x10"
+    NORMAL_SIZE = ESC + b"!\x00"
+
+    buffer = bytearray()
+    buffer.extend(ESC + b"@")
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(BOLD_ON)
+    buffer.extend(DOUBLE_HEIGHT)
+    buffer.extend(b"INVENTARIO RESUMIDO\n")
+    buffer.extend(NORMAL_SIZE)
+    if departamento:
+        buffer.extend(f"Depto: {departamento}\n".encode("cp437", errors="ignore"))
+    buffer.extend(BOLD_OFF)
+
+    fecha_emision = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    buffer.extend(f"Emision: {fecha_emision}\n".encode("cp437", errors="ignore"))
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(ALIGN_LEFT)
+    buffer.extend(BOLD_ON)
+    buffer.extend(b"CANT  CODIGO    DESCRIPCION               P.USD\n")
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"------------------------------------------------\n")
+
+    for p in productos:
+        cod = str(p.get("codigo", "") or "")[:9].ljust(9)
+        nom = str(p.get("nombre_referencia_corto") or p.get("descripcion_general") or "")[:22].ljust(22)
+        cant = f"{float(p.get('existencia') or 0):.0f}".rjust(4)
+        precio = f"${float(p.get('precio_dolares') or 0):,.2f}".rjust(9)
+        linea = f"{cant}  {cod} {nom} {precio}\n"
+        buffer.extend(_limpiar_texto_impresora(linea).encode("cp437", errors="ignore"))
+
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(BOLD_ON)
+    buffer.extend(f"Total productos listados: {len(productos)}\n".encode("cp437", errors="ignore"))
+    buffer.extend(BOLD_OFF)
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(b"*** FIN DE INVENTARIO RESUMIDO ***\n")
+    buffer.extend(b"\n\n\n\n\n")
+    buffer.extend(GS + b"V\x41\x03")
+
+    return bytes(buffer)
+
+
+def imprimir_reporte_inventario(
+    departamento: Optional[str] = None,
+    limite: int = 150,
+    productos: Optional[List[dict]] = None,
+    nombre_impresora: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Imprime el catálogo resumido de inventario en la impresora térmica de 80mm."""
+    impresora_target = (nombre_impresora or "").strip()
+    if not impresora_target:
+        det = detectar_impresora_termica()
+        if not det:
+            return False, "No se detectó ninguna impresora térmica conectada."
+        impresora_target = det["nombre"]
+
+    try:
+        datos = generar_comandos_reporte_inventario(
+            departamento=departamento,
+            limite=limite,
+            productos=productos,
+        )
+    except Exception as ex:
+        return False, f"Error al generar reporte de inventario: {ex}"
+
+    return enviar_datos_crudos_impresora(
+        nombre_impresora=impresora_target,
+        datos=datos,
+        nombre_documento="Catalogo Inventario Termica"
+    )
+
+
+def generar_comandos_reporte_clientes(
+    limite: int = 60,
+    clientes: Optional[List[dict]] = None,
+) -> bytes:
+    """Genera comandos ESC/POS de cartera resumida de clientes para 80mm."""
+    if clientes is None:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT cedula_rif, nombre, telefono
+            FROM clientes
+            ORDER BY nombre
+            LIMIT ?
+        """, (limite,))
+        clientes = cursor.fetchall()
+
+    ESC = b"\x1b"
+    GS = b"\x1d"
+    ALIGN_LEFT = ESC + b"a\x00"
+    ALIGN_CENTER = ESC + b"a\x01"
+    BOLD_ON = ESC + b"E\x01"
+    BOLD_OFF = ESC + b"E\x00"
+    DOUBLE_HEIGHT = ESC + b"!\x10"
+    NORMAL_SIZE = ESC + b"!\x00"
+
+    buffer = bytearray()
+    buffer.extend(ESC + b"@")
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(BOLD_ON)
+    buffer.extend(DOUBLE_HEIGHT)
+    buffer.extend(b"DIRECTORIO DE CLIENTES\n")
+    buffer.extend(NORMAL_SIZE)
+    buffer.extend(BOLD_OFF)
+
+    fecha_emision = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    buffer.extend(f"Emision: {fecha_emision}\n".encode("cp437", errors="ignore"))
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(ALIGN_LEFT)
+    buffer.extend(BOLD_ON)
+    buffer.extend(b"CEDULA/RIF    NOMBRE                   TELEFONO\n")
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"------------------------------------------------\n")
+
+    for c in clientes:
+        doc = str(c.get("cedula_rif", "") or "")[:12].ljust(12)
+        nom = str(c.get("nombre", "") or "")[:20].ljust(20)
+        tel = str(c.get("telefono", "") or "-")[:12].rjust(14)
+        linea = f"{doc}  {nom} {tel}\n"
+        buffer.extend(_limpiar_texto_impresora(linea).encode("cp437", errors="ignore"))
+
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(BOLD_ON)
+    buffer.extend(f"Total clientes listados: {len(clientes)}\n".encode("cp437", errors="ignore"))
+    buffer.extend(BOLD_OFF)
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(b"*** FIN DE DIRECTORIO DE CLIENTES ***\n")
+    buffer.extend(b"\n\n\n\n\n")
+    buffer.extend(GS + b"V\x41\x03")
+
+    return bytes(buffer)
+
+
+def imprimir_reporte_clientes(
+    limite: int = 60,
+    clientes: Optional[List[dict]] = None,
+    nombre_impresora: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Imprime la lista resumida de clientes en la impresora térmica de 80mm."""
+    impresora_target = (nombre_impresora or "").strip()
+    if not impresora_target:
+        det = detectar_impresora_termica()
+        if not det:
+            return False, "No se detectó ninguna impresora térmica conectada."
+        impresora_target = det["nombre"]
+
+    try:
+        datos = generar_comandos_reporte_clientes(limite=limite, clientes=clientes)
+    except Exception as ex:
+        return False, f"Error al generar reporte de clientes: {ex}"
+
+    return enviar_datos_crudos_impresora(
+        nombre_impresora=impresora_target,
+        datos=datos,
+        nombre_documento="Directorio Clientes Termica"
+    )
+
