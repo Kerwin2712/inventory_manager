@@ -20,7 +20,6 @@ import re
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
 from typing import Optional, List, Dict, Tuple
 
@@ -33,7 +32,6 @@ CLAVE_IMPRESORA_TERMICA = "printer_thermal_name"
 _PORT_LOCK = threading.RLock()
 
 # Caché en memoria para evitar sondeos repetidos que ralenticen la interfaz
-_PROBE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PrinterProbe")
 _CACHE_ESTADO_CONEXION: Dict[str, Dict] = {}  # { "COM5": {"conectada": bool, "timestamp": float} }
 CACHE_TTL_SEGUNDOS = 6.0
 
@@ -306,6 +304,8 @@ def probar_conexion_puerto_com(puerto: str, timeout_sec: float = 6.0) -> bool:
     OPEN_EXISTING = 3
     FILE_ATTRIBUTE_NORMAL = 0x80
 
+    resultado = [False]
+
     def _intentar():
         with _PORT_LOCK:
             try:
@@ -321,17 +321,14 @@ def probar_conexion_puerto_com(puerto: str, timeout_sec: float = 6.0) -> bool:
                 if h != -1 and h != 0:
                     kernel32.CloseHandle(h)
                     time.sleep(0.15)
-                    return True
+                    resultado[0] = True
             except Exception:
                 pass
-            return False
 
-    f = _PROBE_EXECUTOR.submit(_intentar)
-    conectada = False
-    try:
-        conectada = bool(f.result(timeout=timeout_sec))
-    except Exception:
-        conectada = False
+    t = threading.Thread(target=_intentar, daemon=True, name=f"ProbeCOM_{puerto_limpio}")
+    t.start()
+    t.join(timeout=timeout_sec)
+    conectada = resultado[0]
 
     _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": conectada, "timestamp": time.time()}
     return conectada

@@ -31,11 +31,17 @@ def main(page: ft.Page):
     # Inicializar la base de datos SQLite, tablas y datos por defecto
     init_db()
 
-    # Libera los carritos de esta sesión (page.session.id) cuando el
-    # navegador se desconecta, para no acumular estado indefinidamente en
-    # el servidor a medida que se conectan y desconectan varios usuarios.
+    def _al_desconectar(e):
+        try:
+            limpiar_sesion(page.session.id)
+        except Exception:
+            pass
+        # Al cerrarse la ventana de la aplicación de escritorio, terminar el proceso inmediatamente
+        import os
+        os._exit(0)
+
     try:
-        page.on_disconnect = lambda e: limpiar_sesion(page.session.id)
+        page.on_disconnect = _al_desconectar
     except (RuntimeError, AttributeError):
         pass
 
@@ -112,4 +118,8 @@ if __name__ == "__main__":
     # instalador (PyInstaller + Inno Setup, ver installer/README.md). Para
     # probar en un entorno sin soporte de ventana nativa, usar en su lugar:
     # ft.run(main, view=ft.AppView.WEB_BROWSER, port=8550)
-    ft.run(main)
+    try:
+        ft.run(main)
+    finally:
+        import os
+        os._exit(0)
