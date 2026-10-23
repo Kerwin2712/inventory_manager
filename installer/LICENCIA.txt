@@ -1,7 +1,7 @@
 ACUERDO DE LICENCIA DE SOFTWARE, TÉRMINOS Y CONDICIONES Y POLÍTICA DE PRIVACIDAD
 ================================================================================
 SISTEMA INTEGRADO DE INVENTARIO Y VENTAS
-Versión: 1.0.1
+Versión: 2.0.0
 Titular y Desarrollador: Kerwin Quintero
 Todos los Derechos Reservados.
 
