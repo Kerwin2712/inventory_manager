@@ -12,6 +12,9 @@ _FORMATOS_PAPEL = {
     # calibrados para no exceder el ancho útil de cada tamaño de hoja.
     "carta": {"page": "Letter", "margen": 15, "anchos": (28, 76, 18, 28, 28)},
     "media_carta": {"page": (139.7, 215.9), "margen": 8, "anchos": (20, 50, 14, 18, 18)},
+    # Formato para rollo térmico de 80mm (Mini Impresora MP80-12 / POS-80):
+    # Ancho total 80mm, margen 4mm a cada lado -> 72mm de ancho imprimible.
+    "ticket_80mm": {"page": "ticket", "margen": 4, "anchos": (10, 28, 10, 12, 12)},
 }
 
 
@@ -37,17 +40,36 @@ def enviar_a_impresora(ruta_pdf: str) -> bool:
     return False
 
 class NotaEntregaPDF(FPDF):
+    def __init__(self, *args, es_ticket: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.es_ticket = es_ticket
+
     def header(self):
-        self.set_font("Helvetica", "B", 14)
-        self.cell(0, 8, "SISTEMA INTEGRADO DE INVENTARIO Y VENTAS", ln=True, align="C")
-        self.set_font("Helvetica", "B", 12)
-        self.cell(0, 6, "NOTA DE ENTREGA", ln=True, align="C")
-        self.ln(4)
+        if self.es_ticket:
+            self.set_font("Helvetica", "B", 9)
+            self.cell(0, 4, "SISTEMA INTEGRADO DE INVENTARIO", ln=True, align="C")
+            self.cell(0, 4, "Y VENTAS", ln=True, align="C")
+            self.set_font("Helvetica", "B", 8)
+            self.cell(0, 4, "NOTA DE ENTREGA / TICKET", ln=True, align="C")
+            self.set_font("Helvetica", "", 7)
+            self.cell(0, 2, "------------------------------------------------------------", ln=True, align="C")
+            self.ln(1)
+        else:
+            self.set_font("Helvetica", "B", 14)
+            self.cell(0, 8, "SISTEMA INTEGRADO DE INVENTARIO Y VENTAS", ln=True, align="C")
+            self.set_font("Helvetica", "B", 12)
+            self.cell(0, 6, "NOTA DE ENTREGA", ln=True, align="C")
+            self.ln(4)
 
     def footer(self):
-        self.set_y(-15)
-        self.set_font("Helvetica", "I", 8)
-        self.cell(0, 10, f"Página {self.page_no()}/{{nb}}", align="C")
+        if self.es_ticket:
+            self.set_y(-8)
+            self.set_font("Helvetica", "I", 7)
+            self.cell(0, 4, "¡Gracias por su compra! - Conserve su comprobante", align="C")
+        else:
+            self.set_y(-15)
+            self.set_font("Helvetica", "I", 8)
+            self.cell(0, 10, f"Página {self.page_no()}/{{nb}}", align="C")
 
 def generar_nota_entrega_pdf(
     venta_id: int,
@@ -60,8 +82,10 @@ def generar_nota_entrega_pdf(
     extrae e imprime exclusivamente el campo 'nombre_referencia_corto' de la tabla productos.
     Guarda el archivo en la 'ruta_destino' especificada.
 
-    `formato_papel` acepta "carta" (Letter) o "media_carta" (mitad de una
-    hoja carta), adaptando márgenes y anchos de columna a cada tamaño.
+    `formato_papel` acepta:
+    - "carta": Hoja Letter estándar (215.9 x 279.4 mm).
+    - "media_carta": Mitad de una hoja carta (139.7 x 215.9 mm).
+    - "ticket_80mm": Formato ticket para rollos térmicos de 80mm (MP80-12).
     """
     if not ruta_destino or not ruta_destino.strip():
         raise ValueError("Debe especificar una ruta de destino válida para el archivo PDF.")
@@ -111,74 +135,141 @@ def generar_nota_entrega_pdf(
     detalles = cursor.fetchall()
     conn.close()
 
-    pdf = NotaEntregaPDF(orientation="P", unit="mm", format=cfg_papel["page"])
+    es_ticket = (clave_formato == "ticket_80mm")
+    if es_ticket:
+        # Altura dinámica ajustada a la cantidad de renglones para rollo continuo
+        alto_calculado = max(115.0, 50.0 + len(detalles) * 6.5 + 50.0)
+        tamano_pagina = (80.0, alto_calculado)
+    else:
+        tamano_pagina = cfg_papel["page"]
+
+    pdf = NotaEntregaPDF(orientation="P", unit="mm", format=tamano_pagina, es_ticket=es_ticket)
 
     pdf.alias_nb_pages()
     pdf.set_margins(margen, margen, margen)
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=margen)
 
-    # Cabecera de la Nota
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(38, 6, "Nro. Nota / Venta:", ln=False)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(50, 6, f"{venta['id']:06d}", ln=False)
+    # Cabecera de la Nota / Metadatos
+    if es_ticket:
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(24, 4.5, "Nro. Ticket:", ln=False)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(0, 4.5, f"{venta['id']:06d}", ln=True)
 
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(25, 6, "Fecha:", ln=False)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, str(venta['fecha']), ln=True)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(15, 4.5, "Fecha:", ln=False)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(0, 4.5, str(venta['fecha']), ln=True)
 
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(38, 6, "Tipo de Venta:", ln=False)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(50, 6, str(venta['tipo_venta']), ln=False)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(24, 4.5, "Tipo Venta:", ln=False)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(0, 4.5, str(venta['tipo_venta']), ln=True)
 
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(25, 6, "Moneda:", ln=False)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, "Dólares ($)" if divisa == "USD" else "Bolívares (Bs. BCV)", ln=True)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(18, 4.5, "Moneda:", ln=False)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(0, 4.5, "Dólares ($)" if divisa == "USD" else "Bolívares (Bs. BCV)", ln=True)
 
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(38, 6, "Método de Pago:", ln=False)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, str(venta["metodo_pago"] or "Efectivo"), ln=True)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(24, 4.5, "Método Pago:", ln=False)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(0, 4.5, str(venta["metodo_pago"] or "Efectivo"), ln=True)
 
-    # Información del cliente
-    if venta['tipo_venta'] == 'Formal' and venta['cliente_id']:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(38, 6, "Cliente:", ln=False)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, f"{venta['cliente_nombre']} ({venta['cliente_id']})", ln=True)
+        # Información del cliente
+        if venta['tipo_venta'] == 'Formal' and venta['cliente_id']:
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(16, 4.5, "Cliente:", ln=False)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.cell(0, 4.5, f"{venta['cliente_nombre']}", ln=True)
 
-        if venta['cliente_direccion']:
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(38, 6, "Dirección:", ln=False)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 6, str(venta['cliente_direccion']), ln=True)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(16, 4.5, "CI/RIF:", ln=False)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.cell(0, 4.5, f"{venta['cliente_id']}", ln=True)
+
+            if venta['cliente_direccion']:
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.cell(16, 4.5, "Direc.:", ln=False)
+                pdf.set_font("Helvetica", "", 8)
+                c_dir = str(venta['cliente_direccion'])
+                if len(c_dir) > 28:
+                    c_dir = c_dir[:25] + "..."
+                pdf.cell(0, 4.5, c_dir, ln=True)
+        else:
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(16, 4.5, "Cliente:", ln=False)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.cell(0, 4.5, "Cliente Mostrador / Informal", ln=True)
+
+        pdf.ln(2)
     else:
         pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(38, 6, "Cliente:", ln=False)
+        pdf.cell(38, 6, "Nro. Nota / Venta:", ln=False)
         pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, "Cliente Informal / Mostrador", ln=True)
+        pdf.cell(50, 6, f"{venta['id']:06d}", ln=False)
 
-    pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(25, 6, "Fecha:", ln=False)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 6, str(venta['fecha']), ln=True)
+
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(38, 6, "Tipo de Venta:", ln=False)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(50, 6, str(venta['tipo_venta']), ln=False)
+
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(25, 6, "Moneda:", ln=False)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 6, "Dólares ($)" if divisa == "USD" else "Bolívares (Bs. BCV)", ln=True)
+
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(38, 6, "Método de Pago:", ln=False)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 6, str(venta["metodo_pago"] or "Efectivo"), ln=True)
+
+        # Información del cliente
+        if venta['tipo_venta'] == 'Formal' and venta['cliente_id']:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(38, 6, "Cliente:", ln=False)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, f"{venta['cliente_nombre']} ({venta['cliente_id']})", ln=True)
+
+            if venta['cliente_direccion']:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(38, 6, "Dirección:", ln=False)
+                pdf.set_font("Helvetica", "", 10)
+                pdf.cell(0, 6, str(venta['cliente_direccion']), ln=True)
+        else:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(38, 6, "Cliente:", ln=False)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, "Cliente Informal / Mostrador", ln=True)
+
+        pdf.ln(4)
 
     # Tabla de renglones (anchos adaptados al formato de papel elegido)
     pdf.set_fill_color(230, 230, 230)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(ancho_codigo, 7, "Código", border=1, align="C", fill=True)
+    alto_celda_header = 5.5 if es_ticket else 7
+    font_size_header = 7.5 if es_ticket else 9
+    pdf.set_font("Helvetica", "B", font_size_header)
+    pdf.cell(ancho_codigo, alto_celda_header, "Código", border=1, align="C", fill=True)
     # ERS 3.5: Imprimir EXCLUSIVAMENTE el nombre_referencia_corto
-    pdf.cell(ancho_nombre, 7, "Nombre Corto (Ref.)", border=1, align="L", fill=True)
-    pdf.cell(ancho_cant, 7, "Cant.", border=1, align="C", fill=True)
+    nombre_col_label = "Descrip. (Ref)" if es_ticket else "Nombre Corto (Ref.)"
+    pdf.cell(ancho_nombre, alto_celda_header, nombre_col_label, border=1, align="L", fill=True)
+    pdf.cell(ancho_cant, alto_celda_header, "Cant.", border=1, align="C", fill=True)
     moneda_label = "$" if divisa == "USD" else "Bs."
-    pdf.cell(ancho_preciou, 7, f"P. Unit ({moneda_label})", border=1, align="R", fill=True)
-    pdf.cell(ancho_subtotal, 7, f"Subtotal ({moneda_label})", border=1, align="R", fill=True)
+    pdf.cell(ancho_preciou, alto_celda_header, f"P.U ({moneda_label})" if es_ticket else f"P. Unit ({moneda_label})", border=1, align="R", fill=True)
+    pdf.cell(ancho_subtotal, alto_celda_header, f"Subt ({moneda_label})" if es_ticket else f"Subtotal ({moneda_label})", border=1, align="R", fill=True)
     pdf.ln()
 
-    pdf.set_font("Helvetica", "", 9)
+    font_size_fila = 7.5 if es_ticket else 9
+    alto_celda_fila = 5 if es_ticket else 6
+    pdf.set_font("Helvetica", "", font_size_fila)
     total_acumulado = 0.0
-    max_chars_nombre = max(8, int(ancho_nombre / 2))
+    max_chars_nombre = max(8, int(ancho_nombre / 1.7) if es_ticket else int(ancho_nombre / 2))
 
     for d in detalles:
         # Extraer exclusivamente el nombre_referencia_corto
@@ -196,26 +287,29 @@ def generar_nota_entrega_pdf(
 
         total_acumulado += subtotal
 
-        pdf.cell(ancho_codigo, 6, str(d['codigo']), border=1, align="C")
-        pdf.cell(ancho_nombre, 6, str(nombre_corte), border=1, align="L")
-        pdf.cell(ancho_cant, 6, f"{cant:.2f}", border=1, align="C")
-        pdf.cell(ancho_preciou, 6, f"{precio_u:,.2f}", border=1, align="R")
-        pdf.cell(ancho_subtotal, 6, f"{subtotal:,.2f}", border=1, align="R")
+        pdf.cell(ancho_codigo, alto_celda_fila, str(d['codigo']), border=1, align="C")
+        pdf.cell(ancho_nombre, alto_celda_fila, str(nombre_corte), border=1, align="L")
+        pdf.cell(ancho_cant, alto_celda_fila, f"{cant:.2f}", border=1, align="C")
+        pdf.cell(ancho_preciou, alto_celda_fila, f"{precio_u:,.2f}", border=1, align="R")
+        pdf.cell(ancho_subtotal, alto_celda_fila, f"{subtotal:,.2f}", border=1, align="R")
         pdf.ln()
 
-    # Total de la nota (ancho de etiqueta = tabla menos la columna de subtotal)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(ancho_tabla - ancho_subtotal, 7, "TOTAL GENERAL:", border=1, align="R", fill=True)
-    pdf.cell(ancho_subtotal, 7, f"{moneda_label} {total_acumulado:,.2f}", border=1, align="R", fill=True)
+    # Total de la nota
+    alto_total = 6 if es_ticket else 7
+    font_size_total = 8.5 if es_ticket else 10
+    pdf.set_font("Helvetica", "B", font_size_total)
+    pdf.cell(ancho_tabla - ancho_subtotal, alto_total, "TOTAL GENERAL:", border=1, align="R", fill=True)
+    pdf.cell(ancho_subtotal, alto_total, f"{moneda_label} {total_acumulado:,.2f}", border=1, align="R", fill=True)
 
-    # Bloque de firmas (mitad del ancho de la tabla cada una)
+    # Bloque de firmas
     mitad_tabla = ancho_tabla / 2
-    pdf.ln(18)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.cell(mitad_tabla, 5, "___________________________________", align="C")
-    pdf.cell(mitad_tabla, 5, "___________________________________", align="C", ln=True)
-    pdf.cell(mitad_tabla, 5, "Entregado por", align="C")
-    pdf.cell(mitad_tabla, 5, "Recibido Conforme (Cliente)", align="C", ln=True)
+    pdf.ln(8 if es_ticket else 18)
+    pdf.set_font("Helvetica", "", 7 if es_ticket else 9)
+    raya_firma = "____________________" if es_ticket else "___________________________________"
+    pdf.cell(mitad_tabla, 4 if es_ticket else 5, raya_firma, align="C")
+    pdf.cell(mitad_tabla, 4 if es_ticket else 5, raya_firma, align="C", ln=True)
+    pdf.cell(mitad_tabla, 3.5 if es_ticket else 5, "Entregado por", align="C")
+    pdf.cell(mitad_tabla, 3.5 if es_ticket else 5, "Recibido Conforme (Cliente)", align="C", ln=True)
 
     pdf.output(pdf_path)
     return pdf_path

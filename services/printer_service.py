@@ -1,0 +1,565 @@
+"""Servicio de Impresión Térmica y Gestión de Impresoras (ESC/POS y Spooler de Windows).
+
+Soporta impresoras térmicas de 80mm (como el modelo MP80-12 / MPT-II USB y Bluetooth)
+utilizando el protocolo estándar ESC/POS y el subsistema de impresión nativo de Windows
+(winspool.drv) mediante ctypes, sin dependencias externas obligatorias.
+
+Incluye:
+- Detección automática de impresoras conectadas (USB / Bluetooth / Red).
+- Generación de comandos ESC/POS formateados para papel de 80mm (48 columnas).
+- Impresión directa de tickets de venta y notas de entrega.
+- Impresión de tickets de prueba.
+- Verificación del estado de conexión (en línea vs fuera de línea).
+- Persistencia de la impresora preferida en app_settings.
+"""
+import ctypes
+import os
+import platform
+import subprocess
+from ctypes import wintypes
+from typing import Optional, List, Dict, Tuple
+
+from core.database import get_connection, get_setting, set_setting
+
+# Configuración de clave en base de datos para la impresora seleccionada
+CLAVE_IMPRESORA_TERMICA = "printer_thermal_name"
+
+# Palabras clave habituales para identificar modelos térmicos de 80mm en Windows
+PALABRAS_CLAVE_TERMICAS = [
+    "mp80", "mpt", "pos-80", "pos80", "pos 80", "pos", "thermal",
+    "80mm", "termica", "receipt", "ticket", "zj-80", "rp80",
+    "xp-", "xprinter", "58/80", "bluetooth", "mini printer"
+]
+
+# Estructura DOC_INFO_1 requerida por StartDocPrinterW en winspool.drv
+class DOC_INFO_1(ctypes.Structure):
+    _fields_ = [
+        ("pDocName", wintypes.LPWSTR),
+        ("pOutputFile", wintypes.LPWSTR),
+        ("pDatatype", wintypes.LPWSTR),
+    ]
+
+
+class PRINTER_INFO_4(ctypes.Structure):
+    _fields_ = [
+        ("pPrinterName", wintypes.LPWSTR),
+        ("pServerName", wintypes.LPWSTR),
+        ("Attributes", wintypes.DWORD),
+    ]
+
+
+PRINTER_ATTRIBUTE_DEFAULT = 0x00000004
+PRINTER_ATTRIBUTE_WORK_OFFLINE = 0x00000400
+
+
+def listar_impresoras_sistema() -> List[Dict]:
+    """Obtiene la lista de todas las impresoras instaladas en el sistema.
+    
+    Retorna una lista de diccionarios:
+    [
+        {"nombre": "POS-80", "is_default": False, "is_offline": False},
+        ...
+    ]
+    """
+    sistema = platform.system()
+    impresoras = []
+
+    if sistema == "Windows":
+        try:
+            winspool = ctypes.WinDLL("winspool.drv")
+            flags = 0x00000002 | 0x00000004  # PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
+            needed = wintypes.DWORD(0)
+            returned = wintypes.DWORD(0)
+
+            # Primera llamada para obtener el tamaño de buffer requerido
+            winspool.EnumPrintersW(flags, None, 4, None, 0, ctypes.byref(needed), ctypes.byref(returned))
+            if needed.value > 0:
+                buffer = (ctypes.c_byte * needed.value)()
+                res = winspool.EnumPrintersW(
+                    flags, None, 4, buffer, needed.value, ctypes.byref(needed), ctypes.byref(returned)
+                )
+                if res:
+                    struct_ptr = ctypes.cast(buffer, ctypes.POINTER(PRINTER_INFO_4))
+                    for i in range(returned.value):
+                        p = struct_ptr[i]
+                        p_name = p.pPrinterName or ""
+                        is_offline = bool(p.Attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE)
+                        is_default = bool(p.Attributes & PRINTER_ATTRIBUTE_DEFAULT)
+                        impresoras.append({
+                            "nombre": p_name,
+                            "is_default": is_default,
+                            "is_offline": is_offline,
+                        })
+        except Exception:
+            pass
+
+        # Si winspool falló o no devolvió elementos, respaldo con winreg
+        if not impresoras:
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows NT\CurrentVersion\Devices"
+                )
+                i = 0
+                while True:
+                    try:
+                        nombre, _, _ = winreg.EnumValue(key, i)
+                        impresoras.append({
+                            "nombre": nombre,
+                            "is_default": False,
+                            "is_offline": False,
+                        })
+                        i += 1
+                    except WindowsError:
+                        break
+            except Exception:
+                pass
+
+    elif sistema in ("Linux", "Darwin"):
+        try:
+            out = subprocess.check_output(["lpstat", "-p"], stderr=subprocess.DEVNULL, text=True)
+            for line in out.splitlines():
+                if line.startswith("printer "):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        p_name = parts[1]
+                        is_offline = "disabled" in line.lower()
+                        impresoras.append({
+                            "nombre": p_name,
+                            "is_default": False,
+                            "is_offline": is_offline,
+                        })
+        except Exception:
+            pass
+
+    return impresoras
+
+
+def obtener_impresora_termica_configurada() -> str:
+    """Retorna el nombre de la impresora térmica guardada en la base de datos."""
+    return (get_setting(CLAVE_IMPRESORA_TERMICA, "") or "").strip()
+
+
+def guardar_impresora_termica_configurada(nombre: str) -> None:
+    """Guarda en base de datos la impresora preferida para tickets térmicos."""
+    set_setting(CLAVE_IMPRESORA_TERMICA, (nombre or "").strip())
+
+
+def detectar_impresora_termica() -> Optional[Dict]:
+    """Detecta la impresora térmica disponible.
+    
+    Prioridad:
+    1. Si hay una impresora guardada en app_settings y existe en el sistema.
+    2. Si alguna impresora instalada coincide con palabras clave conocidas
+       (MP80, MPT-II, POS-80, Thermal, etc.).
+       
+    Retorna un diccionario con:
+    {
+        "nombre": "POS-80",
+        "conectada": True,   # True si no está marcada como offline
+        "is_default": False,
+        "configurada_manualmente": bool
+    }
+    O None si no se encuentra ninguna impresora térmica.
+    """
+    impresoras = listar_impresoras_sistema()
+    if not impresoras:
+        return None
+
+    guardada = obtener_impresora_termica_configurada()
+    if guardada:
+        for imp in impresoras:
+            if imp["nombre"].lower() == guardada.lower():
+                return {
+                    "nombre": imp["nombre"],
+                    "conectada": not imp.get("is_offline", False),
+                    "is_default": imp.get("is_default", False),
+                    "configurada_manualmente": True,
+                }
+
+    # Búsqueda por palabras clave térmicas
+    for imp in impresoras:
+        nombre_lower = imp["nombre"].lower()
+        for kw in PALABRAS_CLAVE_TERMICAS:
+            if kw in nombre_lower:
+                return {
+                    "nombre": imp["nombre"],
+                    "conectada": not imp.get("is_offline", False),
+                    "is_default": imp.get("is_default", False),
+                    "configurada_manualmente": False,
+                }
+
+    return None
+
+
+def esta_impresora_conectada(nombre_impresora: Optional[str] = None) -> bool:
+    """Verifica si la impresora indicada (o la térmica detectada) está conectada."""
+    target = (nombre_impresora or "").strip()
+    if not target:
+        det = detectar_impresora_termica()
+        return bool(det and det.get("conectada", False))
+
+    impresoras = listar_impresoras_sistema()
+    for imp in impresoras:
+        if imp["nombre"].lower() == target.lower():
+            return not imp.get("is_offline", False)
+    return False
+
+
+def _limpiar_texto_impresora(texto: str) -> str:
+    """Sustituye caracteres especiales o tildes para codificación CP437/CP850/Latin1."""
+    if not texto:
+        return ""
+    reemplazos = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u",
+        "Á": "A", "É": "E", "Í": "I", "Ó": "O", "Ú": "U",
+        "ñ": "n", "Ñ": "N",
+        "“": '"', "”": '"', "’": "'", "—": "-", "–": "-",
+    }
+    res = str(texto)
+    for k, v in reemplazos.items():
+        res = res.replace(k, v)
+    return res
+
+
+def generar_comandos_escpos(venta_id: int, divisa: str = "USD") -> bytes:
+    """Genera la secuencia de bytes con comandos ESC/POS para papel de 80mm (48 columnas).
+    
+    Diseñado específicamente para impresoras térmicas de 80mm como la MP80-12:
+    - Ancho de 48 caracteres.
+    - Encabezado destacado.
+    - Metadatos de la venta.
+    - Tabla de items con código, nombre corto, cantidad, precio unitario y subtotal.
+    - Totales en USD y BCV.
+    - Separadores y líneas de corte manual (5 saltos de línea para el filo dentado).
+    - Comando de corte de papel estándar GS V.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT v.id, v.tipo_venta, v.cliente_id, v.total_usd, v.total_bcv, v.fecha,
+               v.metodo_pago, v.referencia_pago, v.referencia_omitida, v.monto_cobrado,
+               v.porcentaje_descuento, v.usuario_nombre,
+               c.nombre AS cliente_nombre, c.direccion AS cliente_direccion,
+               c.telefono AS cliente_telefono
+        FROM ventas v
+        LEFT JOIN clientes c ON v.cliente_id = c.cedula_rif
+        WHERE v.id = ?
+    """, (venta_id,))
+    venta = cursor.fetchone()
+
+    if not venta:
+        conn.close()
+        raise ValueError(f"La venta con ID {venta_id} no existe.")
+
+    cursor.execute("""
+        SELECT vd.cantidad, vd.precio_unitario_usd, vd.precio_unitario_bcv,
+               vd.subtotal_usd, vd.subtotal_bcv, p.codigo, p.nombre_referencia_corto, p.referencia
+        FROM ventas_detalle vd
+        JOIN productos p ON vd.producto_codigo = p.codigo
+        WHERE vd.venta_id = ?
+    """, (venta_id,))
+    detalles = cursor.fetchall()
+    conn.close()
+
+    divisa_act = divisa.upper().strip() if divisa else "USD"
+    if divisa_act not in ["USD", "BCV"]:
+        divisa_act = "USD"
+    simbolo = "$" if divisa_act == "USD" else "Bs."
+
+    # Comandos ESC/POS estándar
+    ESC = b"\x1b"
+    GS = b"\x1d"
+    INIT = ESC + b"@"
+    ALIGN_LEFT = ESC + b"a\x00"
+    ALIGN_CENTER = ESC + b"a\x01"
+    ALIGN_RIGHT = ESC + b"a\x02"
+    BOLD_ON = ESC + b"E\x01"
+    BOLD_OFF = ESC + b"E\x00"
+    DOUBLE_SIZE = ESC + b"!\x30"  # doble ancho y alto
+    DOUBLE_HEIGHT = ESC + b"!\x10"
+    NORMAL_SIZE = ESC + b"!\x00"
+
+    buffer = bytearray()
+    buffer.extend(INIT)
+
+    # Encabezado centrado
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(BOLD_ON)
+    buffer.extend(DOUBLE_HEIGHT)
+    buffer.extend(_limpiar_texto_impresora("SISTEMA INTEGRADO DE VENTAS\n").encode("cp437", errors="ignore"))
+    buffer.extend(NORMAL_SIZE)
+    buffer.extend(BOLD_ON)
+    buffer.extend(_limpiar_texto_impresora("COMPROBANTE / NOTA DE ENTREGA\n").encode("cp437", errors="ignore"))
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"------------------------------------------------\n")  # 48 guiones
+
+    # Datos generales de la venta (alineados a la izquierda)
+    buffer.extend(ALIGN_LEFT)
+    f_fecha = str(venta["fecha"] or "")
+    tipo = str(venta["tipo_venta"] or "Formal")
+    metodo = str(venta["metodo_pago"] or "Efectivo")
+    buffer.extend(_limpiar_texto_impresora(f"Ticket Nro:  {venta['id']:06d}\n").encode("cp437", errors="ignore"))
+    buffer.extend(_limpiar_texto_impresora(f"Fecha:       {f_fecha}\n").encode("cp437", errors="ignore"))
+    buffer.extend(_limpiar_texto_impresora(f"Tipo Venta:  {tipo}\n").encode("cp437", errors="ignore"))
+    buffer.extend(_limpiar_texto_impresora(f"Metodo Pago: {metodo}\n").encode("cp437", errors="ignore"))
+    
+    ref = venta["referencia_pago"]
+    if ref and not venta["referencia_omitida"]:
+        buffer.extend(_limpiar_texto_impresora(f"Ref. Pago:   {ref}\n").encode("cp437", errors="ignore"))
+    
+    usr = venta["usuario_nombre"]
+    if usr:
+        buffer.extend(_limpiar_texto_impresora(f"Atendido por: {usr}\n").encode("cp437", errors="ignore"))
+
+    # Datos de cliente
+    if tipo == "Formal" and venta["cliente_id"]:
+        c_nom = _limpiar_texto_impresora(str(venta["cliente_nombre"] or "Cliente"))
+        c_rif = _limpiar_texto_impresora(str(venta["cliente_id"]))
+        buffer.extend(_limpiar_texto_impresora(f"Cliente:     {c_nom}\n").encode("cp437", errors="ignore"))
+        buffer.extend(_limpiar_texto_impresora(f"CI/RIF:      {c_rif}\n").encode("cp437", errors="ignore"))
+        if venta["cliente_telefono"]:
+            c_tel = _limpiar_texto_impresora(str(venta["cliente_telefono"]))
+            buffer.extend(_limpiar_texto_impresora(f"Telefono:    {c_tel}\n").encode("cp437", errors="ignore"))
+        if venta["cliente_direccion"]:
+            c_dir = _limpiar_texto_impresora(str(venta["cliente_direccion"]))
+            if len(c_dir) > 34:
+                c_dir = c_dir[:31] + "..."
+            buffer.extend(_limpiar_texto_impresora(f"Direccion:   {c_dir}\n").encode("cp437", errors="ignore"))
+    else:
+        buffer.extend(b"Cliente:     Mostrador / Informal\n")
+
+    buffer.extend(b"------------------------------------------------\n")
+
+    # Tabla de productos (48 columnas de ancho estándar 80mm)
+    # Formato cabecera: CANT. DESCRIPCION (REF)         P.UNIT    TOTAL
+    #                   6     23                        9         10
+    cabecera = "CANT.  DESCRIPCION             P.UNIT     TOTAL\n"
+    buffer.extend(BOLD_ON)
+    buffer.extend(cabecera.encode("cp437", errors="ignore"))
+    buffer.extend(BOLD_OFF)
+    buffer.extend(b"------------------------------------------------\n")
+
+    total_acumulado = 0.0
+    for d in detalles:
+        cant = float(d["cantidad"])
+        if divisa_act == "USD":
+            p_unit = float(d["precio_unitario_usd"])
+            subtot = float(d["subtotal_usd"])
+        else:
+            p_unit = float(d["precio_unitario_bcv"])
+            subtot = float(d["subtotal_bcv"])
+        total_acumulado += subtot
+
+        nombre_prod = _limpiar_texto_impresora(
+            str(d["nombre_referencia_corto"] or d["referencia"] or d["codigo"] or "")
+        )
+
+        str_cant = f"{cant:.1f}".rjust(5)
+        str_punit = f"{p_unit:,.2f}".rjust(9)
+        str_subtot = f"{subtot:,.2f}".rjust(10)
+
+        if len(nombre_prod) <= 22:
+            linea = f"{str_cant}  {nombre_prod.ljust(22)} {str_punit} {str_subtot}\n"
+            buffer.extend(linea.encode("cp437", errors="ignore"))
+        else:
+            linea1 = f"{str_cant}  {nombre_prod[:22]} {str_punit} {str_subtot}\n"
+            linea2 = f"       {nombre_prod[22:46]}\n"
+            buffer.extend(linea1.encode("cp437", errors="ignore"))
+            buffer.extend(linea2.encode("cp437", errors="ignore"))
+
+    buffer.extend(b"------------------------------------------------\n")
+
+    # Totales y Resumen
+    buffer.extend(ALIGN_RIGHT)
+    pct_desc = float(venta["porcentaje_descuento"] or 0)
+    if abs(pct_desc) >= 0.01:
+        etiqueta_desc = f"Descuento ({pct_desc:+.1f}%): "
+        buffer.extend(_limpiar_texto_impresora(f"{etiqueta_desc}\n").encode("cp437", errors="ignore"))
+
+    # Total destacado
+    buffer.extend(BOLD_ON)
+    buffer.extend(DOUBLE_HEIGHT)
+    buffer.extend(_limpiar_texto_impresora(f"TOTAL {divisa_act}: {simbolo} {total_acumulado:,.2f}\n").encode("cp437", errors="ignore"))
+    buffer.extend(NORMAL_SIZE)
+    buffer.extend(BOLD_OFF)
+
+    # Mostrar también contravalor referencial
+    if divisa_act == "USD":
+        total_otro = float(venta["total_bcv"] or 0)
+        buffer.extend(_limpiar_texto_impresora(f"Ref. BCV: Bs. {total_otro:,.2f}\n").encode("cp437", errors="ignore"))
+    else:
+        total_otro = float(venta["total_usd"] or 0)
+        buffer.extend(_limpiar_texto_impresora(f"Ref. USD: $ {total_otro:,.2f}\n").encode("cp437", errors="ignore"))
+
+    buffer.extend(ALIGN_CENTER)
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(b"*** GRACIAS POR SU COMPRA ***\n")
+    buffer.extend(b"Conserve este ticket como constancia\n")
+    buffer.extend(b"------------------------------------------------\n")
+
+    # 5 saltos de línea para que el texto salga más allá del filo dentado de corte
+    buffer.extend(b"\n\n\n\n\n")
+
+    # Comando de corte parcial de papel GS V 65 3
+    buffer.extend(GS + b"V\x41\x03")
+
+    return bytes(buffer)
+
+
+def enviar_datos_crudos_impresora(
+    nombre_impresora: str,
+    datos: bytes,
+    nombre_documento: str = "Ticket de Venta"
+) -> Tuple[bool, str]:
+    """Envía una secuencia de bytes crudos directamente a la cola de la impresora en Windows."""
+    if not datos:
+        return False, "No hay datos para enviar a la impresora."
+
+    sistema = platform.system()
+    if sistema == "Windows":
+        try:
+            winspool = ctypes.WinDLL("winspool.drv")
+
+            # Configurar firmas de funciones winspool
+            winspool.OpenPrinterW.argtypes = [wintypes.LPWSTR, ctypes.POINTER(wintypes.HANDLE), ctypes.c_void_p]
+            winspool.OpenPrinterW.restype = wintypes.BOOL
+
+            winspool.StartDocPrinterW.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(DOC_INFO_1)]
+            winspool.StartDocPrinterW.restype = wintypes.DWORD
+
+            winspool.StartPagePrinter.argtypes = [wintypes.HANDLE]
+            winspool.StartPagePrinter.restype = wintypes.BOOL
+
+            winspool.WritePrinter.argtypes = [
+                wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)
+            ]
+            winspool.WritePrinter.restype = wintypes.BOOL
+
+            winspool.EndPagePrinter.argtypes = [wintypes.HANDLE]
+            winspool.EndPagePrinter.restype = wintypes.BOOL
+
+            winspool.EndDocPrinter.argtypes = [wintypes.HANDLE]
+            winspool.EndDocPrinter.restype = wintypes.BOOL
+
+            winspool.ClosePrinter.argtypes = [wintypes.HANDLE]
+            winspool.ClosePrinter.restype = wintypes.BOOL
+
+            hPrinter = wintypes.HANDLE()
+            if not winspool.OpenPrinterW(nombre_impresora, ctypes.byref(hPrinter), None):
+                err = ctypes.GetLastError()
+                return False, f"No se pudo abrir la impresora '{nombre_impresora}' (Código Windows: {err}). Verifique que esté conectada y encendida."
+
+            try:
+                doc_info = DOC_INFO_1()
+                doc_info.pDocName = nombre_documento
+                doc_info.pOutputFile = None
+                doc_info.pDatatype = "RAW"
+
+                job_id = winspool.StartDocPrinterW(hPrinter, 1, ctypes.byref(doc_info))
+                if job_id == 0:
+                    err = ctypes.GetLastError()
+                    return False, f"No se pudo iniciar el trabajo de impresión en '{nombre_impresora}' (Error: {err})."
+
+                try:
+                    winspool.StartPagePrinter(hPrinter)
+                    escritos = wintypes.DWORD(0)
+                    datos_buf = ctypes.create_string_buffer(datos)
+                    ok_write = winspool.WritePrinter(
+                        hPrinter, datos_buf, len(datos), ctypes.byref(escritos)
+                    )
+                    winspool.EndPagePrinter(hPrinter)
+                    if not ok_write or escritos.value == 0:
+                        return False, "Error al escribir los datos en la impresora térmica."
+                finally:
+                    winspool.EndDocPrinter(hPrinter)
+
+            finally:
+                winspool.ClosePrinter(hPrinter)
+
+            return True, f"Ticket enviado con éxito a '{nombre_impresora}'."
+
+        except Exception as ex:
+            return False, f"Excepción al imprimir en '{nombre_impresora}': {ex}"
+
+    elif sistema in ("Linux", "Darwin"):
+        try:
+            proceso = subprocess.Popen(
+                ["lpr", "-P", nombre_impresora, "-l"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = proceso.communicate(input=datos)
+            if proceso.returncode == 0:
+                return True, f"Ticket enviado con éxito a '{nombre_impresora}'."
+            return False, f"Error al enviar a lp/lpr: {stderr.decode(errors='ignore')}"
+        except Exception as ex:
+            return False, f"Error en sistema Unix: {ex}"
+
+    return False, f"Plataforma '{sistema}' no soportada para impresión directa RAW."
+
+
+def imprimir_ticket_termico(
+    venta_id: int,
+    divisa: str = "USD",
+    nombre_impresora: Optional[str] = None
+) -> Tuple[bool, str]:
+    """Imprime el ticket de venta en la impresora térmica configurada o detectada.
+    
+    Retorna (True, mensaje_exito) o (False, mensaje_error).
+    """
+    impresora_target = (nombre_impresora or "").strip()
+    if not impresora_target:
+        det = detectar_impresora_termica()
+        if not det:
+            return False, "No se detectó ninguna impresora térmica conectada en el sistema."
+        impresora_target = det["nombre"]
+
+    # Generar comandos ESC/POS
+    try:
+        escpos_bytes = generar_comandos_escpos(venta_id, divisa=divisa)
+    except Exception as ex:
+        return False, f"Error al preparar el ticket para impresión: {ex}"
+
+    # Despachar al spooler
+    return enviar_datos_crudos_impresora(
+        nombre_impresora=impresora_target,
+        datos=escpos_bytes,
+        nombre_documento=f"Ticket Venta {venta_id:06d}"
+    )
+
+
+def imprimir_ticket_prueba(nombre_impresora: Optional[str] = None) -> Tuple[bool, str]:
+    """Imprime un ticket de prueba corto para verificar la conexión y el avance de papel."""
+    impresora_target = (nombre_impresora or "").strip()
+    if not impresora_target:
+        det = detectar_impresora_termica()
+        if not det:
+            return False, "No se detectó ninguna impresora térmica conectada."
+        impresora_target = det["nombre"]
+
+    ESC = b"\x1b"
+    GS = b"\x1d"
+    buffer = bytearray()
+    buffer.extend(ESC + b"@")
+    buffer.extend(ESC + b"a\x01")  # centrado
+    buffer.extend(ESC + b"!\x30")  # doble ancho y alto
+    buffer.extend(b"PRUEBA DE IMPRESION\n")
+    buffer.extend(ESC + b"!\x00")  # normal
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(b"Impresora Termica: MP80-12 / 80mm\n")
+    buffer.extend(b"Protocolo: ESC/POS - 48 Columnas\n")
+    buffer.extend(f"Dispositivo: {impresora_target}\n".encode("cp437", errors="ignore"))
+    buffer.extend(b"Estado: COMUNICACION CORRECTA\n")
+    buffer.extend(b"------------------------------------------------\n")
+    buffer.extend(b"Sistema Integrado de Inventario y Ventas\n")
+    buffer.extend(b"\n\n\n\n\n")
+    buffer.extend(GS + b"V\x41\x03")
+
+    return enviar_datos_crudos_impresora(
+        nombre_impresora=impresora_target,
+        datos=bytes(buffer),
+        nombre_documento="Prueba de Impresion Termica"
+    )

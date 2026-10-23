@@ -36,6 +36,14 @@ from services.ventas_service import (
     procesar_venta,
 )
 from services.pdf_service import generar_nota_entrega_pdf, enviar_a_impresora
+from services.printer_service import (
+    detectar_impresora_termica,
+    imprimir_ticket_termico,
+    imprimir_ticket_prueba,
+    listar_impresoras_sistema,
+    guardar_impresora_termica_configurada,
+    obtener_impresora_termica_configurada,
+)
 from services.cart_manager import (
     obtener_todos_los_carritos,
     obtener_id_carrito_activo,
@@ -583,6 +591,36 @@ class VentasView(BaseView):
             border=ft.Border.all(1, self.get_border_color())
         )
 
+        # Indicador / Configuración rápida de impresora térmica (MP80-12)
+        info_imp_hdr = detectar_impresora_termica()
+        imp_hdr_ok = bool(info_imp_hdr and info_imp_hdr.get("conectada"))
+        imp_hdr_nom = info_imp_hdr["nombre"] if info_imp_hdr else "No detectada"
+        btn_impresora_header = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(
+                        ft.Icons.PRINT if imp_hdr_ok else ft.Icons.PRINT_DISABLED_OUTLINED,
+                        color=ft.Colors.GREEN_400 if imp_hdr_ok else ft.Colors.GREY_500,
+                        size=20,
+                    ),
+                    ft.Text(
+                        "Térmica 80mm" if imp_hdr_ok else "Sin Impresora",
+                        size=12,
+                        weight=ft.FontWeight.W_500,
+                        color=self.get_text_color(),
+                    ),
+                ],
+                tight=True,
+                spacing=6,
+            ),
+            bgcolor=self.get_card_bg(),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+            border_radius=12,
+            border=ft.Border.all(1, self.get_border_color()),
+            tooltip=f"Impresora Térmica: {imp_hdr_nom} ({'Conectada' if imp_hdr_ok else 'No detectada'}). Clic para configurar.",
+            on_click=self.abrir_dialogo_configuracion_impresora,
+        )
+
         self.tira_carritos_container = ft.Container(
             content=self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
         )
@@ -595,7 +633,7 @@ class VentasView(BaseView):
                         controls=[
                             ft.Row([self.dd_carritos, btn_nuevo_carrito, btn_eliminar_carrito], spacing=5),
                             self.tipo_venta_selector,
-                            tasa_badge
+                            ft.Row([btn_impresora_header, tasa_badge], spacing=8)
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         wrap=True
@@ -2978,8 +3016,14 @@ class VentasView(BaseView):
         self._refrescar_carrito_y_resumen(e)
 
     def mostrar_dialogo_pdf(self, e):
+        """Diálogo post-venta para impresión en térmica de 80mm (MP80-12) o exportación a PDF."""
+        # Detectar estado de la impresora térmica en el sistema
+        info_impresora = detectar_impresora_termica()
+        impresora_conectada = bool(info_impresora and info_impresora.get("conectada", False))
+        nombre_impresora = info_impresora["nombre"] if info_impresora else "No detectada"
+
         dd_divisa = ft.Dropdown(
-            label="Divisa de Impresión (ERS 3.5)",
+            label="Divisa del Comprobante",
             value="USD",
             options=[
                 ft.dropdown.Option("USD", "Dólares ($)"),
@@ -2989,13 +3033,14 @@ class VentasView(BaseView):
             border_radius=12
         )
         dd_formato_papel = ft.Dropdown(
-            label="Tamaño de Hoja",
-            value="carta",
+            label="Formato de Papel / Exportación",
+            value="ticket_80mm",
             options=[
-                ft.dropdown.Option("carta", "Carta"),
-                ft.dropdown.Option("media_carta", "Media Carta"),
+                ft.dropdown.Option("ticket_80mm", "Ticket Térmico (80mm) - MP80-12"),
+                ft.dropdown.Option("media_carta", "Media Carta (140x216mm)"),
+                ft.dropdown.Option("carta", "Carta (Letter)"),
             ],
-            width=220,
+            width=280,
             border_radius=12
         )
 
@@ -3004,14 +3049,15 @@ class VentasView(BaseView):
 
         def confirmar_generar_pdf(e_dialog):
             self.divisa_impresion_pdf = dd_divisa.value or "USD"
-            formato_papel = dd_formato_papel.value or "carta"
+            formato_papel = dd_formato_papel.value or "ticket_80mm"
             self._close_dialog(e_dialog, dialog=dialog)
 
             last_pdf_dir = get_setting("last_pdf_dir", default=None)
             if last_pdf_dir and not os.path.exists(last_pdf_dir):
                 last_pdf_dir = None
 
-            sugerencia = f"Nota_Entrega_{self.venta_id_reciente:06d}.pdf"
+            prefijo = "Ticket" if formato_papel == "ticket_80mm" else "Nota_Entrega"
+            sugerencia = f"{prefijo}_{self.venta_id_reciente:06d}.pdf"
             ruta_destino = self.abrir_dialogo_guardado(last_pdf_dir, sugerencia)
 
             if ruta_destino:
@@ -3026,43 +3072,206 @@ class VentasView(BaseView):
                     if directorio:
                         set_setting("last_pdf_dir", directorio)
 
-                    # ERS 3.5 paso 4: despachar a la impresora predeterminada.
-                    try:
-                        enviado = enviar_a_impresora(ruta_destino)
-                        if enviado:
-                            self.show_alert_success(e_dialog, f"Nota de Entrega enviada a la impresora predeterminada.\nGuardada en:\n{ruta_destino}")
-                        else:
-                            self.show_alert_info(e_dialog, f"Nota de Entrega guardada en:\n{ruta_destino}\n(Impresión automática no disponible en esta plataforma; ábrala manualmente para imprimir.)")
-                    except Exception as ex_print:
-                        self.show_alert_error(e_dialog, f"Nota guardada, pero falló el envío a la impresora: {ex_print}")
+                    self.show_alert_success(
+                        e_dialog,
+                        f"Comprobante guardado exitosamente como PDF en:\n{ruta_destino}"
+                    )
                 except Exception as ex:
-                    self.show_alert_error(e_dialog, f"Error al generar Nota de Entrega: {ex}")
+                    self.show_alert_error(e_dialog, f"Error al generar comprobante PDF: {ex}")
 
-        dialog = ft.AlertDialog(
-            title=ft.Row([ft.Icon(ft.Icons.PICTURE_AS_PDF, color=ft.Colors.RED_600), ft.Text("¿Generar Nota de Entrega PDF?")]),
-            content=ft.Column([
-                ft.Text(f"La venta N° {self.venta_id_reciente:06d} ha sido procesada con éxito."),
-                ft.Text("Seleccione la divisa para reflejar los precios en el documento impreso:"),
-                dd_divisa,
-                dd_formato_papel,
-            ], tight=True, spacing=10),
-            actions=[
+        def confirmar_imprimir_termica(e_dialog):
+            self.divisa_impresion_pdf = dd_divisa.value or "USD"
+            formato_papel = dd_formato_papel.value or "ticket_80mm"
+            self._close_dialog(e_dialog, dialog=dialog)
+
+            target_imp = nombre_impresora if impresora_conectada else None
+            ok, mensaje = imprimir_ticket_termico(
+                venta_id=self.venta_id_reciente,
+                divisa=self.divisa_impresion_pdf,
+                nombre_impresora=target_imp
+            )
+            if ok:
+                self.show_alert_success(
+                    e_dialog,
+                    f"¡Ticket N° {self.venta_id_reciente:06d} enviado a la impresora térmica '{nombre_impresora}'!"
+                )
+            else:
+                # Falla en la comunicación con la impresora: ofrecer contingencia PDF inmediatamente
+                self.show_alert_error(
+                    e_dialog,
+                    f"No se pudo comunicar con la impresora térmica: {mensaje}"
+                )
+                self.abrir_contingencia_pdf(e_dialog, self.divisa_impresion_pdf, formato_papel)
+
+        # Tarjeta visual con el estado de conexión de la impresora térmica
+        if impresora_conectada:
+            banner_impresora = ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_400, size=24),
+                    ft.Column([
+                        ft.Text(f"Impresora Térmica: {nombre_impresora}", weight=ft.FontWeight.BOLD, size=13),
+                        ft.Text("Conectada y lista para imprimir ticket de 80mm", size=11, color=ft.Colors.GREEN_200)
+                    ], spacing=2, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.SETTINGS_OUTLINED,
+                        tooltip="Configurar impresora",
+                        icon_size=18,
+                        on_click=lambda ev: self.abrir_dialogo_configuracion_impresora(ev, dialog_padre=dialog)
+                    )
+                ], alignment=ft.MainAxisAlignment.START),
+                padding=10,
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.GREEN_400),
+                border=ft.Border.all(1, ft.Colors.GREEN_600),
+                border_radius=10,
+            )
+            botones_accion = [
+                ft.TextButton("No - Finalizar", on_click=cerrar_dialogo),
+                ft.OutlinedButton(
+                    "Exportar PDF",
+                    icon=ft.Icons.PICTURE_AS_PDF,
+                    on_click=confirmar_generar_pdf,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12))
+                ),
+                ft.Button(
+                    "Imprimir en Térmica (80mm)",
+                    icon=ft.Icons.PRINT,
+                    on_click=confirmar_imprimir_termica,
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.GREEN_700,
+                        color=ft.Colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=12)
+                    )
+                ),
+            ]
+        else:
+            banner_impresora = ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.PRINT_DISABLED_OUTLINED, color=ft.Colors.ORANGE_400, size=24),
+                    ft.Column([
+                        ft.Text("Impresora Térmica: No conectada", weight=ft.FontWeight.BOLD, size=13, color=ft.Colors.ORANGE_300),
+                        ft.Text("Conecte la impresora (USB/Bluetooth) o guarde el comprobante directamente en PDF.", size=11, color=ft.Colors.GREY_400)
+                    ], spacing=2, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.SETTINGS_OUTLINED,
+                        tooltip="Configurar / Detectar impresora",
+                        icon_size=18,
+                        on_click=lambda ev: self.abrir_dialogo_configuracion_impresora(ev, dialog_padre=dialog)
+                    )
+                ], alignment=ft.MainAxisAlignment.START),
+                padding=10,
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.ORANGE_400),
+                border=ft.Border.all(1, ft.Colors.ORANGE_600),
+                border_radius=10,
+            )
+            botones_accion = [
                 ft.TextButton("No - Finalizar", on_click=cerrar_dialogo),
                 ft.Button(
-                    "Sí - Guardar PDF",
+                    "Exportar como PDF",
+                    icon=ft.Icons.PICTURE_AS_PDF,
                     on_click=confirmar_generar_pdf,
                     style=ft.ButtonStyle(
                         bgcolor=ft.Colors.GREEN_700,
                         color=ft.Colors.WHITE,
                         shape=ft.RoundedRectangleBorder(radius=12)
                     )
-                )
-            ],
+                ),
+            ]
+
+        dialog = ft.AlertDialog(
+            title=ft.Row([
+                ft.Icon(ft.Icons.RECEIPT_LONG, color=ft.Colors.BLUE_400),
+                ft.Text("Comprobante de Venta (Impresión / PDF)")
+            ]),
+            content=ft.Column([
+                ft.Text(f"La venta N° {self.venta_id_reciente:06d} ha sido procesada con éxito."),
+                banner_impresora,
+                ft.Text("Seleccione la divisa y formato para el comprobante:"),
+                dd_divisa,
+                dd_formato_papel,
+            ], tight=True, spacing=10),
+            actions=botones_accion,
             actions_alignment=ft.MainAxisAlignment.END
         )
 
-        # Por la pila nativa de Flet 0.86 (`show_dialog`/`pop_dialog`): este
-        # diálogo se abre justo después de cerrar el de cobro, y con el patrón
-        # heredado de `page.overlay` el cierre no se dibujaba y quedaba pegado.
         self._dlg_pdf = dialog
         self._open_dialog(dialog, e)
+
+    def abrir_contingencia_pdf(self, e, divisa="USD", formato="ticket_80mm"):
+        """Permite guardar en PDF cuando la impresora térmica física falló o no estuvo disponible."""
+        last_pdf_dir = get_setting("last_pdf_dir", default=None)
+        if last_pdf_dir and not os.path.exists(last_pdf_dir):
+            last_pdf_dir = None
+
+        prefijo = "Ticket" if formato == "ticket_80mm" else "Nota_Entrega"
+        sugerencia = f"{prefijo}_{self.venta_id_reciente:06d}.pdf"
+        ruta_destino = self.abrir_dialogo_guardado(last_pdf_dir, sugerencia)
+
+        if ruta_destino:
+            try:
+                generar_nota_entrega_pdf(
+                    venta_id=self.venta_id_reciente,
+                    divisa_impresion=divisa,
+                    ruta_destino=ruta_destino,
+                    formato_papel=formato or "ticket_80mm",
+                )
+                directorio = os.path.dirname(ruta_destino)
+                if directorio:
+                    set_setting("last_pdf_dir", directorio)
+                self.show_alert_success(e, f"Comprobante guardado como PDF en:\n{ruta_destino}")
+            except Exception as ex:
+                self.show_alert_error(e, f"Error al generar PDF de contingencia: {ex}")
+
+    def abrir_dialogo_configuracion_impresora(self, e=None, dialog_padre=None):
+        """Diálogo para configurar la impresora térmica preferida y probar impresión."""
+        impresoras = listar_impresoras_sistema()
+        opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
+        for imp in impresoras:
+            nombre = imp["nombre"]
+            estado = " (Desconectada)" if imp.get("is_offline") else ""
+            pred = " [Predeterminada]" if imp.get("is_default") else ""
+            opciones.append(ft.dropdown.Option(nombre, f"{nombre}{pred}{estado}"))
+
+        actual = obtener_impresora_termica_configurada()
+
+        dd_impresoras = ft.Dropdown(
+            label="Impresora Térmica Seleccionada",
+            value=actual if any(o.key == actual for o in opciones) else "",
+            options=opciones,
+            width=380,
+            border_radius=12
+        )
+
+        def guardar_config(ev):
+            seleccion = dd_impresoras.value or ""
+            guardar_impresora_termica_configurada(seleccion)
+            self._close_dialog(ev, dialog=dlg_conf)
+            self.show_alert_success(ev, f"Configuración de impresora guardada: {seleccion or 'Detección automática'}")
+            if dialog_padre:
+                # Refrescar diálogo padre si está abierto
+                self._close_dialog(ev, dialog=dialog_padre)
+                self.mostrar_dialogo_pdf(ev)
+
+        def probar_impresion(ev):
+            sel = dd_impresoras.value or None
+            ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
+            if ok:
+                self.show_alert_success(ev, "Ticket de prueba enviado con éxito.")
+            else:
+                self.show_alert_error(ev, f"Error al enviar prueba: {msg}")
+
+        dlg_conf = ft.AlertDialog(
+            title=ft.Row([ft.Icon(ft.Icons.PRINT_ROUNDED, color=ft.Colors.BLUE_400), ft.Text("Configurar Impresora Térmica")]),
+            content=ft.Column([
+                ft.Text("Seleccione la impresora para emitir los tickets de venta (80mm)."),
+                dd_impresoras,
+                ft.Text("Compatible con MP80-12, MPT-II, POS-80 (USB / Bluetooth).", size=11, color=self.get_subtext_color()),
+            ], tight=True, spacing=12),
+            actions=[
+                ft.TextButton("Cerrar", on_click=lambda ev: self._close_dialog(ev, dialog=dlg_conf)),
+                ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT, on_click=probar_impresion),
+                ft.Button("Guardar", icon=ft.Icons.CHECK, on_click=guardar_config,
+                          style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END
+        )
+        self._open_dialog(dlg_conf, e)
