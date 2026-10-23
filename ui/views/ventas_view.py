@@ -592,23 +592,40 @@ class VentasView(BaseView):
         )
 
         # Indicador / Configuración rápida de impresora térmica (MP80-12)
-        info_imp_hdr = detectar_impresora_termica()
+        # Indicador / Configuración rápida de impresora térmica (MP80-12)
+        info_imp_hdr = detectar_impresora_termica(verificar_online=True)
         imp_hdr_ok = bool(info_imp_hdr and info_imp_hdr.get("conectada"))
         imp_hdr_nom = info_imp_hdr["nombre"] if info_imp_hdr else "No detectada"
+
+        if imp_hdr_ok:
+            txt_estado = "Térmica 80mm"
+            color_icono = ft.Colors.GREEN_400
+            icono_estado = ft.Icons.PRINT
+            tooltip_estado = f"Impresora Térmica: {imp_hdr_nom} (Conectada y lista). Clic para configurar o probar."
+        elif info_imp_hdr:
+            txt_estado = "Desconectada"
+            color_icono = ft.Colors.ORANGE_400
+            icono_estado = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip_estado = f"Impresora Térmica: {imp_hdr_nom} (Desconectada / Apagada). Clic para configurar o verificar."
+        else:
+            txt_estado = "Sin Impresora"
+            color_icono = ft.Colors.GREY_500
+            icono_estado = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip_estado = "No se detectó impresora térmica. Clic para configurar."
+
+        self._icon_impresora_termica = ft.Icon(icono_estado, color=color_icono, size=20)
+        self._lbl_impresora_termica = ft.Text(
+            txt_estado,
+            size=12,
+            weight=ft.FontWeight.W_500,
+            color=color_icono if not imp_hdr_ok and info_imp_hdr else self.get_text_color(),
+        )
+
         btn_impresora_header = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(
-                        ft.Icons.PRINT if imp_hdr_ok else ft.Icons.PRINT_DISABLED_OUTLINED,
-                        color=ft.Colors.GREEN_400 if imp_hdr_ok else ft.Colors.GREY_500,
-                        size=20,
-                    ),
-                    ft.Text(
-                        "Térmica 80mm" if imp_hdr_ok else "Sin Impresora",
-                        size=12,
-                        weight=ft.FontWeight.W_500,
-                        color=self.get_text_color(),
-                    ),
+                    self._icon_impresora_termica,
+                    self._lbl_impresora_termica,
                 ],
                 tight=True,
                 spacing=6,
@@ -617,9 +634,10 @@ class VentasView(BaseView):
             padding=ft.Padding.symmetric(horizontal=10, vertical=6),
             border_radius=12,
             border=ft.Border.all(1, self.get_border_color()),
-            tooltip=f"Impresora Térmica: {imp_hdr_nom} ({'Conectada' if imp_hdr_ok else 'No detectada'}). Clic para configurar.",
+            tooltip=tooltip_estado,
             on_click=self.abrir_dialogo_configuracion_impresora,
         )
+        self._btn_impresora_termica = btn_impresora_header
 
         self.tira_carritos_container = ft.Container(
             content=self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
@@ -3320,16 +3338,7 @@ class VentasView(BaseView):
             self.show_alert_success(ev, f"Configuración de impresora guardada: {seleccion or 'Detección automática'}")
 
             # Actualizar botón de estado en la cabecera si existe
-            if hasattr(self, "_btn_impresora_termica") and self._btn_impresora_termica:
-                info = detectar_impresora_termica()
-                conectada = bool(info and info.get("conectada", False))
-                self._btn_impresora_termica.icon = ft.Icons.PRINT if conectada else ft.Icons.PRINT_DISABLED_OUTLINED
-                self._btn_impresora_termica.icon_color = ft.Colors.GREEN_400 if conectada else ft.Colors.GREY_500
-                self._btn_impresora_termica.tooltip = f"Térmica: {info['nombre']} (Conectada)" if conectada else "Térmica: Desconectada"
-                try:
-                    self._btn_impresora_termica.update()
-                except Exception:
-                    pass
+            self._actualizar_boton_impresora_cabecera()
 
             if dialog_padre:
                 # Refrescar diálogo padre si está abierto
@@ -3347,8 +3356,10 @@ class VentasView(BaseView):
                 ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
                 if ok:
                     self.show_alert_success(ev, "Ticket de prueba enviado con éxito a la impresora.")
+                    self._actualizar_boton_impresora_cabecera()
                 else:
                     self.show_alert_error(ev, f"Error al enviar prueba: {msg}")
+                    self._actualizar_boton_impresora_cabecera()
             finally:
                 procesando_accion = False
                 _bloquear_botones(False)
@@ -3369,3 +3380,41 @@ class VentasView(BaseView):
             actions_alignment=ft.MainAxisAlignment.END
         )
         self._open_dialog(dlg_conf, e)
+
+    def _actualizar_boton_impresora_cabecera(self, info=None):
+        """Actualiza visualmente el estado del botón de la impresora en la barra superior."""
+        if not hasattr(self, "_btn_impresora_termica") or not self._btn_impresora_termica:
+            return
+        if info is None:
+            info = detectar_impresora_termica(verificar_online=True)
+        ok = bool(info and info.get("conectada"))
+        nom = info["nombre"] if info else "No detectada"
+
+        if ok:
+            txt = "Térmica 80mm"
+            color = ft.Colors.GREEN_400
+            icono = ft.Icons.PRINT
+            tooltip = f"Impresora Térmica: {nom} (Conectada y lista). Clic para configurar o probar."
+        elif info:
+            txt = "Desconectada"
+            color = ft.Colors.ORANGE_400
+            icono = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip = f"Impresora Térmica: {nom} (Desconectada / Apagada). Clic para configurar o verificar."
+        else:
+            txt = "Sin Impresora"
+            color = ft.Colors.GREY_500
+            icono = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip = "No se detectó impresora térmica. Clic para configurar."
+
+        if hasattr(self, "_icon_impresora_termica") and self._icon_impresora_termica:
+            self._icon_impresora_termica.icon = icono
+            self._icon_impresora_termica.color = color
+        if hasattr(self, "_lbl_impresora_termica") and self._lbl_impresora_termica:
+            self._lbl_impresora_termica.value = txt
+            self._lbl_impresora_termica.color = color if not ok and info else self.get_text_color()
+        self._btn_impresora_termica.tooltip = tooltip
+        try:
+            self._btn_impresora_termica.update()
+        except Exception:
+            pass
+

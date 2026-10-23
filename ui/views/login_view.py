@@ -1,9 +1,10 @@
 import flet as ft
 from ui.views.base_view import BaseView
 from services.user_service import authenticate_user
+from core.database import get_setting, set_setting
 
 class LoginView(BaseView):
-    """Vista de inicio de sesión con adaptación dinámica de tema."""
+    """Vista de inicio de sesión con adaptación dinámica de tema y opción para recordar usuario."""
     
     def __init__(self, on_login_success=None):
         self.on_login_success = on_login_success
@@ -68,9 +69,14 @@ class LoginView(BaseView):
             text_align=ft.TextAlign.CENTER,
         )
 
+        recordar = get_setting("login_remember_user", default="1") == "1"
+        usuario_guardado = get_setting("login_last_username", default="") if recordar else ""
+
         # Campos de entrada de datos sin íconos y con fondos oscuros
         self.username_input = ft.TextField(
             label="Usuario",
+            value=usuario_guardado,
+            autofocus=not bool(usuario_guardado),
             width=320,
             border_radius=8,
             border_color="#343644" if self.is_dark else "#94A3B8",
@@ -85,6 +91,7 @@ class LoginView(BaseView):
             label="Contraseña",
             password=True,
             can_reveal_password=True,
+            autofocus=bool(usuario_guardado),
             width=320,
             border_radius=8,
             border_color="#343644" if self.is_dark else "#94A3B8",
@@ -94,6 +101,15 @@ class LoginView(BaseView):
             filled=True,
             bgcolor="#1D1E27" if self.is_dark else "#F8FAFC",
             on_submit=self.handle_login,
+        )
+
+        # Opción para recordar usuario y entrar solo escribiendo la clave
+        self.recordar_checkbox = ft.Checkbox(
+            label="Recordar usuario",
+            value=recordar,
+            check_color=ft.Colors.WHITE,
+            active_color="#90CAF9" if self.is_dark else accent,
+            label_style=ft.TextStyle(size=13, color=self.get_subtext_color()),
         )
         
         # Botón de inicio de sesión estilo píldora oscuro
@@ -127,7 +143,7 @@ class LoginView(BaseView):
             )
         ]
 
-        # Contenedor de la tarjeta del login ajustado al contenido con altura fija
+        # Contenedor de la tarjeta del login ajustado al contenido con altura dinámica
         login_card = ft.Container(
             content=ft.Column(
                 controls=[
@@ -135,21 +151,22 @@ class LoginView(BaseView):
                     ft.Container(height=4), # Pequeña separación del título
                     self.username_input,
                     self.password_input,
+                    ft.Row([self.recordar_checkbox], alignment=ft.MainAxisAlignment.START, width=320),
                     self.error_text,
                     ft.Container(height=2), # Pequeña separación del botón
                     login_btn,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=20,
+                spacing=12,
                 tight=True,
             ),
             bgcolor="#21222C" if self.is_dark else ft.Colors.WHITE,
             border=ft.Border.all(1, "#2C2D3A" if self.is_dark else "#E2E8F0"),
             shadow=shadow,
-            padding=ft.Padding(30, 40, 30, 40),
+            padding=ft.Padding(30, 36, 30, 36),
             border_radius=16,
             width=380,
-            height=370,
+            height=410,
         )
         
         # Contenedor principal con fondo plano negro/gris oscuro
@@ -161,6 +178,12 @@ class LoginView(BaseView):
         )
 
     def handle_login(self, e):
+        def _safe_update():
+            try:
+                self.update()
+            except (RuntimeError, AssertionError, AttributeError):
+                pass
+
         # Validación básica de entradas
         user = self.username_input.value.strip()
         pwd = self.password_input.value.strip()
@@ -168,7 +191,7 @@ class LoginView(BaseView):
         if not user or not pwd:
             self.error_text.value = "Todos los campos son obligatorios."
             self.error_text.visible = True
-            self.update()
+            _safe_update()
             return
 
         # Autenticación contra SQLite
@@ -176,13 +199,24 @@ class LoginView(BaseView):
         
         if auth_user:
             self.error_text.visible = False
-            self.username_input.value = ""
+            # Guardar o limpiar preferencia de recordar usuario
+            if getattr(self, "recordar_checkbox", None) and self.recordar_checkbox.value:
+                set_setting("login_remember_user", "1")
+                set_setting("login_last_username", user)
+                self.username_input.value = user
+            else:
+                set_setting("login_remember_user", "0")
+                set_setting("login_last_username", "")
+                self.username_input.value = ""
+
             self.password_input.value = ""
-            self.update()
+            _safe_update()
             
             if self.on_login_success:
                 self.on_login_success(auth_user)
         else:
             self.error_text.value = "Usuario o contraseña incorrectos."
             self.error_text.visible = True
-            self.update()
+            _safe_update()
+
+

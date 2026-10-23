@@ -604,23 +604,39 @@ class DashboardView(BaseView):
         )
 
         # Indicador / Configuración rápida de impresora térmica (MP80-12)
-        info_imp = detectar_impresora_termica()
+        info_imp = detectar_impresora_termica(verificar_online=True)
         imp_ok = bool(info_imp and info_imp.get("conectada"))
         imp_nom = info_imp["nombre"] if info_imp else "No detectada"
+
+        if imp_ok:
+            txt_printer = "Térmica 80mm"
+            color_printer = ft.Colors.GREEN_400
+            icon_printer = ft.Icons.PRINT
+            tooltip_printer = f"Impresora Térmica: {imp_nom} (Conectada y lista). Clic para configurar o probar."
+        elif info_imp:
+            txt_printer = "Desconectada"
+            color_printer = ft.Colors.ORANGE_400
+            icon_printer = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip_printer = f"Impresora Térmica: {imp_nom} (Desconectada / Apagada). Clic para configurar o probar."
+        else:
+            txt_printer = "Sin Impresora"
+            color_printer = ft.Colors.GREY_500
+            icon_printer = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip_printer = "No se detectó impresora térmica. Clic para configurar o probar."
 
         printer_btn = ft.Container(
             content=ft.Row(
                 controls=[
                     ft.Icon(
-                        ft.Icons.PRINT if imp_ok else ft.Icons.PRINT_DISABLED_OUTLINED,
-                        color=ft.Colors.GREEN_400 if imp_ok else ft.Colors.GREY_500,
+                        icon_printer,
+                        color=color_printer,
                         size=18,
                     ),
                     ft.Text(
-                        "Térmica 80mm" if imp_ok else "Sin Impresora",
+                        txt_printer,
                         size=11,
                         weight=ft.FontWeight.W_500,
-                        color=self.get_text_color(),
+                        color=color_printer if not imp_ok and info_imp else self.get_text_color(),
                     ),
                 ],
                 tight=True,
@@ -630,7 +646,7 @@ class DashboardView(BaseView):
             padding=ft.Padding.symmetric(horizontal=10, vertical=6),
             border_radius=20,
             border=ft.Border.all(1, self.get_border_color()),
-            tooltip=f"Impresora Térmica: {imp_nom} ({'Conectada' if imp_ok else 'No detectada'}). Clic para configurar o probar.",
+            tooltip=tooltip_printer,
             on_click=self.abrir_dialogo_configuracion_impresora,
         )
 

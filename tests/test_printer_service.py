@@ -177,8 +177,9 @@ def test_detectar_impresora_puerto_com_bluetooth():
         {"nombre": "COM5 (MP80-12 Bluetooth)", "puerto": "COM5", "is_default": False, "is_offline": False, "tipo": "serial"},
     ]
 
-    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras_falsas):
-        det = detectar_impresora_termica()
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras_falsas), \
+         patch("services.printer_service.probar_conexion_puerto_com", return_value=True):
+        det = detectar_impresora_termica(verificar_online=True)
         assert det is not None
         assert det["nombre"] == "COM5 (MP80-12 Bluetooth)"
         assert det["conectada"] is True
@@ -186,15 +187,35 @@ def test_detectar_impresora_puerto_com_bluetooth():
         assert det["puerto"] == "COM5"
 
 
+def test_detectar_impresora_puerto_com_desconectada():
+    """Si la impresora Bluetooth física está apagada, detectar_impresora_termica marca conectada=False."""
+    set_setting(CLAVE_IMPRESORA_TERMICA, "")
+    impresoras_falsas = [
+        {"nombre": "COM5 (MP80-12 Bluetooth)", "puerto": "COM5", "is_default": False, "is_offline": False, "tipo": "serial"},
+    ]
+
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras_falsas), \
+         patch("services.printer_service.probar_conexion_puerto_com", return_value=False):
+        det = detectar_impresora_termica(verificar_online=True)
+        assert det is not None
+        assert det["nombre"] == "COM5 (MP80-12 Bluetooth)"
+        assert det["conectada"] is False
+
+
 def test_esta_impresora_conectada_puerto_com():
-    """Verifica el estado de conexión de un puerto COM mediante listar_puertos_com_sistema."""
+    """Verifica el estado de conexión de un puerto COM físico."""
     puertos_falsos = [
         {"puerto": "COM5", "nombre": "COM5 (MP80-12 Bluetooth)"}
     ]
-    with patch("services.printer_service.listar_puertos_com_sistema", return_value=puertos_falsos):
-        assert esta_impresora_conectada("COM5") is True
-        assert esta_impresora_conectada("COM5 (MP80-12 Bluetooth)") is True
+    with patch("services.printer_service.listar_puertos_com_sistema", return_value=puertos_falsos), \
+         patch("services.printer_service.probar_conexion_puerto_com", return_value=True):
+        assert esta_impresora_conectada("COM5", forzar_verificacion=True) is True
+        assert esta_impresora_conectada("COM5 (MP80-12 Bluetooth)", forzar_verificacion=True) is True
         assert esta_impresora_conectada("COM9") is False
+
+    with patch("services.printer_service.listar_puertos_com_sistema", return_value=puertos_falsos), \
+         patch("services.printer_service.probar_conexion_puerto_com", return_value=False):
+        assert esta_impresora_conectada("COM5", forzar_verificacion=True) is False
 
 
 def test_enviar_datos_crudos_com_timeout():

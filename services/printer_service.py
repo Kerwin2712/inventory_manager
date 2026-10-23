@@ -18,6 +18,8 @@ import os
 import platform
 import re
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
 from typing import Optional, List, Dict, Tuple
 
@@ -25,6 +27,11 @@ from core.database import get_connection, get_setting, set_setting
 
 # Configuración de clave en base de datos para la impresora seleccionada
 CLAVE_IMPRESORA_TERMICA = "printer_thermal_name"
+
+# Caché en memoria para evitar sondeos repetidos que ralenticen la interfaz
+_PROBE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PrinterProbe")
+_CACHE_ESTADO_CONEXION: Dict[str, Dict] = {}  # { "COM5": {"conectada": bool, "timestamp": float} }
+CACHE_TTL_SEGUNDOS = 8.0
 
 # Palabras clave habituales para identificar modelos térmicos de 80mm en Windows
 PALABRAS_CLAVE_TERMICAS = [
@@ -145,11 +152,15 @@ def listar_puertos_com_sistema() -> List[Dict]:
                             desc = "Bluetooth Serial"
                         else:
                             desc = "Puerto Serie"
+                    is_offline = False
+                    cached = _CACHE_ESTADO_CONEXION.get(port_upper)
+                    if cached and (time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
+                        is_offline = not cached.get("conectada", True)
                     puertos.append({
                         "nombre": f"{port_upper} ({desc})",
                         "puerto": port_upper,
                         "is_default": False,
-                        "is_offline": False,
+                        "is_offline": is_offline,
                         "tipo": "serial",
                         "descripcion": desc,
                     })
@@ -270,7 +281,46 @@ def guardar_impresora_termica_configurada(nombre: str) -> None:
     set_setting(CLAVE_IMPRESORA_TERMICA, (nombre or "").strip())
 
 
-def detectar_impresora_termica() -> Optional[Dict]:
+def probar_conexion_puerto_com(puerto: str, timeout_sec: float = 0.8) -> bool:
+    """Intenta abrir brevemente el puerto COM para verificar si el dispositivo físico (Bluetooth/USB) está encendido y receptivo."""
+    match = re.search(r"\bCOM\d+\b", (puerto or "").upper())
+    puerto_limpio = match.group(0) if match else (puerto or "").strip().upper()
+    if not puerto_limpio:
+        return False
+
+    dispositivo_path = rf"\\.\{puerto_limpio}"
+    kernel32 = ctypes.windll.kernel32
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    OPEN_EXISTING = 3
+    FILE_ATTRIBUTE_NORMAL = 0x80
+
+    def _intentar():
+        try:
+            h = kernel32.CreateFileW(
+                dispositivo_path,
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None
+            )
+            if h != -1 and h != 0:
+                kernel32.CloseHandle(h)
+                return True
+        except Exception:
+            pass
+        return False
+
+    f = _PROBE_EXECUTOR.submit(_intentar)
+    try:
+        return f.result(timeout=timeout_sec)
+    except Exception:
+        return False
+
+
+def detectar_impresora_termica(verificar_online: bool = True) -> Optional[Dict]:
     """Detecta la impresora térmica disponible (vía Spooler de Windows o puerto COM/Bluetooth).
     
     Prioridad:
@@ -281,7 +331,7 @@ def detectar_impresora_termica() -> Optional[Dict]:
     Retorna un diccionario con:
     {
         "nombre": "COM5 (MP80-12 Bluetooth)",
-        "conectada": True,   # True si no está marcada como offline
+        "conectada": bool,   # True si está encendida y accesible
         "is_default": False,
         "configurada_manualmente": bool,
         "tipo": "serial" | "spooler",
@@ -293,6 +343,9 @@ def detectar_impresora_termica() -> Optional[Dict]:
     if not impresoras:
         return None
 
+    candidata = None
+    configurada_manualmente = False
+
     guardada = obtener_impresora_termica_configurada()
     if guardada:
         guardada_lower = guardada.lower()
@@ -303,37 +356,45 @@ def detectar_impresora_termica() -> Optional[Dict]:
                 (puerto_lower and guardada_lower == puerto_lower) or
                 (puerto_lower and puerto_lower in guardada_lower) or
                 (guardada_lower in nom_lower)):
-                return {
-                    "nombre": imp["nombre"],
-                    "conectada": not imp.get("is_offline", False),
-                    "is_default": imp.get("is_default", False),
-                    "configurada_manualmente": True,
-                    "tipo": imp.get("tipo", "spooler"),
-                    "puerto": imp.get("puerto"),
-                }
+                candidata = imp
+                configurada_manualmente = True
+                break
 
-    # Búsqueda por palabras clave térmicas (soporta tanto nombres de impresora como puertos COM MP80)
-    for imp in impresoras:
-        nombre_lower = imp["nombre"].lower()
-        for kw in PALABRAS_CLAVE_TERMICAS:
-            if kw in nombre_lower:
-                return {
-                    "nombre": imp["nombre"],
-                    "conectada": not imp.get("is_offline", False),
-                    "is_default": imp.get("is_default", False),
-                    "configurada_manualmente": False,
-                    "tipo": imp.get("tipo", "spooler"),
-                    "puerto": imp.get("puerto"),
-                }
+    if not candidata:
+        for imp in impresoras:
+            nombre_lower = imp["nombre"].lower()
+            for kw in PALABRAS_CLAVE_TERMICAS:
+                if kw in nombre_lower:
+                    candidata = imp
+                    configurada_manualmente = False
+                    break
+            if candidata:
+                break
 
-    return None
+    if not candidata:
+        return None
+
+    tipo = candidata.get("tipo", "spooler")
+    puerto = candidata.get("puerto")
+    conectada = not candidata.get("is_offline", False)
+    if tipo == "serial" and puerto:
+        conectada = esta_impresora_conectada(puerto, forzar_verificacion=verificar_online)
+
+    return {
+        "nombre": candidata["nombre"],
+        "conectada": conectada,
+        "is_default": candidata.get("is_default", False),
+        "configurada_manualmente": configurada_manualmente,
+        "tipo": tipo,
+        "puerto": puerto,
+    }
 
 
-def esta_impresora_conectada(nombre_impresora: Optional[str] = None) -> bool:
+def esta_impresora_conectada(nombre_impresora: Optional[str] = None, forzar_verificacion: bool = False) -> bool:
     """Verifica si la impresora indicada (o la térmica detectada) está conectada."""
     target = (nombre_impresora or "").strip()
     if not target:
-        det = detectar_impresora_termica()
+        det = detectar_impresora_termica(verificar_online=forzar_verificacion)
         return bool(det and det.get("conectada", False))
 
     # Si es un puerto COM (ej. 'COM5' o 'COM5 (MP80-12 Bluetooth)')
@@ -341,7 +402,25 @@ def esta_impresora_conectada(nombre_impresora: Optional[str] = None) -> bool:
     if match:
         puerto_buscado = match.group(0)
         puertos_activos = listar_puertos_com_sistema()
-        return any(p.get("puerto") == puerto_buscado for p in puertos_activos)
+        existe = any(p.get("puerto") == puerto_buscado for p in puertos_activos)
+        if not existe:
+            return False
+
+        # Si el puerto existe pero está marcado offline en la lista
+        for p in puertos_activos:
+            if p.get("puerto") == puerto_buscado and p.get("is_offline"):
+                return False
+
+        # Consultar caché vigente
+        ahora = time.time()
+        cached = _CACHE_ESTADO_CONEXION.get(puerto_buscado)
+        if not forzar_verificacion and cached and (ahora - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
+            return cached.get("conectada", False)
+
+        # Probar conexión física real (Bluetooth/USB)
+        conectada = probar_conexion_puerto_com(puerto_buscado, timeout_sec=0.8)
+        _CACHE_ESTADO_CONEXION[puerto_buscado] = {"conectada": conectada, "timestamp": ahora}
+        return conectada
 
     impresoras = listar_impresoras_sistema()
     for imp in impresoras:
@@ -588,6 +667,7 @@ def enviar_datos_crudos_com(
     )
 
     if hPort == -1 or hPort == 0:
+        _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": False, "timestamp": time.time()}
         err = kernel32.GetLastError()
         if err == 121:  # ERROR_SEM_TIMEOUT
             return False, (
@@ -638,6 +718,7 @@ def enviar_datos_crudos_com(
             return False, f"Fallo al transmitir datos a {puerto_limpio} (Error Windows: {err})."
 
         kernel32.FlushFileBuffers(hPort)
+        _CACHE_ESTADO_CONEXION[puerto_limpio] = {"conectada": True, "timestamp": time.time()}
         return True, f"Ticket enviado con éxito a '{puerto_limpio}' ({escritos.value} bytes transmitidos)."
 
     finally:
