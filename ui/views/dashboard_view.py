@@ -23,6 +23,13 @@ from services.reportes_service import (
     obtener_stock_minimo,
     actualizar_stock_minimo,
 )
+from services.printer_service import (
+    detectar_impresora_termica,
+    imprimir_ticket_prueba,
+    listar_impresoras_sistema,
+    guardar_impresora_termica_configurada,
+    obtener_impresora_termica_configurada,
+)
 
 class DashboardView(BaseView):
     """Vista principal de Dashboard adaptada al tema dinámico con navegación interna por módulos."""
@@ -576,6 +583,37 @@ class DashboardView(BaseView):
             border_radius=20,
         )
 
+        # Indicador / Configuración rápida de impresora térmica (MP80-12)
+        info_imp = detectar_impresora_termica()
+        imp_ok = bool(info_imp and info_imp.get("conectada"))
+        imp_nom = info_imp["nombre"] if info_imp else "No detectada"
+
+        printer_btn = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(
+                        ft.Icons.PRINT if imp_ok else ft.Icons.PRINT_DISABLED_OUTLINED,
+                        color=ft.Colors.GREEN_400 if imp_ok else ft.Colors.GREY_500,
+                        size=18,
+                    ),
+                    ft.Text(
+                        "Térmica 80mm" if imp_ok else "Sin Impresora",
+                        size=11,
+                        weight=ft.FontWeight.W_500,
+                        color=self.get_text_color(),
+                    ),
+                ],
+                tight=True,
+                spacing=5,
+            ),
+            bgcolor=self.get_card_bg(),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+            border_radius=20,
+            border=ft.Border.all(1, self.get_border_color()),
+            tooltip=f"Impresora Térmica: {imp_nom} ({'Conectada' if imp_ok else 'No detectada'}). Clic para configurar o probar.",
+            on_click=self.abrir_dialogo_configuracion_impresora,
+        )
+
         notifications_icon = ft.IconButton(
             icon=ft.Icons.NOTIFICATIONS_OUTLINED,
             icon_color=ft.Colors.AMBER_500,
@@ -655,6 +693,7 @@ class DashboardView(BaseView):
                 ft.Row(
                     controls=[
                         user_badge,
+                        printer_btn,
                         notifications_icon,
                         theme_toggle_btn,
                         color_picker_btn,
@@ -667,6 +706,58 @@ class DashboardView(BaseView):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+
+    def abrir_dialogo_configuracion_impresora(self, e=None):
+        """Abre el diálogo modal de configuración de la impresora térmica y prueba de impresión."""
+        impresoras = listar_impresoras_sistema()
+        opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
+        for imp in impresoras:
+            nombre = imp["nombre"]
+            estado = " (Desconectada)" if imp.get("is_offline") else ""
+            pred = " [Predeterminada]" if imp.get("is_default") else ""
+            opciones.append(ft.dropdown.Option(nombre, f"{nombre}{pred}{estado}"))
+
+        actual = obtener_impresora_termica_configurada()
+
+        dd_impresoras = ft.Dropdown(
+            label="Impresora Térmica Seleccionada",
+            value=actual if any(o.key == actual for o in opciones) else "",
+            options=opciones,
+            width=380,
+            border_radius=12
+        )
+
+        def guardar_config(ev):
+            seleccion = dd_impresoras.value or ""
+            guardar_impresora_termica_configurada(seleccion)
+            self.cerrar_dialogo(dlg_conf, ev)
+            self.show_alert_success(f"Configuración guardada: {seleccion or 'Detección automática'}", ev)
+            self.rebuild_ui()
+
+        def probar_impresion(ev):
+            sel = dd_impresoras.value or None
+            ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
+            if ok:
+                self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
+            else:
+                self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+
+        dlg_conf = ft.AlertDialog(
+            title=ft.Row([ft.Icon(ft.Icons.PRINT_ROUNDED, color=ft.Colors.BLUE_400), ft.Text("Configurar Impresora Térmica")]),
+            content=ft.Column([
+                ft.Text("Seleccione la impresora para emitir los tickets de venta (80mm)."),
+                dd_impresoras,
+                ft.Text("Compatible con MP80-12, MPT-II, POS-80 (USB / Bluetooth).", size=11, color=self.get_subtext_color()),
+            ], tight=True, spacing=12),
+            actions=[
+                ft.TextButton("Cerrar", on_click=lambda ev: self.cerrar_dialogo(dlg_conf, ev)),
+                ft.OutlinedButton("Imprimir Ticket de Prueba", icon=ft.Icons.RECEIPT, on_click=probar_impresion),
+                ft.Button("Guardar", icon=ft.Icons.CHECK, on_click=guardar_config,
+                          style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END
+        )
+        self.abrir_dialogo(dlg_conf, e)
 
     # Ancho común de las tarjetas de la fila superior del Inicio. Cuatro de
     # ellas más el espaciado entran en ~1120 px, el mismo ancho útil que usan
