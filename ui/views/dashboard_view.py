@@ -635,20 +635,23 @@ class DashboardView(BaseView):
             icon_printer = ft.Icons.PRINT_DISABLED_OUTLINED
             tooltip_printer = "No se detectó impresora térmica. Clic para configurar o probar."
 
+        self._icon_impresora_termica = ft.Icon(
+            icon_printer,
+            color=color_printer,
+            size=18,
+        )
+        self._lbl_impresora_termica = ft.Text(
+            txt_printer,
+            size=11,
+            weight=ft.FontWeight.W_500,
+            color=color_printer if not imp_ok and info_imp else self.get_text_color(),
+        )
+
         printer_btn = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(
-                        icon_printer,
-                        color=color_printer,
-                        size=18,
-                    ),
-                    ft.Text(
-                        txt_printer,
-                        size=11,
-                        weight=ft.FontWeight.W_500,
-                        color=color_printer if not imp_ok and info_imp else self.get_text_color(),
-                    ),
+                    self._icon_impresora_termica,
+                    self._lbl_impresora_termica,
                 ],
                 tight=True,
                 spacing=5,
@@ -660,6 +663,7 @@ class DashboardView(BaseView):
             tooltip=tooltip_printer,
             on_click=self.abrir_dialogo_configuracion_impresora,
         )
+        self._btn_impresora_termica = printer_btn
 
         notifications_icon = ft.IconButton(
             icon=ft.Icons.NOTIFICATIONS_OUTLINED,
@@ -860,8 +864,8 @@ class DashboardView(BaseView):
                 nonlocal procesando_accion
                 try:
                     limpiar_cache_impresora()
-                    nuevas = listar_impresoras_sistema(forzar_verificacion=True)
                     nueva_info = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
+                    nuevas = listar_impresoras_sistema(forzar_verificacion=False)
 
                     nuevas_opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
                     for imp in nuevas:
@@ -878,6 +882,7 @@ class DashboardView(BaseView):
                         dd_impresoras.value = ""
 
                     _actualizar_card_estado(nueva_info)
+                    self._actualizar_boton_impresora_cabecera(nueva_info)
                     if nueva_info and nueva_info.get("conectada"):
                         self.show_alert_success(f"¡Impresora encontrada y conectada: {nueva_info['nombre']}!", ev)
                     elif nueva_info:
@@ -903,16 +908,16 @@ class DashboardView(BaseView):
             seleccion = dd_impresoras.value or ""
             guardar_impresora_termica_configurada(seleccion)
             self.cerrar_dialogo(dlg_conf, ev)
-            self.show_alert_success(f"Configuración guardada: {seleccion or 'Detección automática'}", ev)
-            self.rebuild_ui()
+            self.show_alert_success(f"Configuración de impresora guardada: {seleccion or 'Detección automática'}", ev)
+            self._actualizar_boton_impresora_cabecera()
 
         def probar_impresion(ev):
             nonlocal procesando_accion
             if procesando_accion:
                 return
             procesando_accion = True
-            p = self.get_current_page(ev) or pagina_activa
-            _bloquear_botones(True, "Enviando ticket a la impresora...")
+            p = self.get_current_page(ev) or pagina_conf
+            _bloquear_botones(True, "Enviando ticket de prueba a la impresora...")
             _repintar(p)
 
             def _tarea():
@@ -922,6 +927,7 @@ class DashboardView(BaseView):
                     ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
                     nueva_info = detectar_impresora_termica(verificar_online=False)
                     _actualizar_card_estado(nueva_info)
+                    self._actualizar_boton_impresora_cabecera(nueva_info)
                     if ok:
                         self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
                     else:
@@ -948,7 +954,7 @@ class DashboardView(BaseView):
                     dd_impresoras,
                     ft.IconButton(
                         icon=ft.Icons.REFRESH,
-                        tooltip="Buscar / Recargar impresora",
+                        tooltip="Buscar / Recargar impresoras",
                         on_click=recargar_impresoras
                     )
                 ], tight=True, spacing=6),
@@ -959,6 +965,44 @@ class DashboardView(BaseView):
             actions_alignment=ft.MainAxisAlignment.END
         )
         self.abrir_dialogo(dlg_conf, e)
+
+    def _actualizar_boton_impresora_cabecera(self, info=None):
+        """Actualiza visualmente el estado del botón de la impresora en la barra superior del Dashboard."""
+        if not hasattr(self, "_btn_impresora_termica") or not self._btn_impresora_termica:
+            return
+        if info is None:
+            info = detectar_impresora_termica(verificar_online=True)
+        ok = bool(info and info.get("conectada"))
+        nom = info["nombre"] if info else "No detectada"
+
+        if ok:
+            txt = "Térmica 80mm"
+            color = ft.Colors.GREEN_400
+            icono = ft.Icons.PRINT
+            tooltip = f"Impresora Térmica: {nom} (Conectada y lista). Clic para configurar o probar."
+        elif info:
+            txt = "Desconectada"
+            color = ft.Colors.ORANGE_400
+            icono = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip = f"Impresora Térmica: {nom} (Desconectada / Apagada). Clic para configurar o probar."
+        else:
+            txt = "Sin Impresora"
+            color = ft.Colors.GREY_500
+            icono = ft.Icons.PRINT_DISABLED_OUTLINED
+            tooltip = "No se detectó impresora térmica. Clic para configurar o probar."
+
+        if hasattr(self, "_icon_impresora_termica") and self._icon_impresora_termica:
+            self._icon_impresora_termica.icon = icono
+            self._icon_impresora_termica.color = color
+        if hasattr(self, "_lbl_impresora_termica") and self._lbl_impresora_termica:
+            self._lbl_impresora_termica.value = txt
+            self._lbl_impresora_termica.color = color if not ok and info else self.get_text_color()
+        self._btn_impresora_termica.tooltip = tooltip
+        try:
+            self._btn_impresora_termica.update()
+        except Exception:
+            pass
+        _repintar(self.get_current_page())
 
     # Ancho común de las tarjetas de la fila superior del Inicio. Cuatro de
     # ellas más el espaciado entran en ~1120 px, el mismo ancho útil que usan

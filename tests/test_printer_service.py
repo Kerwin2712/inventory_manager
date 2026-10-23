@@ -312,19 +312,39 @@ def test_detectar_impresora_termica_forzar_verificacion():
         assert det["conectada"] is True
 
 
-def test_silenciar_desconexion_windows():
-    """Verifica que el manejador de WinError 10054 en main.py atrape ConnectionResetError sin fallar."""
-    from main import _silenciar_desconexion_windows
+def test_impresora_apagada_retorna_desconectada():
+    """Verifica que si la impresora física está apagada (falla el sondeo de puerto),
+    detectar_impresora_termica marque conectada=False y guarde el estado en caché."""
+    from services.printer_service import _CACHE_ESTADO_CONEXION, detectar_impresora_termica, limpiar_cache_impresora
+    limpiar_cache_impresora()
+
+    impresoras_falsas = [
+        {"nombre": "COM5 (MP80-12 Bluetooth)", "puerto": "COM5", "is_default": False, "is_offline": False, "tipo": "serial"},
+    ]
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras_falsas), \
+         patch("services.printer_service.probar_conexion_puerto_com", return_value=False):
+        det = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
+        assert det is not None
+        assert det["conectada"] is False
+        assert "COM5" in _CACHE_ESTADO_CONEXION
+        assert _CACHE_ESTADO_CONEXION["COM5"]["conectada"] is False
+
+
+def test_listar_puertos_com_refleja_cache_desconectada():
+    """Verifica que listar_puertos_com_sistema marque is_offline=True cuando el caché indica desconectada."""
+    from services.printer_service import _CACHE_ESTADO_CONEXION, listar_puertos_com_sistema
+    _CACHE_ESTADO_CONEXION["COM5"] = {"conectada": False, "timestamp": 9999999999.0}
+
     import sys
-    _silenciar_desconexion_windows()
     if sys.platform == "win32":
-        from asyncio.proactor_events import _ProactorBasePipeTransport
-        mock_self = MagicMock()
-        mock_self._sock.shutdown.side_effect = ConnectionResetError("Host cerrado")
-        try:
-            _ProactorBasePipeTransport._call_connection_lost(mock_self, None)
-        except ConnectionResetError:
-            pytest.fail("ConnectionResetError no debió escapar")
+        with patch("winreg.OpenKey"), \
+             patch("winreg.EnumValue", side_effect=[("dev1", "COM5", None), WindowsError]), \
+             patch("services.printer_service._CACHE_ESTADO_CONEXION", {"COM5": {"conectada": False, "timestamp": 9999999999.0}}):
+            puertos = listar_puertos_com_sistema(forzar_verificacion=False)
+            com5 = next((p for p in puertos if p["puerto"] == "COM5"), None)
+            assert com5 is not None
+            assert com5["is_offline"] is True
+
 
 
 

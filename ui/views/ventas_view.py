@@ -3457,8 +3457,8 @@ class VentasView(BaseView):
                 nonlocal procesando_accion
                 try:
                     limpiar_cache_impresora()
-                    nuevas = listar_impresoras_sistema(forzar_verificacion=True)
                     nueva_info = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
+                    nuevas = listar_impresoras_sistema(forzar_verificacion=False)
 
                     nuevas_opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
                     for imp in nuevas:
@@ -3604,4 +3604,5 @@ class VentasView(BaseView):
             self._btn_impresora_termica.update()
         except Exception:
             pass
+        _repintar(self.get_current_page() or self._page_ref)
 

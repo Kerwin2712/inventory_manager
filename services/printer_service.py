@@ -162,11 +162,11 @@ def listar_puertos_com_sistema(forzar_verificacion: bool = False) -> List[Dict]:
                             desc = "Bluetooth Serial"
                         else:
                             desc = "Puerto Serie"
-                    is_offline = False
-                    if not forzar_verificacion:
-                        cached = _CACHE_ESTADO_CONEXION.get(port_upper)
-                        if cached and (time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
-                            is_offline = not cached.get("conectada", True)
+                    cached = _CACHE_ESTADO_CONEXION.get(port_upper)
+                    if cached:
+                        is_offline = not cached.get("conectada", False)
+                    else:
+                        is_offline = True
                     puertos.append({
                         "nombre": f"{port_upper} ({desc})",
                         "puerto": port_upper,
@@ -292,7 +292,7 @@ def guardar_impresora_termica_configurada(nombre: str) -> None:
     set_setting(CLAVE_IMPRESORA_TERMICA, (nombre or "").strip())
 
 
-def probar_conexion_puerto_com(puerto: str, timeout_sec: float = 2.2) -> bool:
+def probar_conexion_puerto_com(puerto: str, timeout_sec: float = 6.0) -> bool:
     """Intenta abrir brevemente el puerto COM para verificar si el dispositivo físico (Bluetooth/USB) está encendido y receptivo."""
     match = re.search(r"\bCOM\d+\b", (puerto or "").upper())
     puerto_limpio = match.group(0) if match else (puerto or "").strip().upper()
@@ -403,9 +403,9 @@ def detectar_impresora_termica(verificar_online: bool = True, forzar_verificacio
         else:
             cached = _CACHE_ESTADO_CONEXION.get(puerto)
             if cached and (time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
-                conectada = cached.get("conectada", True)
+                conectada = cached.get("conectada", False)
             else:
-                conectada = not candidata.get("is_offline", False)
+                conectada = False
 
     return {
         "nombre": candidata["nombre"],
@@ -440,7 +440,7 @@ def esta_impresora_conectada(nombre_impresora: Optional[str] = None, forzar_veri
             return cached.get("conectada", False)
 
         # Probar conexión física real (Bluetooth/USB) con timeout adecuado
-        conectada = probar_conexion_puerto_com(puerto_buscado, timeout_sec=2.2)
+        conectada = probar_conexion_puerto_com(puerto_buscado, timeout_sec=6.0)
         _CACHE_ESTADO_CONEXION[puerto_buscado] = {"conectada": conectada, "timestamp": ahora}
         return conectada
 
