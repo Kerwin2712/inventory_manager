@@ -1,5 +1,5 @@
 import flet as ft
-from ui.views.base_view import BaseView
+from ui.views.base_view import BaseView, _repintar, safe_ui_call
 from ui.components.multi_select_filter import MultiSelectFilter, RangeFilter
 from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.scroll_nav import build_inline_h_nav, build_floating_v_nav
@@ -42,16 +42,7 @@ from services.printer_service import imprimir_reporte_inventario
 
 
 
-def _repintar(pagina) -> None:
-    """Fuerza un redibujado de la página, tolerando que no se pueda.
 
-    Una página headless (las pruebas) o desmontada puede no aceptar `update()`;
-    eso nunca debe tumbar la apertura o el cierre de un diálogo.
-    """
-    try:
-        pagina.update()
-    except (RuntimeError, AttributeError, AssertionError):
-        pass
 
 
 class InventarioView(BaseView):
@@ -1300,21 +1291,38 @@ class InventarioView(BaseView):
                         productos=prods_imprimir,
                         limite=100
                     )
-                    if ok:
-                        self.show_alert_success(ev, "¡Catálogo de inventario enviado a la impresora térmica!")
-                    else:
-                        self.show_alert_error(ev, f"Error al imprimir inventario: {msg}")
+                    def _al_finalizar():
+                        try:
+                            if ok:
+                                self.show_alert_success(ev, "¡Catálogo de inventario enviado a la impresora térmica!")
+                            else:
+                                self.show_alert_error(ev, f"Error al imprimir inventario: {msg}")
+                        finally:
+                            nonlocal _imprimiendo_inv
+                            _imprimiendo_inv = False
+                            btn_imprimir_inv.disabled = False
+                            btn_imprimir_inv.tooltip = "Imprimir catálogo en térmica (80mm)"
+                            try:
+                                btn_imprimir_inv.update()
+                            except Exception:
+                                pass
+                            _repintar(p)
+                    safe_ui_call(p, _al_finalizar)
                 except Exception as ex:
-                    self.show_alert_error(ev, f"Error al imprimir inventario: {ex}")
-                finally:
-                    _imprimiendo_inv = False
-                    btn_imprimir_inv.disabled = False
-                    btn_imprimir_inv.tooltip = "Imprimir catálogo en térmica (80mm)"
-                    try:
-                        btn_imprimir_inv.update()
-                    except Exception:
-                        pass
-                    _repintar(p)
+                    def _al_error():
+                        try:
+                            self.show_alert_error(ev, f"Error al imprimir inventario: {ex}")
+                        finally:
+                            nonlocal _imprimiendo_inv
+                            _imprimiendo_inv = False
+                            btn_imprimir_inv.disabled = False
+                            btn_imprimir_inv.tooltip = "Imprimir catálogo en térmica (80mm)"
+                            try:
+                                btn_imprimir_inv.update()
+                            except Exception:
+                                pass
+                            _repintar(p)
+                    safe_ui_call(p, _al_error)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()

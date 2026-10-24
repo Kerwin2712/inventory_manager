@@ -128,3 +128,54 @@ def test_abrir_dialogo_configuracion_impresora(vista_ventas, evento):
     assert len(vista_ventas._dialog_stack) >= 1
     dlg_conf = vista_ventas._dialog_stack[-1]
     assert "Configurar Impresora Térmica" in str(dlg_conf.title.controls[1].value)
+
+
+def test_abrir_dialogo_configuracion_impresora_desconectada(vista_ventas, evento):
+    """Verifica que si la impresora física está apagada, la tarjeta inicial marque 'desconectada'."""
+    info_desconectada = {
+        "nombre": "USB: SUPERRISC S31 (MP80-12)",
+        "conectada": False,
+        "is_default": False,
+        "configurada_manualmente": False,
+        "tipo": "usb",
+        "puerto": None,
+        "ruta_usb": "\\\\?\\USB#VID_0483&PID_5840...",
+    }
+
+    with patch("ui.views.ventas_view.detectar_impresora_termica", return_value=info_desconectada):
+        vista_ventas.abrir_dialogo_configuracion_impresora(evento)
+
+    dlg_conf = vista_ventas._dialog_stack[-1]
+    # La tarjeta de estado debe mostrar que está desconectada
+    card = dlg_conf.content.controls[1]
+    texto_estado = card.content.controls[1].controls[0].value
+    assert "desconectada" in texto_estado.lower()
+
+
+def test_safe_ui_call_con_bucle_y_hilos():
+    """Verifica que safe_ui_call invoque call_soon_threadsafe desde un hilo secundario."""
+    from unittest.mock import MagicMock
+    import threading
+    from ui.views.base_view import safe_ui_call
+
+    loop_mock = MagicMock()
+    loop_mock.is_running.return_value = True
+
+    pagina_mock = MagicMock()
+    pagina_mock.loop = loop_mock
+
+    ejecutado = []
+    def callback():
+        ejecutado.append(True)
+
+    # Desde hilo secundario
+    def run_in_thread():
+        safe_ui_call(pagina_mock, callback)
+
+    t = threading.Thread(target=run_in_thread)
+    t.start()
+    t.join()
+
+    # Debe haber despachado al bucle mediante call_soon_threadsafe
+    assert loop_mock.call_soon_threadsafe.called
+

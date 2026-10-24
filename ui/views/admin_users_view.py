@@ -1,15 +1,6 @@
 import flet as ft
-from ui.views.base_view import BaseView
+from ui.views.base_view import BaseView, _repintar, safe_ui_call
 from services.user_service import create_user, get_all_users, update_user
-
-
-def _repintar(pagina) -> None:
-    """Fuerza un redibujado explícito de la página para que los cambios en hilos secundarios se reflejen sin Alt+Tab."""
-    try:
-        if pagina:
-            pagina.update()
-    except (RuntimeError, AttributeError, AssertionError):
-        pass
 
 
 class AdminUsersView(BaseView):
@@ -434,7 +425,8 @@ class AdminUsersView(BaseView):
                 pass
             _repintar(pagina_activa)
 
-        info_inicial = detectar_impresora_termica(verificar_online=False)
+        limpiar_cache_impresora()
+        info_inicial = detectar_impresora_termica(verificar_online=True)
         _actualizar_card_estado(info_inicial)
 
         btn_cerrar = ft.TextButton("Cerrar")
@@ -472,34 +464,48 @@ class AdminUsersView(BaseView):
                     nueva_info = detectar_impresora_termica(verificar_online=True, forzar_verificacion=True)
                     nuevas = listar_impresoras_sistema(forzar_verificacion=False)
 
-                    nuevas_opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
-                    for imp in nuevas:
-                        nom = imp["nombre"]
-                        est = " (Desconectada)" if imp.get("is_offline") else " (En línea)"
-                        prd = " [Predeterminada]" if imp.get("is_default") else ""
-                        nuevas_opciones.append(ft.dropdown.Option(nom, f"{nom}{prd}{est}"))
+                    def _al_finalizar():
+                        nonlocal procesando_accion
+                        try:
+                            nuevas_opciones = [ft.dropdown.Option("", "(Detección Automática de Térmica)")]
+                            for imp in nuevas:
+                                nom = imp["nombre"]
+                                est = " (Desconectada)" if imp.get("is_offline") else " (En línea)"
+                                prd = " [Predeterminada]" if imp.get("is_default") else ""
+                                nuevas_opciones.append(ft.dropdown.Option(nom, f"{nom}{prd}{est}"))
 
-                    dd_impresoras.options = nuevas_opciones
-                    sel_act = dd_impresoras.value or obtener_impresora_termica_configurada()
-                    if any(o.key == sel_act for o in nuevas_opciones):
-                        dd_impresoras.value = sel_act
-                    else:
-                        dd_impresoras.value = ""
+                            dd_impresoras.options = nuevas_opciones
+                            sel_act = dd_impresoras.value or obtener_impresora_termica_configurada()
+                            if any(o.key == sel_act for o in nuevas_opciones):
+                                dd_impresoras.value = sel_act
+                            else:
+                                dd_impresoras.value = ""
 
-                    _actualizar_card_estado(nueva_info)
-                    self._actualizar_boton_impresora_cabecera(nueva_info)
-                    if nueva_info and nueva_info.get("conectada"):
-                        self.show_alert_success(f"¡Impresora encontrada y conectada: {nueva_info['nombre']}!", ev)
-                    elif nueva_info:
-                        self.show_alert_error(f"Impresora '{nueva_info['nombre']}' no responde. Verifique que esté encendida.", ev)
-                    else:
-                        self.show_alert_error("No se encontró ninguna impresora térmica instalada.", ev)
+                            _actualizar_card_estado(nueva_info)
+                            self._actualizar_boton_impresora_cabecera(nueva_info)
+                            if nueva_info and nueva_info.get("conectada"):
+                                self.show_alert_success(f"¡Impresora encontrada y conectada: {nueva_info['nombre']}!", ev)
+                            elif nueva_info:
+                                self.show_alert_error(f"Impresora '{nueva_info['nombre']}' no responde. Verifique que esté encendida.", ev)
+                            else:
+                                self.show_alert_error("No se encontró ninguna impresora térmica instalada.", ev)
+                        except Exception as ex:
+                            self.show_alert_error(f"Error durante la búsqueda: {ex}", ev)
+                        finally:
+                            procesando_accion = False
+                            _bloquear_botones(False)
+                            _repintar(p)
+
+                    safe_ui_call(p, _al_finalizar)
+
                 except Exception as ex:
-                    self.show_alert_error(f"Error durante la búsqueda: {ex}", ev)
-                finally:
-                    procesando_accion = False
-                    _bloquear_botones(False)
-                    _repintar(p)
+                    def _al_error():
+                        nonlocal procesando_accion
+                        procesando_accion = False
+                        _bloquear_botones(False)
+                        self.show_alert_error(f"Error durante la búsqueda: {ex}", ev)
+                        _repintar(p)
+                    safe_ui_call(p, _al_error)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()
@@ -531,17 +537,32 @@ class AdminUsersView(BaseView):
                 try:
                     sel = dd_impresoras.value or None
                     ok, msg = imprimir_ticket_prueba(nombre_impresora=sel)
-                    nueva_info = detectar_impresora_termica(verificar_online=False)
-                    _actualizar_card_estado(nueva_info)
-                    self._actualizar_boton_impresora_cabecera(nueva_info)
-                    if ok:
-                        self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
-                    else:
-                        self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
-                finally:
-                    procesando_accion = False
-                    _bloquear_botones(False)
-                    _repintar(p)
+                    nueva_info = detectar_impresora_termica(verificar_online=True)
+
+                    def _al_finalizar():
+                        nonlocal procesando_accion
+                        try:
+                            _actualizar_card_estado(nueva_info)
+                            self._actualizar_boton_impresora_cabecera(nueva_info)
+                            if ok:
+                                self.show_alert_success("¡Ticket de prueba enviado con éxito a la impresora!", ev)
+                            else:
+                                self.show_alert_error(f"Error al enviar prueba: {msg}", ev)
+                        finally:
+                            procesando_accion = False
+                            _bloquear_botones(False)
+                            _repintar(p)
+
+                    safe_ui_call(p, _al_finalizar)
+
+                except Exception as ex:
+                    def _al_error():
+                        nonlocal procesando_accion
+                        procesando_accion = False
+                        _bloquear_botones(False)
+                        self.show_alert_error(f"Error al enviar prueba: {ex}", ev)
+                        _repintar(p)
+                    safe_ui_call(p, _al_error)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()

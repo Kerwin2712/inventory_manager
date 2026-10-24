@@ -2,12 +2,41 @@ import flet as ft
 from core.database import get_setting, set_setting
 
 
+def safe_ui_call(pagina, fn, *args, **kwargs) -> None:
+    """Ejecuta una función en el bucle principal de eventos de Flet de forma segura entre hilos."""
+    if not pagina or not callable(fn):
+        return
+    try:
+        loop = getattr(pagina, "loop", None)
+        if loop and loop.is_running():
+            import threading
+            if threading.current_thread() is not threading.main_thread():
+                loop.call_soon_threadsafe(lambda: _safe_exec(fn, *args, **kwargs))
+                return
+    except Exception:
+        pass
+    _safe_exec(fn, *args, **kwargs)
+
+
+def _safe_exec(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        pass
+
+
 def _repintar(pagina) -> None:
-    """Fuerza un redibujado de la página, tolerando que no se pueda.
+    """Fuerza un redibujado de la página de forma segura entre hilos.
 
     Una página headless (las pruebas) o desmontada puede no aceptar `update()`;
     eso nunca debe tumbar la apertura o el cierre de un diálogo.
     """
+    if not pagina:
+        return
+    safe_ui_call(pagina, _ejecutar_update, pagina)
+
+
+def _ejecutar_update(pagina) -> None:
     try:
         pagina.update()
     except (RuntimeError, AttributeError, AssertionError):
@@ -412,14 +441,16 @@ class BaseView(ft.View):
             e, msg = msg_or_e, e_or_msg or ""
         p = self.get_current_page(e)
         if p:
-            s = ft.SnackBar(
-                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.GREEN_700,
-                duration=3500
-            )
-            p.overlay.append(s)
-            s.open = True
-            p.update()
+            def _mostrar():
+                s = ft.SnackBar(
+                    content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    bgcolor=ft.Colors.GREEN_700,
+                    duration=3500
+                )
+                p.overlay.append(s)
+                s.open = True
+                _ejecutar_update(p)
+            safe_ui_call(p, _mostrar)
 
     def show_alert_error(self, msg_or_e, e_or_msg=None):
         """Muestra una notificación flotante de error."""
@@ -429,14 +460,16 @@ class BaseView(ft.View):
             e, msg = msg_or_e, e_or_msg or ""
         p = self.get_current_page(e)
         if p:
-            s = ft.SnackBar(
-                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.RED_700,
-                duration=4000
-            )
-            p.overlay.append(s)
-            s.open = True
-            p.update()
+            def _mostrar():
+                s = ft.SnackBar(
+                    content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    bgcolor=ft.Colors.RED_700,
+                    duration=4000
+                )
+                p.overlay.append(s)
+                s.open = True
+                _ejecutar_update(p)
+            safe_ui_call(p, _mostrar)
 
     def show_alert_info(self, msg_or_e, e_or_msg=None):
         """Muestra una notificación flotante informativa."""
@@ -446,12 +479,14 @@ class BaseView(ft.View):
             e, msg = msg_or_e, e_or_msg or ""
         p = self.get_current_page(e)
         if p:
-            s = ft.SnackBar(
-                content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.BLUE_700,
-                duration=3500
-            )
-            p.overlay.append(s)
-            s.open = True
-            p.update()
+            def _mostrar():
+                s = ft.SnackBar(
+                    content=ft.Text(msg, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    bgcolor=ft.Colors.BLUE_700,
+                    duration=3500
+                )
+                p.overlay.append(s)
+                s.open = True
+                _ejecutar_update(p)
+            safe_ui_call(p, _mostrar)
 

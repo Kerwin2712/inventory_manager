@@ -1,5 +1,5 @@
 import flet as ft
-from ui.views.base_view import BaseView
+from ui.views.base_view import BaseView, _repintar, safe_ui_call
 from ui.components.dialogo_clave import DialogoClave
 from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.seleccion_lista import SeleccionLista
@@ -15,26 +15,8 @@ from services.cartera_service import (
     parse_documento, format_documento,
 )
 from services import deudas_service
-# La clave que autoriza el borrado de una deuda es la de la cuenta con la
-# sesión abierta. `authenticate_user` ya la compara con
-# `core.security.verify_password` contra el `password_hash` almacenado: aquí no
-# se vuelve a comparar ningún hash, para que exista una sola implementación de
-# esa comprobación en todo el proyecto.
 from services.user_service import authenticate_user
 from services.printer_service import imprimir_reporte_clientes
-
-
-
-def _repintar(pagina) -> None:
-    """Fuerza un redibujado de la página, tolerando que no se pueda.
-
-    Una página headless (las pruebas) o desmontada puede no aceptar `update()`;
-    eso nunca debe tumbar la apertura o el cierre de un diálogo.
-    """
-    try:
-        pagina.update()
-    except (RuntimeError, AttributeError, AssertionError):
-        pass
 
 
 class CarteraView(BaseView):
@@ -600,21 +582,38 @@ class CarteraView(BaseView):
                 nonlocal _imprimiendo_cli
                 try:
                     ok, msg = imprimir_reporte_clientes(limite=60)
-                    if ok:
-                        self.show_alert_success(ev, "¡Directorio de clientes enviado a la impresora térmica!")
-                    else:
-                        self.show_alert_error(ev, f"Error al imprimir clientes: {msg}")
+                    def _al_finalizar():
+                        try:
+                            if ok:
+                                self.show_alert_success(ev, "¡Directorio de clientes enviado a la impresora térmica!")
+                            else:
+                                self.show_alert_error(ev, f"Error al imprimir clientes: {msg}")
+                        finally:
+                            nonlocal _imprimiendo_cli
+                            _imprimiendo_cli = False
+                            btn_imprimir_cli.disabled = False
+                            btn_imprimir_cli.tooltip = "Imprimir directorio en térmica (80mm)"
+                            try:
+                                btn_imprimir_cli.update()
+                            except Exception:
+                                pass
+                            _repintar(p)
+                    safe_ui_call(p, _al_finalizar)
                 except Exception as ex:
-                    self.show_alert_error(ev, f"Error al imprimir clientes: {ex}")
-                finally:
-                    _imprimiendo_cli = False
-                    btn_imprimir_cli.disabled = False
-                    btn_imprimir_cli.tooltip = "Imprimir directorio en térmica (80mm)"
-                    try:
-                        btn_imprimir_cli.update()
-                    except Exception:
-                        pass
-                    _repintar(p)
+                    def _al_error():
+                        try:
+                            self.show_alert_error(ev, f"Error al imprimir clientes: {ex}")
+                        finally:
+                            nonlocal _imprimiendo_cli
+                            _imprimiendo_cli = False
+                            btn_imprimir_cli.disabled = False
+                            btn_imprimir_cli.tooltip = "Imprimir directorio en térmica (80mm)"
+                            try:
+                                btn_imprimir_cli.update()
+                            except Exception:
+                                pass
+                            _repintar(p)
+                    safe_ui_call(p, _al_error)
 
             import threading
             threading.Thread(target=_tarea, daemon=True).start()

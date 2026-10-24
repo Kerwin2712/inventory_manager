@@ -4,7 +4,7 @@ from tkinter import filedialog
 from datetime import datetime
 import pandas as pd
 import flet as ft
-from ui.views.base_view import BaseView
+from ui.views.base_view import BaseView, _repintar, safe_ui_call
 from ui.components.scroll_nav import build_scroll_nav
 from ui.components.pila_dialogos import sincronizar_al_descartar
 from ui.components.teclado_nav import ControlTeclado, RegistroFoco
@@ -26,16 +26,7 @@ from services.permisos_service import es_admin
 from services import pedidos_service
 
 
-def _repintar(pagina) -> None:
-    """Fuerza un redibujado de la página, tolerando que no se pueda.
 
-    Una página headless (las pruebas) o desmontada puede no aceptar `update()`;
-    eso nunca debe tumbar la apertura o el cierre de un diálogo.
-    """
-    try:
-        pagina.update()
-    except (RuntimeError, AttributeError, AssertionError):
-        pass
 
 
 class GestionDatosView(BaseView):
