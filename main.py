@@ -1,4 +1,7 @@
+import os
 import sys
+import threading
+import time
 import flet as ft
 from core.database import init_db, get_setting
 from ui.views.base_view import BaseView
@@ -27,23 +30,63 @@ def _silenciar_desconexion_windows():
 
 _silenciar_desconexion_windows()
 
+def _iniciar_vigilante_cierre(page: ft.Page):
+    """Monitorea el ciclo de vida de la ventana y la conexión socket cliente para garantizar
+    que el proceso Python termine de inmediato si la ventana se cierra por cualquier motivo."""
+    def _vigilante():
+        time.sleep(2.0)  # Esperar a que la ventana y el cliente Flutter se inicien completamente
+        session = getattr(page, "session", None)
+        conn = getattr(session, "connection", None) if session else None
+        while True:
+            time.sleep(0.5)
+            # 1. Si la sesión fue marcada como cerrada internamente
+            if session and getattr(session, "_Session__closed", False):
+                os._exit(0)
+            # 2. Si la tarea de recepción de socket terminó (el cliente cerró el socket)
+            if conn:
+                task = getattr(conn, "_FletSocketServer__receive_loop_task", None)
+                if task and task.done():
+                    os._exit(0)
+                if hasattr(conn, "_FletSocketServer__connected") and conn._FletSocketServer__connected is False:
+                    os._exit(0)
+
+    t = threading.Thread(target=_vigilante, daemon=True, name="WatchdogCierreVentana")
+    t.start()
+
 def main(page: ft.Page):
     # Inicializar la base de datos SQLite, tablas y datos por defecto
     init_db()
 
-    def _al_desconectar(e):
+    def _terminar_aplicacion(e=None):
+        """Limpia la sesión activa y termina el proceso Python de forma inmediata al cerrar."""
         try:
             limpiar_sesion(page.session.id)
         except Exception:
             pass
-        # Al cerrarse la ventana de la aplicación de escritorio, terminar el proceso inmediatamente
-        import os
         os._exit(0)
 
+    def _al_evento_ventana(e):
+        """Intercepta el evento nativo de cierre de la ventana de escritorio."""
+        tipo = getattr(e, "type", None)
+        if tipo in (ft.WindowEventType.CLOSE, "close"):
+            _terminar_aplicacion(e)
+
+    # Configurar interceptor nativo de cierre de ventana
     try:
-        page.on_disconnect = _al_desconectar
+        page.window.prevent_close = True
+        page.window.on_event = _al_evento_ventana
     except (RuntimeError, AttributeError):
         pass
+
+    # Fallbacks para eventos de cierre y desconexión
+    try:
+        page.on_close = _terminar_aplicacion
+        page.on_disconnect = _terminar_aplicacion
+    except (RuntimeError, AttributeError):
+        pass
+
+    # Iniciar vigilante en segundo plano para garantizar salida si el cliente Flutter finaliza
+    _iniciar_vigilante_cierre(page)
 
     # Cargar preferencias de tema guardadas desde SQLite
     saved_mode = get_setting("theme_mode", "dark")
