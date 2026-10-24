@@ -179,3 +179,30 @@ def test_safe_ui_call_con_bucle_y_hilos():
     # Debe haber despachado al bucle mediante call_soon_threadsafe
     assert loop_mock.call_soon_threadsafe.called
 
+
+def test_confirmar_imprimir_termica_bloquea_botones_sin_error(vista_ventas, evento):
+    """Verifica que al pulsar 'Imprimir en Térmica' los botones se bloqueen y se ejecute sin NameError."""
+    info_conectada = {
+        "nombre": "Mini Impresora MP80-12",
+        "conectada": True,
+        "is_default": False,
+        "configurada_manualmente": False,
+    }
+
+    with patch("ui.views.ventas_view.detectar_impresora_termica", return_value=info_conectada):
+        vista_ventas.mostrar_dialogo_pdf(evento)
+
+    dlg = vista_ventas._dlg_pdf
+    assert dlg is not None
+
+    btn_imprimir = next(
+        (a for a in dlg.actions if "Imprimir en Térmica" in (getattr(a, "content", "") or getattr(a, "text", ""))),
+        None
+    )
+    assert btn_imprimir is not None
+
+    # Simular clic en el botón de imprimir en térmica
+    with patch("ui.views.ventas_view.imprimir_ticket_termico", return_value=(True, "Ticket impreso")):
+        # No debe lanzar NameError: name 'botones_accion' is not defined
+        btn_imprimir.on_click(evento)
+

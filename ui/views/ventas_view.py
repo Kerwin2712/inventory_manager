@@ -3065,17 +3065,30 @@ class VentasView(BaseView):
             ft.Text("Procesando...", size=12, italic=True)
         ], visible=False, tight=True, spacing=8)
 
+        # Tarjeta visual con el estado de conexión de la impresora térmica
+        banner_impresora = ft.Container(
+            padding=10,
+            border_radius=10,
+        )
+
+        dialog = None
         pagina_dialogo = self.get_current_page(e) or self._page_ref
 
         def _bloquear_botones_dialogo(bloqueado: bool, mensaje: str = "Procesando..."):
-            for btn in botones_accion:
-                if hasattr(btn, "disabled"):
-                    btn.disabled = bloqueado
+            if dialog and hasattr(dialog, "actions") and dialog.actions:
+                for btn in dialog.actions:
+                    if hasattr(btn, "disabled"):
+                        btn.disabled = bloqueado
+            if banner_impresora and hasattr(banner_impresora, "content") and hasattr(banner_impresora.content, "controls"):
+                for ctrl in banner_impresora.content.controls:
+                    if isinstance(ctrl, ft.IconButton):
+                        ctrl.disabled = bloqueado
             lbl_estado.visible = bloqueado
             if len(lbl_estado.controls) > 1 and hasattr(lbl_estado.controls[1], "value"):
                 lbl_estado.controls[1].value = mensaje
             try:
-                dialog.update()
+                if dialog:
+                    dialog.update()
             except Exception:
                 pass
             _repintar(pagina_dialogo)
@@ -3181,11 +3194,6 @@ class VentasView(BaseView):
             import threading
             threading.Thread(target=_tarea_imprimir, daemon=True).start()
 
-        # Tarjeta visual con el estado de conexión de la impresora térmica
-        banner_impresora = ft.Container(
-            padding=10,
-            border_radius=10,
-        )
 
         def reintentar_conexion_impresora(e_btn):
             nonlocal procesando_accion, impresora_conectada, nombre_impresora
