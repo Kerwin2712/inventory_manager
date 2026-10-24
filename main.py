@@ -1,7 +1,7 @@
+import asyncio
 import os
+import signal
 import sys
-import threading
-import time
 import flet as ft
 from core.database import init_db, get_setting
 from ui.views.base_view import BaseView
@@ -10,10 +10,15 @@ from ui.views.admin_users_view import AdminUsersView
 from ui.views.dashboard_view import DashboardView
 from services.cart_manager import limpiar_sesion
 
-def _silenciar_desconexion_windows():
-    """Silencia el error WinError 10054 en Windows al cerrar la ventana de la aplicación Flet."""
+def _parchear_salida_limpia_windows():
+    """Aplica parches para Windows que previenen bloqueos de terminal y ventanas colgadas:
+    1. Silencia el error WinError 10054 al desconectar el socket proactor.
+    2. Corrige el bug en flet_desktop.close_flet_view que intenta usar signal.SIGKILL (inexistente en Windows).
+    3. Asegura que al cerrar la conexión socket del servidor Flet, Python termine de inmediato sin colgarse."""
     if sys.platform != "win32":
         return
+
+    # 1. Silenciar WinError 10054 en Proactor
     try:
         from asyncio.proactor_events import _ProactorBasePipeTransport
         _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
@@ -28,65 +33,66 @@ def _silenciar_desconexion_windows():
     except Exception:
         pass
 
-_silenciar_desconexion_windows()
+    # 2. Corregir señal de terminación de proceso en flet_desktop
+    try:
+        import flet_desktop
+        def _patched_close_flet_view(pid_file):
+            if pid_file is not None and os.path.exists(pid_file):
+                try:
+                    with open(pid_file, encoding="utf-8") as f:
+                        fvp_pid = int(f.read())
+                    sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+                    os.kill(fvp_pid, sig)
+                except Exception:
+                    pass
+                finally:
+                    if os.path.exists(pid_file):
+                        os.remove(pid_file)
 
-def _iniciar_vigilante_cierre(page: ft.Page):
-    """Monitorea el ciclo de vida de la ventana y la conexión socket cliente para garantizar
-    que el proceso Python termine de inmediato si la ventana se cierra por cualquier motivo."""
-    def _vigilante():
-        time.sleep(2.0)  # Esperar a que la ventana y el cliente Flutter se inicien completamente
-        session = getattr(page, "session", None)
-        conn = getattr(session, "connection", None) if session else None
-        while True:
-            time.sleep(0.5)
-            # 1. Si la sesión fue marcada como cerrada internamente
-            if session and getattr(session, "_Session__closed", False):
+        flet_desktop.close_flet_view = _patched_close_flet_view
+    except Exception:
+        pass
+
+    # 3. Terminar el proceso Python inmediatamente al cerrarse la sesión y socket de Flet
+    try:
+        from flet.messaging.flet_socket_server import FletSocketServer
+        _orig_socket_close = FletSocketServer.close
+
+        async def _safe_socket_close(self):
+            try:
+                if getattr(self, "session", None) and hasattr(self.session, "id"):
+                    limpiar_sesion(self.session.id)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(_orig_socket_close(self), timeout=1.0)
+            except Exception:
+                pass
+            finally:
                 os._exit(0)
-            # 2. Si la tarea de recepción de socket terminó (el cliente cerró el socket)
-            if conn:
-                task = getattr(conn, "_FletSocketServer__receive_loop_task", None)
-                if task and task.done():
-                    os._exit(0)
-                if hasattr(conn, "_FletSocketServer__connected") and conn._FletSocketServer__connected is False:
-                    os._exit(0)
 
-    t = threading.Thread(target=_vigilante, daemon=True, name="WatchdogCierreVentana")
-    t.start()
+        FletSocketServer.close = _safe_socket_close
+    except Exception:
+        pass
+
+_parchear_salida_limpia_windows()
 
 def main(page: ft.Page):
     # Inicializar la base de datos SQLite, tablas y datos por defecto
     init_db()
 
-    def _terminar_aplicacion(e=None):
-        """Limpia la sesión activa y termina el proceso Python de forma inmediata al cerrar."""
+    # Callback de limpieza de sesión por si Flet lo invoca
+    def _al_cerrar_sesion(e=None):
         try:
             limpiar_sesion(page.session.id)
         except Exception:
             pass
-        os._exit(0)
 
-    def _al_evento_ventana(e):
-        """Intercepta el evento nativo de cierre de la ventana de escritorio."""
-        tipo = getattr(e, "type", None)
-        if tipo in (ft.WindowEventType.CLOSE, "close"):
-            _terminar_aplicacion(e)
-
-    # Configurar interceptor nativo de cierre de ventana
     try:
-        page.window.prevent_close = True
-        page.window.on_event = _al_evento_ventana
+        page.on_close = _al_cerrar_sesion
+        page.on_disconnect = _al_cerrar_sesion
     except (RuntimeError, AttributeError):
         pass
-
-    # Fallbacks para eventos de cierre y desconexión
-    try:
-        page.on_close = _terminar_aplicacion
-        page.on_disconnect = _terminar_aplicacion
-    except (RuntimeError, AttributeError):
-        pass
-
-    # Iniciar vigilante en segundo plano para garantizar salida si el cliente Flutter finaliza
-    _iniciar_vigilante_cierre(page)
 
     # Cargar preferencias de tema guardadas desde SQLite
     saved_mode = get_setting("theme_mode", "dark")
