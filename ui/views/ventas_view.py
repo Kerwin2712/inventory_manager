@@ -525,7 +525,7 @@ class VentasView(BaseView):
             label="Carrito Activo (Cliente)",
             value=obtener_id_carrito_activo(self._sid),
             options=options_carritos,
-            width=320,
+            width=280,
             border_radius=12,
         )
         self.dd_carritos.on_change = self.handle_cambiar_carrito
@@ -583,53 +583,8 @@ class VentasView(BaseView):
             border=ft.Border.all(1, self.get_border_color())
         )
 
-        # Indicador / Configuración rápida de impresora térmica (MP80-12)
-        # Indicador / Configuración rápida de impresora térmica (MP80-12)
-        info_imp_hdr = detectar_impresora_termica(verificar_online=True)
-        imp_hdr_ok = bool(info_imp_hdr and info_imp_hdr.get("conectada"))
-        imp_hdr_nom = info_imp_hdr["nombre"] if info_imp_hdr else "No detectada"
-
-        if imp_hdr_ok:
-            txt_estado = "Térmica 80mm"
-            color_icono = ft.Colors.GREEN_400
-            icono_estado = ft.Icons.PRINT
-            tooltip_estado = f"Impresora Térmica: {imp_hdr_nom} (Conectada y lista). Clic para configurar o probar."
-        elif info_imp_hdr:
-            txt_estado = "Desconectada"
-            color_icono = ft.Colors.ORANGE_400
-            icono_estado = ft.Icons.PRINT_DISABLED_OUTLINED
-            tooltip_estado = f"Impresora Térmica: {imp_hdr_nom} (Desconectada / Apagada). Clic para configurar o verificar."
-        else:
-            txt_estado = "Sin Impresora"
-            color_icono = ft.Colors.GREY_500
-            icono_estado = ft.Icons.PRINT_DISABLED_OUTLINED
-            tooltip_estado = "No se detectó impresora térmica. Clic para configurar."
-
-        self._icon_impresora_termica = ft.Icon(icono_estado, color=color_icono, size=20)
-        self._lbl_impresora_termica = ft.Text(
-            txt_estado,
-            size=12,
-            weight=ft.FontWeight.W_500,
-            color=color_icono if not imp_hdr_ok and info_imp_hdr else self.get_text_color(),
-        )
-
-        btn_impresora_header = ft.Container(
-            content=ft.Row(
-                controls=[
-                    self._icon_impresora_termica,
-                    self._lbl_impresora_termica,
-                ],
-                tight=True,
-                spacing=6,
-            ),
-            bgcolor=self.get_card_bg(),
-            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-            border_radius=12,
-            border=ft.Border.all(1, self.get_border_color()),
-            tooltip=tooltip_estado,
-            on_click=self.abrir_dialogo_configuracion_impresora,
-        )
-        self._btn_impresora_termica = btn_impresora_header
+        # La impresora térmica ya se gestiona en el encabezado general del sistema
+        self._btn_impresora_termica = None
 
         self.tira_carritos_container = ft.Container(
             content=self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
@@ -637,13 +592,21 @@ class VentasView(BaseView):
 
         fila_superior = ft.Row(
             controls=[
-                ft.Row([self.dd_carritos, btn_nuevo_carrito, btn_eliminar_carrito], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row(
+                    controls=[
+                        self.dd_carritos,
+                        btn_nuevo_carrito,
+                        btn_eliminar_carrito,
+                        tasa_badge,
+                    ],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 self.tipo_venta_selector,
-                ft.Row([btn_impresora_header, tasa_badge], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            wrap=True
+            wrap=False
         )
 
         cabecera_card = self.create_card(

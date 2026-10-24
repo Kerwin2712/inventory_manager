@@ -749,9 +749,9 @@ def generar_comandos_escpos(venta_id: int, divisa: str = "USD") -> bytes:
     buffer.extend(b"------------------------------------------------\n")
 
     # Tabla de productos (48 columnas de ancho estándar 80mm)
-    # Formato cabecera: CANT. DESCRIPCION (REF)         P.UNIT    TOTAL
-    #                   6     23                        9         10
-    cabecera = "CANT.  DESCRIPCION             P.UNIT     TOTAL\n"
+    # Formato cabecera: CANT. DESCRIPCION         P.UNIT      TOTAL
+    #                   5     20                  10          10 = 48 caracteres exactos
+    cabecera = f"{'CANT.':5} {'DESCRIPCION':<20} {'P.UNIT':>10} {'TOTAL':>10}\n"
     buffer.extend(BOLD_ON)
     buffer.extend(cabecera.encode("cp437", errors="ignore"))
     buffer.extend(BOLD_OFF)
@@ -773,17 +773,21 @@ def generar_comandos_escpos(venta_id: int, divisa: str = "USD") -> bytes:
         )
 
         str_cant = f"{cant:.1f}".rjust(5)
-        str_punit = f"{p_unit:,.2f}".rjust(9)
+        str_punit = f"{p_unit:,.2f}".rjust(10)
         str_subtot = f"{subtot:,.2f}".rjust(10)
 
-        if len(nombre_prod) <= 22:
-            linea = f"{str_cant}  {nombre_prod.ljust(22)} {str_punit} {str_subtot}\n"
-            buffer.extend(linea.encode("cp437", errors="ignore"))
-        else:
-            linea1 = f"{str_cant}  {nombre_prod[:22]} {str_punit} {str_subtot}\n"
-            linea2 = f"       {nombre_prod[22:46]}\n"
-            buffer.extend(linea1.encode("cp437", errors="ignore"))
-            buffer.extend(linea2.encode("cp437", errors="ignore"))
+        # Fila principal con exactamente 48 caracteres (evita salto de línea de decimales)
+        desc_linea1 = nombre_prod[:20].ljust(20)
+        linea1 = f"{str_cant} {desc_linea1} {str_punit} {str_subtot}\n"
+        buffer.extend(linea1.encode("cp437", errors="ignore"))
+
+        # Si el nombre supera 20 caracteres, continúa debajo de la columna de descripción
+        resto = nombre_prod[20:].strip()
+        while resto:
+            chunk = resto[:26]
+            resto = resto[26:].strip()
+            linea_sub = f"      {chunk}\n"
+            buffer.extend(linea_sub.encode("cp437", errors="ignore"))
 
     buffer.extend(b"------------------------------------------------\n")
 
@@ -815,11 +819,11 @@ def generar_comandos_escpos(venta_id: int, divisa: str = "USD") -> bytes:
     buffer.extend(b"Conserve este ticket como constancia\n")
     buffer.extend(b"------------------------------------------------\n")
 
-    # 5 saltos de línea para que el texto salga más allá del filo dentado de corte
-    buffer.extend(b"\n\n\n\n\n")
+    # Avance mínimo para el corte de papel sin desperdicio de espacio
+    buffer.extend(b"\n\n")
 
-    # Comando de corte parcial de papel GS V 65 3
-    buffer.extend(GS + b"V\x41\x03")
+    # Comando de corte parcial de papel GS V 65 0
+    buffer.extend(GS + b"V\x41\x00")
 
     return bytes(buffer)
 
@@ -1269,8 +1273,8 @@ def generar_comandos_reporte_ventas_diarias(ventas: Optional[List[dict]] = None)
     buffer.extend(b"------------------------------------------------\n")
     buffer.extend(ALIGN_CENTER)
     buffer.extend(b"*** FIN DEL REPORTE DE VENTAS ***\n")
-    buffer.extend(b"\n\n\n\n\n")
-    buffer.extend(GS + b"V\x41\x03")
+    buffer.extend(b"\n\n")
+    buffer.extend(GS + b"V\x41\x00")
 
     return bytes(buffer)
 

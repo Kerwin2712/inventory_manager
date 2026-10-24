@@ -157,9 +157,9 @@ def test_generar_comandos_escpos_para_venta(venta_de_prueba):
     assert b"V-12345678" in bytes_ticket
     # Comprobar producto (nombre_referencia_corto)
     assert b"Filtro Aceite Ref" in bytes_ticket
-    # Comprobar totales y corte de papel (\x1dV\x41\x03)
+    # Comprobar totales y corte de papel (\x1dV\x41\x00)
     assert b"TOTAL USD: $ 20.00" in bytes_ticket
-    assert b"\x1dV\x41\x03" in bytes_ticket
+    assert b"\x1dV\x41\x00" in bytes_ticket
 
 
 def test_generar_comandos_escpos_divisa_bcv(venta_de_prueba):
