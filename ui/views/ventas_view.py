@@ -23,7 +23,12 @@ from services.cartera_service import (
     format_documento,
 )
 from services.permisos_service import puede_ver_costos
-from services.inventario_service import listar_productos
+from services.inventario_service import (
+    listar_productos,
+    obtener_existencia_producto,
+    obtener_existencias_productos,
+    obtener_productos_mas_usados,
+)
 from services.busqueda_service import (
     CRITERIOS_BUSQUEDA,
     CRITERIO_POR_DEFECTO,
@@ -85,6 +90,16 @@ class VentasView(BaseView):
     _COLUMNAS_CARRITO_OCULTABLES = ["codigo", "producto", "cantidad", "precio_usd", "precio_bs", "subtotal"]
     _columnas_carrito_visibles_estaticas = {k: True for k in _COLUMNAS_CARRITO_OCULTABLES}
     _modo_vista_carrito_estatico = "separado"
+    # Frecuencia de productos usados/agregados durante la sesión activa
+    _productos_usados_recientes: dict[str, float] = {}
+
+    @classmethod
+    def _registrar_uso_producto(cls, codigo: str, cantidad: float = 1.0):
+        """Registra el uso o agregado de un producto para actualizar la lista de más usados."""
+        if not codigo:
+            return
+        cls._productos_usados_recientes[codigo] = cls._productos_usados_recientes.get(codigo, 0.0) + float(cantidad)
+
 
     def __init__(self, page: ft.Page = None, user_data: dict = None, on_update_callback=None):
         self.user_data = user_data or {}
@@ -275,6 +290,9 @@ class VentasView(BaseView):
         if hasattr(self, "tira_carritos_container"):
             carritos_dict = obtener_todos_los_carritos(self._sid)
             self.tira_carritos_container.content = self._build_tira_carritos(carritos_dict, obtener_id_carrito_activo(self._sid))
+
+        if hasattr(self, "panel_recomendaciones_container"):
+            self.panel_recomendaciones_container.content = self._build_tira_productos_mas_usados()
 
         if hasattr(self, "dd_carritos"):
             carritos_dict = obtener_todos_los_carritos(self._sid)
@@ -661,7 +679,9 @@ class VentasView(BaseView):
         )
 
         if cliente_actual:
-            lbl_texto_cli = f"✓ Esta venta es para: {cliente_actual['nombre']} ({cliente_actual['cedula_rif']}) — Tel: {cliente_actual.get('telefono', '-')}"
+            doc_cli = cliente_actual.get('cedula_rif') or cliente_actual.get('cedula') or cliente_actual.get('documento', '')
+            nom_cli = cliente_actual.get('nombre', 'Cliente')
+            lbl_texto_cli = f"✓ Esta venta es para: {nom_cli} ({doc_cli}) — Tel: {cliente_actual.get('telefono', '-')}"
             lbl_color_cli = ft.Colors.GREEN_600
         else:
             lbl_texto_cli = "⚠ Ningún cliente seleccionado todavía. Busque o registre uno para continuar la Venta Formal."
@@ -754,32 +774,10 @@ class VentasView(BaseView):
             on_click=self.abrir_modal_buscar_inventario
         )
 
-        # ── Panel de Recomendaciones Rápidas (Productos Frecuentes) ───────────
-        prods_recomendados = listar_productos(per_page=6)
-        chips_recomendaciones = []
-        for pr in prods_recomendados:
-            nombre_c = pr.get("nombre_referencia_corto") or pr.get("referencia") or pr["codigo"]
-            precio_str = f"${pr['precio_dolares']:.2f}"
-            chips_recomendaciones.append(
-                ft.Container(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=self.get_accent_color()),
-                        ft.Text(f"{nombre_c} ({precio_str})", size=11, weight=ft.FontWeight.BOLD, color=self.get_text_color())
-                    ], tight=True, spacing=4),
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                    border_radius=20,
-                    bgcolor=self.get_card_bg(),
-                    border=ft.Border.all(1, self.get_border_color()),
-                    on_click=lambda e, p=pr: self.agregar_producto_directo(p, 1.0, e),
-                    ink=True,
-                    tooltip=f"Haga clic para añadir 1 unidad de {nombre_c} al carrito"
-                )
-            )
-
-        panel_recomendaciones = ft.Column([
-            ft.Text("💡 Recomendaciones Rápidas (Click para añadir 1 Ud):", size=11, color=self.get_subtext_color(), weight=ft.FontWeight.W_600),
-            ft.Row(controls=chips_recomendaciones, wrap=True, spacing=6)
-        ], spacing=4) if chips_recomendaciones else ft.Container()
+        # ── Tira Horizontal de Productos Más Usados / Frecuentes con Stock ──
+        self.panel_recomendaciones_container = ft.Container(
+            content=self._build_tira_productos_mas_usados()
+        )
 
         # Panel de resultados embebido en la vista (no un modal): se puebla con
         # `handle_buscar_producto` y arranca oculto para no ocupar espacio antes
@@ -798,7 +796,7 @@ class VentasView(BaseView):
                 ft.Text("BÚSQUEDA Y SELECCIÓN DE ARTÍCULOS", size=13, weight=ft.FontWeight.BOLD, color=self.get_accent_color()),
                 ft.Row([self.criterio_busqueda_dd, self.prod_search_input, self.btn_buscar_prod, self.cant_input, self.btn_agregar_prod, self.btn_buscar_inventario], alignment=ft.MainAxisAlignment.START, wrap=True),
                 self.panel_resultados_container,
-                panel_recomendaciones
+                self.panel_recomendaciones_container
             ], spacing=10),
             padding=15,
             border_radius=16
@@ -1004,6 +1002,127 @@ class VentasView(BaseView):
             ],
             spacing=4,
         )
+
+    def _construir_badge_stock(self, codigo: str, cantidad: float, stock: float) -> ft.Control:
+        """Construye un badge visual del stock del producto en el carrito.
+        Muestra advertencia en rojo si el stock es 0 o si la cantidad en carrito
+        supera la existencia física disponible."""
+        if stock <= 0:
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=11, color=ft.Colors.WHITE),
+                    ft.Text("Sin stock", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                ], spacing=2, tight=True),
+                bgcolor=ft.Colors.RED_600,
+                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                border_radius=6,
+                tooltip="Este producto no tiene existencia disponible en inventario (Stock: 0)"
+            )
+        if cantidad > stock:
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=11, color=ft.Colors.WHITE),
+                    ft.Text(f"Excede ({stock:.0f})", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                ], spacing=2, tight=True),
+                bgcolor=ft.Colors.RED_600,
+                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                border_radius=6,
+                tooltip=f"La cantidad en carrito ({cantidad:.0f}) supera la existencia disponible ({stock:.0f})"
+            )
+        return ft.Container(
+            content=ft.Text(f"Stock: {stock:.0f}", size=10, weight=ft.FontWeight.W_600, color=ft.Colors.GREEN_700 if not self.is_dark else ft.Colors.GREEN_400),
+            bgcolor=ft.Colors.with_opacity(0.14, ft.Colors.GREEN_500),
+            padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+            border_radius=6,
+            tooltip=f"Existencia disponible en inventario: {stock:.0f}"
+        )
+
+    def _build_tira_productos_mas_usados(self) -> ft.Control:
+        """Tira horizontal con scroll hacia la derecha de productos más usados / frecuentes
+        con existencia disponible (existencia > 0). Ordenados de mayor a menor frecuencia
+        de uso (ventas históricas + agregados en la sesión).
+        Permite recorrer hacia la derecha y añadir 1 unidad al carrito activo con validación
+        de stock en tiempo real."""
+        accent = self.get_accent_color()
+        text_color = self.get_text_color()
+        subtext = self.get_subtext_color()
+        border = self.get_border_color()
+
+        prods = obtener_productos_mas_usados(limite=35)
+        # Filtro estricto: NUNCA mostrar productos con existencia <= 0
+        prods = [p for p in prods if float(p.get("existencia") or 0.0) > 0.0]
+
+        # Ordenar por frecuencia combinada (sesión activa + histórico de ventas)
+        def _score(p):
+            cod = p["codigo"]
+            uso_sesion = self._productos_usados_recientes.get(cod, 0.0)
+            ventas = float(p.get("total_vendido") or 0.0)
+            return (uso_sesion * 100.0) + ventas
+
+        prods.sort(key=_score, reverse=True)
+
+        if not prods:
+            return ft.Container()
+
+        tarjetas = []
+        for pr in prods:
+            cod = pr["codigo"]
+            nombre_c = pr.get("nombre_referencia_corto") or pr.get("referencia") or cod
+            precio_usd = float(pr.get("precio_dolares") or 0.0)
+            stock = float(pr.get("existencia") or 0.0)
+
+            tarjetas.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(f"Cód: {cod}", size=10, weight=ft.FontWeight.BOLD, color=accent),
+                            ft.Container(
+                                content=ft.Text(f"Stock: {stock:.0f}", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_700 if not self.is_dark else ft.Colors.GREEN_400),
+                                bgcolor=ft.Colors.with_opacity(0.14, ft.Colors.GREEN_500),
+                                padding=ft.Padding.symmetric(horizontal=5, vertical=1),
+                                border_radius=6,
+                            ),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Text(
+                            nombre_c,
+                            size=11,
+                            weight=ft.FontWeight.BOLD,
+                            color=text_color,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            tooltip=nombre_c,
+                        ),
+                        ft.Row([
+                            ft.Text(f"${precio_usd:.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
+                            ft.Row([
+                                ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=accent),
+                                ft.Text("Añadir", size=10, weight=ft.FontWeight.W_600, color=accent),
+                            ], spacing=2, tight=True),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ], spacing=3, tight=True),
+                    width=175,
+                    padding=8,
+                    border_radius=10,
+                    bgcolor=self.get_card_bg(),
+                    border=ft.Border.all(1, border),
+                    ink=True,
+                    tooltip=f"Clic para añadir 1 unidad de {nombre_c} (Stock disp: {stock:.0f})",
+                    on_click=lambda e, p=pr: self._validar_stock_y_agregar(p, 1.0, e),
+                )
+            )
+
+        tira_row = ft.Row(controls=tarjetas, spacing=8, scroll=ft.ScrollMode.AUTO)
+        return ft.Column([
+            ft.Row([
+                ft.Row([
+                    ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT_ROUNDED, size=14, color=ft.Colors.ORANGE_500),
+                    ft.Text(f"PRODUCTOS MÁS USADOS ({len(tarjetas)})", size=11, weight=ft.FontWeight.BOLD, color=subtext),
+                ], spacing=4),
+                build_scroll_nav(tira_row, "horizontal", accent, tooltip_prefix="Más usados: "),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            tira_row,
+        ], spacing=4)
+
 
     # ── Manejadores de Eventos de Carrito y Tasa ──────────────────────────────
 
@@ -1455,22 +1574,33 @@ class VentasView(BaseView):
             self.safe_update(e)
 
     def _validar_stock_y_agregar(self, producto: dict, cantidad: float, e=None) -> bool:
-        """Verifica la existencia contra lo que ya hay en el carrito activo y,
-        si alcanza, agrega el producto. Devuelve si se agregó."""
-        stock_disponible = float(producto.get("existencia") or 0.0)
+        """Verifica la existencia física real en inventario contra lo que ya hay en
+        el carrito activo y, si alcanza, agrega el producto. Devuelve True si se agregó."""
+        cod = producto["codigo"]
+        stock_disponible = obtener_existencia_producto(cod)
+        nombre_c = producto.get("nombre_referencia_corto") or producto.get("referencia") or cod
+
+        if stock_disponible <= 0:
+            self.show_alert_error(
+                e,
+                f"El producto '{nombre_c}' ({cod}) no tiene existencia disponible en inventario (Stock: 0)."
+            )
+            return False
+
         c_activo = obtener_carrito_activo(self._sid)
         cant_en_carrito = sum(
-            item["cantidad"] for item in c_activo["items"] if item["codigo"] == producto["codigo"]
+            item["cantidad"] for item in c_activo["items"] if item["codigo"] == cod
         )
 
         if (cant_en_carrito + cantidad) > stock_disponible:
             self.show_alert_error(
                 e,
-                f"Stock insuficiente para {producto['codigo']}.\n"
-                f"Disponible: {stock_disponible:.2f} | En carrito: {cant_en_carrito:.2f}"
+                f"Stock insuficiente para '{nombre_c}' ({cod}).\n"
+                f"Disponible: {stock_disponible:.0f} | En carrito: {cant_en_carrito:.0f} | Solicitado: {cantidad:.0f}"
             )
             return False
 
+        self._registrar_uso_producto(cod, cantidad)
         self.agregar_producto_directo(producto, cantidad, e)
         return True
 
@@ -1585,10 +1715,11 @@ class VentasView(BaseView):
                     cant = 1.0
             except ValueError:
                 cant = 1.0
+            if not self._validar_stock_y_agregar(prod, cant, ev):
+                return
             dlg.open = False
             self._liberar_foco()
             self.safe_update(ev)
-            self.agregar_producto_directo(prod, cant, ev)
 
         def _refrescar(ev=None):
             termino = (txt_busqueda.value or "").strip()
@@ -1750,6 +1881,18 @@ class VentasView(BaseView):
         if nueva_cant <= 0:
             self.handle_remover_item(e, item["codigo"])
             return
+
+        if delta > 0:
+            stock_disponible = obtener_existencia_producto(item["codigo"])
+            if nueva_cant > stock_disponible:
+                nom = item.get("nombre_corto", item["codigo"])
+                self.show_alert_error(
+                    e,
+                    f"Stock máximo alcanzado para '{nom}'.\n"
+                    f"Disponible: {stock_disponible:.0f} | En carrito: {item['cantidad']:.0f}"
+                )
+                return
+
         editar_item_en_carrito(self._sid, item["codigo"], nueva_cant, item["precio_usd"], tasa_bcv=self.tasa_bcv)
         self._refrescar_carrito_y_resumen(e)
 
@@ -1809,6 +1952,12 @@ class VentasView(BaseView):
                 n_precio_bcv = float(txt_precio_bcv.value.strip().replace(",", "."))
                 if n_cant <= 0 or n_precio <= 0 or n_precio_bcv <= 0:
                     raise ValueError("Los valores deben ser mayores a cero.")
+
+                stock_disponible = obtener_existencia_producto(item["codigo"])
+                if n_cant > stock_disponible:
+                    lbl_err.value = f"Stock insuficiente en inventario: {stock_disponible:.0f} disponible(s)."
+                    p.update()
+                    return
 
                 editar_item_en_carrito(self._sid, item["codigo"], n_cant, n_precio, n_precio_bcv, tasa_bcv=self.tasa_bcv)
                 self._close_dialog(e_save, dialog=dlg)
@@ -2056,7 +2205,7 @@ class VentasView(BaseView):
                 content=ft.Column([
                     ft.Icon(ft.Icons.SHOPPING_CART_OUTLINED, size=64, color=self.get_accent_color()),
                     ft.Text("CARRITO DE COMPRAS VACÍO", size=15, weight=ft.FontWeight.BOLD, color=self.get_text_color()),
-                    ft.Text("Seleccione un producto arriba o use las recomendaciones rápidas para añadir ítems.", size=12, color=self.get_subtext_color(), text_align=ft.TextAlign.CENTER)
+                    ft.Text("Seleccione un producto arriba o use los productos más usados para añadir ítems al carrito.", size=12, color=self.get_subtext_color(), text_align=ft.TextAlign.CENTER)
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                 padding=40,
                 border_radius=16,
@@ -2068,6 +2217,9 @@ class VentasView(BaseView):
         subtext = self.get_subtext_color()
         border = self.get_border_color()
         card_bg = self.get_card_bg()
+
+        # Consulta por lotes de existencias de todos los productos en el carrito
+        existencias = obtener_existencias_productos([i["codigo"] for i in items])
 
         # El rojo del botón de quitar se elige por tema: RED_400 se lee bien
         # sobre el fondo oscuro pero pierde contraste sobre el blanco del modo
@@ -2125,6 +2277,9 @@ class VentasView(BaseView):
             # con otro renglón marcado quedan apagados y explicados.
             habilitado = self._seleccion.puede_accionar(item["codigo"])
             sufijo = "" if habilitado else f" — {self._AVISO_OTRO_MARCADO}"
+            stock_disp = existencias.get(item["codigo"], 0.0)
+            excede_stock = (item["cantidad"] > stock_disp) or (stock_disp <= 0)
+            color_cant = ft.Colors.RED_500 if excede_stock else text_color
             return ft.Row([
                 ft.IconButton(
                     icon=ft.Icons.REMOVE_CIRCLE_OUTLINE, icon_size=18,
@@ -2134,7 +2289,7 @@ class VentasView(BaseView):
                     style=ft.ButtonStyle(padding=2),
                     on_click=lambda e, it=item: self.handle_ajustar_cantidad(e, it, -1),
                 ),
-                ft.Text(f"{item['cantidad']:.2f}", color=text_color, weight=ft.FontWeight.W_600, width=48, text_align=ft.TextAlign.CENTER),
+                ft.Text(f"{item['cantidad']:.2f}", color=color_cant, weight=ft.FontWeight.BOLD if excede_stock else ft.FontWeight.W_600, width=48, text_align=ft.TextAlign.CENTER),
                 ft.IconButton(
                     icon=ft.Icons.ADD_CIRCLE_OUTLINE, icon_size=18,
                     icon_color=accent if habilitado else subtext,
@@ -2217,16 +2372,22 @@ class VentasView(BaseView):
             constructores_celda = {
                 "marcador": celda_marcador,
                 "codigo": lambda item: ft.Text(item["codigo"], weight=ft.FontWeight.BOLD, color=text_color),
-                "producto": lambda item: ft.Text(item["nombre_corto"], color=text_color),
+                "producto": lambda item: ft.Column([
+                    ft.Text(item["nombre_corto"], color=text_color),
+                    ft.Row([
+                        ft.Text(f"Cód: {item['codigo']}", size=10, color=accent),
+                        self._construir_badge_stock(item["codigo"], item["cantidad"], existencias.get(item["codigo"], 0.0)),
+                    ], spacing=4),
+                ], spacing=2, tight=True),
                 "cantidad": celda_cantidad,
                 "precio_usd": lambda item: ft.Text(f"$ {item['precio_usd']:,.2f}", color=ft.Colors.GREEN_600, weight=ft.FontWeight.BOLD),
                 "precio_bs": lambda item: ft.Column([
-                    ft.Text(f"Bs. {item['precio_bcv']:,.2f}", color=ft.Colors.AMBER_700, weight=ft.FontWeight.BOLD, size=11),
+                    ft.Text(f"Bs. {item.get('precio_bcv', 0.0):,.2f}", color=ft.Colors.AMBER_700, weight=ft.FontWeight.BOLD, size=11),
                     ft.Text(f"Ref BCV: ${item.get('precio_usd_bcv_ref', item['precio_usd']):,.2f}", color=ft.Colors.CYAN_600, size=10),
                 ], spacing=1, tight=True),
                 "subtotal": lambda item: ft.Column([
-                    ft.Text(f"$ {item['subtotal_usd']:,.2f} (Efvo)", weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600, size=11),
-                    ft.Text(f"Bs. {item['subtotal_bcv']:,.2f}", weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700, size=11),
+                    ft.Text(f"$ {item.get('subtotal_usd', 0.0):,.2f} (Efvo)", weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600, size=11),
+                    ft.Text(f"Bs. {item.get('subtotal_bcv', 0.0):,.2f}", weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700, size=11),
                 ], spacing=1, tight=True),
                 "acciones": lambda item: celda_acciones(item, item["codigo"]),
             }
@@ -2282,16 +2443,21 @@ class VentasView(BaseView):
             for item in items:
                 precio_bcv_ref = item.get("precio_usd_bcv_ref", item["precio_usd"])
                 subtotal_bcv_usd = round(item["cantidad"] * precio_bcv_ref, 2)
+                stock_item = existencias.get(item["codigo"], 0.0)
+                badge_stock = self._construir_badge_stock(item["codigo"], item["cantidad"], stock_item)
 
                 celda_prod = ft.Container(
                     content=ft.Column([
                         ft.Text(item["nombre_corto"], size=13, weight=ft.FontWeight.BOLD, color=text_color, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
-                        ft.Container(
-                            content=ft.Text(f"Cód: {item['codigo']}", size=11, weight=ft.FontWeight.W_600, color=accent),
-                            bgcolor=ft.Colors.with_opacity(0.12, accent),
-                            padding=ft.Padding.symmetric(horizontal=6, vertical=2),
-                            border_radius=6,
-                        ),
+                        ft.Row([
+                            ft.Container(
+                                content=ft.Text(f"Cód: {item['codigo']}", size=11, weight=ft.FontWeight.W_600, color=accent),
+                                bgcolor=ft.Colors.with_opacity(0.12, accent),
+                                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                border_radius=6,
+                            ),
+                            badge_stock,
+                        ], spacing=4),
                     ], spacing=3, tight=True),
                     width=210,
                     padding=ft.Padding.symmetric(vertical=4),
@@ -2301,7 +2467,7 @@ class VentasView(BaseView):
                     content=ft.Column([
                         ft.Text(f"${item['precio_usd']:.2f} (Efvo)", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
                         ft.Text(f"${precio_bcv_ref:.2f} (BCV)", size=10, color=ft.Colors.CYAN_600),
-                        ft.Text(f"Bs {item['precio_bcv']:,.2f}", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.AMBER_700),
+                        ft.Text(f"Bs {item.get('precio_bcv', 0.0):,.2f}", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.AMBER_700),
                     ], spacing=1, tight=True),
                     width=150,
                     padding=ft.Padding.symmetric(vertical=4),
@@ -2311,9 +2477,9 @@ class VentasView(BaseView):
 
                 celda_subtotales = ft.Container(
                     content=ft.Column([
-                        ft.Text(f"${item['subtotal_usd']:.2f} (Efvo)", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
+                        ft.Text(f"${item.get('subtotal_usd', 0.0):.2f} (Efvo)", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
                         ft.Text(f"${subtotal_bcv_usd:.2f} (BCV)", size=10, color=ft.Colors.CYAN_600),
-                        ft.Text(f"Bs {item['subtotal_bcv']:,.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
+                        ft.Text(f"Bs {item.get('subtotal_bcv', 0.0):,.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
                     ], spacing=1, tight=True),
                     width=160,
                     padding=ft.Padding.symmetric(vertical=4),
@@ -2369,6 +2535,9 @@ class VentasView(BaseView):
                 precio_bcv_ref = item.get("precio_usd_bcv_ref", item["precio_usd"])
                 subtotal_bcv_usd = round(item["cantidad"] * precio_bcv_ref, 2)
                 marcado = self._seleccion.esta_seleccionado(item["codigo"])
+                stock_item = existencias.get(item["codigo"], 0.0)
+                badge_stock = self._construir_badge_stock(item["codigo"], item["cantidad"], stock_item)
+
                 t = ft.Container(
                     content=ft.Column([
                         ft.Row([
@@ -2396,14 +2565,14 @@ class VentasView(BaseView):
                             ], spacing=0),
                             ft.Column([
                                 ft.Text("P. Unit. (Bs)", size=9, color=subtext),
-                                ft.Text(f"Bs {item['precio_bcv']:,.2f}", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
+                                ft.Text(f"Bs {item.get('precio_bcv', 0.0):,.2f}", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
                             ], spacing=0),
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         ft.Divider(height=4),
                         ft.Row([
                             ft.Column([
                                 ft.Text("Subtotal Efvo", size=9, color=subtext),
-                                ft.Text(f"${item['subtotal_usd']:.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
+                                ft.Text(f"${item.get('subtotal_usd', 0.0):.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_600),
                             ], spacing=0),
                             ft.Column([
                                 ft.Text("Subtotal BCV", size=9, color=subtext),
@@ -2411,12 +2580,16 @@ class VentasView(BaseView):
                             ], spacing=0),
                             ft.Column([
                                 ft.Text("Subtotal Bs", size=9, color=subtext),
-                                ft.Text(f"Bs {item['subtotal_bcv']:,.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
+                                ft.Text(f"Bs {item.get('subtotal_bcv', 0.0):,.2f}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_700),
                             ], spacing=0),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Divider(height=4),
+                        ft.Row([
+                            badge_stock,
                             celda_acciones(item, item["codigo"]),
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ], spacing=4),
-                    padding=10, border_radius=12, width=280,
+                    padding=10, border_radius=12, width=310,
                     # Mismo sombreado derivado del modelo que en las tablas,
                     # con el borde reforzado para que la tarjeta marcada se
                     # distinga también en modo claro.
@@ -2472,7 +2645,8 @@ class VentasView(BaseView):
         "Preguntar siempre antes de procesar la compra": el cobro necesita la
         referencia del pago y el monto definitivo, y ninguno de los dos se
         puede adivinar desde el carrito. Aquí solo se verifica lo que haría
-        inútil abrir el diálogo (carrito vacío, Venta Formal sin cliente)."""
+        inútil abrir el diálogo (carrito vacío, Venta Formal sin cliente, o
+        artículos sin stock o con cantidad superior a la existencia física)."""
         c_activo = obtener_carrito_activo(self._sid)
         items = c_activo["items"]
 
@@ -2482,6 +2656,26 @@ class VentasView(BaseView):
 
         if c_activo.get("tipo_venta") == TIPO_VENTA_FORMAL and not c_activo.get("cliente"):
             self.show_alert_error(e, "Debe buscar y seleccionar un cliente registrado para realizar una Venta Formal.")
+            return
+
+        # Validación estricta de stock antes de pasar al diálogo de cobro
+        existencias = obtener_existencias_productos([i["codigo"] for i in items])
+        inconsistencias_stock = []
+        for it in items:
+            cod = it["codigo"]
+            stock = existencias.get(cod, 0.0)
+            nom = it.get("nombre_corto", cod)
+            if stock <= 0:
+                inconsistencias_stock.append(f"• {nom} ({cod}): Sin existencia en inventario (Stock: 0)")
+            elif it["cantidad"] > stock:
+                inconsistencias_stock.append(f"• {nom} ({cod}): Cantidad solicitada ({it['cantidad']:.0f}) supera existencia disponible ({stock:.0f})")
+
+        if inconsistencias_stock:
+            detalle = "\n".join(inconsistencias_stock)
+            self.show_alert_error(
+                e,
+                f"No se puede procesar la venta por problemas de stock:\n{detalle}"
+            )
             return
 
         self.abrir_dialogo_cobro(e)

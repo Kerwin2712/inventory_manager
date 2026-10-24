@@ -482,3 +482,55 @@ def eliminar_producto(codigo: str) -> None:
             raise ValueError(f"ERR_PROD_NOT_FOUND: No existe un producto con el código '{codigo}'.")
         cursor.execute("DELETE FROM productos WHERE codigo = ?", (codigo,))
         conn.commit()
+
+
+def obtener_existencia_producto(codigo: str) -> float:
+    """Obtiene la existencia física actual en inventario para un producto por su código.
+    Retorna 0.0 si el producto no existe o su existencia es nula."""
+    if not codigo:
+        return 0.0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT existencia FROM productos WHERE codigo = ?", (str(codigo).strip(),))
+        row = cursor.fetchone()
+        return float(row["existencia"]) if row and row["existencia"] is not None else 0.0
+
+
+def obtener_existencias_productos(codigos: list[str]) -> dict[str, float]:
+    """Obtiene un mapeo {codigo: existencia} para una lista de códigos en una sola consulta por lotes."""
+    codigos_limpios = [str(c).strip() for c in codigos if c]
+    if not codigos_limpios:
+        return {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in codigos_limpios)
+        cursor.execute(
+            f"SELECT codigo, existencia FROM productos WHERE codigo IN ({placeholders})",
+            codigos_limpios
+        )
+        return {r["codigo"]: float(r["existencia"] or 0.0) for r in cursor.fetchall()}
+
+
+def obtener_productos_mas_usados(limite: int = 30) -> list[dict]:
+    """Retorna los productos con stock disponible (existencia > 0) ordenados
+    por frecuencia de venta (total vendido en ventas_detalle descendente)
+    y luego por creación reciente.
+    Garantiza que NINGÚN producto retornado tenga existencia <= 0."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT p.codigo, p.referencia, p.nombre_referencia_corto, p.descripcion_general,
+                   p.precio_dolares, p.precio_bcv, p.existencia,
+                   COALESCE(SUM(vd.cantidad), 0) AS total_vendido
+            FROM productos p
+            LEFT JOIN ventas_detalle vd ON p.codigo = vd.producto_codigo
+            WHERE p.existencia > 0
+            GROUP BY p.codigo
+            ORDER BY total_vendido DESC, p.rowid DESC
+            LIMIT ?
+            """,
+            (limite,)
+        )
+        return [_row_to_dict(r) for r in cursor.fetchall()]
+
