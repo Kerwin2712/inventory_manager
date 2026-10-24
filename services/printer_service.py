@@ -45,7 +45,8 @@ def limpiar_cache_impresora() -> None:
 PALABRAS_CLAVE_TERMICAS = [
     "mp80", "mpt", "pos-80", "pos80", "pos 80", "pos", "thermal",
     "80mm", "termica", "receipt", "ticket", "zj-80", "rp80",
-    "xp-", "xprinter", "58/80", "bluetooth", "mini printer"
+    "xp-", "xprinter", "58/80", "bluetooth", "mini printer",
+    "superrisc", "s31", "usb: "
 ]
 
 # Estructura DOC_INFO_1 requerida por StartDocPrinterW en winspool.drv
@@ -185,6 +186,130 @@ def listar_puertos_com_sistema(forzar_verificacion: bool = False) -> List[Dict]:
     return puertos
 
 
+# Identificador GUID de Windows para interfaces de dispositivos de impresión USB (GUID_DEVINTERFACE_USBPRINT)
+GUID_DEVINTERFACE_USBPRINT = "{28d78fad-5a12-11d1-ae5b-0000f803a8c2}"
+
+
+def probar_conexion_puerto_usb(ruta_dispositivo: str) -> bool:
+    """Verifica si la impresora USB física está conectada, encendida y accesible por Windows."""
+    if not ruta_dispositivo:
+        return False
+    sistema = platform.system()
+    if sistema != "Windows":
+        return False
+
+    kernel32 = ctypes.windll.kernel32
+    GENERIC_WRITE = 0x40000000
+    OPEN_EXISTING = 3
+    FILE_ATTRIBUTE_NORMAL = 0x80
+
+    with _PORT_LOCK:
+        try:
+            h = kernel32.CreateFileW(
+                ruta_dispositivo,
+                GENERIC_WRITE,
+                0,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None
+            )
+            if h != -1 and h != 0:
+                kernel32.CloseHandle(h)
+                _CACHE_ESTADO_CONEXION[ruta_dispositivo] = {"conectada": True, "timestamp": time.time()}
+                return True
+        except Exception:
+            pass
+
+    _CACHE_ESTADO_CONEXION[ruta_dispositivo] = {"conectada": False, "timestamp": time.time()}
+    return False
+
+
+def listar_dispositivos_usb_impresora(forzar_verificacion: bool = False) -> List[Dict]:
+    """Obtiene los dispositivos de impresión USB conectados directamente en Windows (usbprint.sys).
+    
+    Permite detectar y comunicarse directamente con impresoras térmicas USB (ej. MP80-12 / SUPERRISC S31)
+    incluso si Windows no tiene instalado ningún controlador Spooler para el modelo.
+    """
+    sistema = platform.system()
+    dispositivos = []
+    if sistema != "Windows":
+        return dispositivos
+
+    try:
+        import winreg
+        base_key = rf"SYSTEM\CurrentControlSet\Control\DeviceClasses\{GUID_DEVINTERFACE_USBPRINT}"
+        try:
+            k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base_key)
+        except Exception:
+            return dispositivos
+
+        i = 0
+        while True:
+            try:
+                sub = winreg.EnumKey(k, i)
+                i += 1
+                dev_k = winreg.OpenKey(k, sub)
+                esta_activa = False
+                try:
+                    winreg.OpenKey(dev_k, "#")
+                    esta_activa = True
+                except WindowsError:
+                    esta_activa = False
+
+                # Convertir subclave a ruta DOS (##?#USB#... -> \\?\USB#...)
+                partes = [p for p in sub.split("#") if p and p != "?"]
+                ruta = "\\\\?\\" + "#".join(partes)
+
+                nombre_amigable = "MP80-12 / POS-80"
+                if len(partes) >= 3:
+                    instancia = f"{partes[0]}\\{partes[1]}\\{partes[2]}"
+                    try:
+                        enum_k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"SYSTEM\CurrentControlSet\Enum\{instancia}")
+                        for campo in ["FriendlyName", "DeviceDesc"]:
+                            try:
+                                val, _ = winreg.QueryValueEx(enum_k, campo)
+                                if val:
+                                    s = str(val).split(";")[-1].strip()
+                                    if s and not s.startswith("@"):
+                                        nombre_amigable = s
+                                        break
+                            except WindowsError:
+                                pass
+                    except Exception:
+                        pass
+
+                etiqueta = f"USB: {nombre_amigable}"
+                if "mp80" not in nombre_amigable.lower() and "pos" not in nombre_amigable.lower():
+                    etiqueta = f"USB: {nombre_amigable} (MP80-12)"
+
+                # Verificar conexión física real
+                is_offline = not esta_activa
+                if esta_activa:
+                    if forzar_verificacion or ruta not in _CACHE_ESTADO_CONEXION:
+                        conectada = probar_conexion_puerto_usb(ruta)
+                        is_offline = not conectada
+                    elif ruta in _CACHE_ESTADO_CONEXION:
+                        cached = _CACHE_ESTADO_CONEXION[ruta]
+                        if time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS:
+                            is_offline = not cached.get("conectada", False)
+
+                dispositivos.append({
+                    "nombre": etiqueta,
+                    "ruta_usb": ruta,
+                    "is_default": False,
+                    "is_offline": is_offline,
+                    "tipo": "usb",
+                    "descripcion": f"Impresora Térmica USB ({nombre_amigable})"
+                })
+            except WindowsError:
+                break
+    except Exception:
+        pass
+
+    return dispositivos
+
+
 def listar_impresoras_sistema(forzar_verificacion: bool = False) -> List[Dict]:
     """Obtiene la lista de todas las impresoras instaladas en el sistema (Spooler y Puertos COM/Bluetooth).
     
@@ -256,6 +381,14 @@ def listar_impresoras_sistema(forzar_verificacion: bool = False) -> List[Dict]:
             puertos_com = listar_puertos_com_sistema(forzar_verificacion=forzar_verificacion)
             for p in puertos_com:
                 impresoras.append(p)
+        except Exception:
+            pass
+
+        # Agregar impresoras USB directas (ej. SUPERRISC S31 / MP80-12 USB)
+        try:
+            dispositivos_usb = listar_dispositivos_usb_impresora(forzar_verificacion=forzar_verificacion)
+            for u in dispositivos_usb:
+                impresoras.append(u)
         except Exception:
             pass
 
@@ -369,19 +502,39 @@ def detectar_impresora_termica(verificar_online: bool = True, forzar_verificacio
         for imp in impresoras:
             nom_lower = imp["nombre"].lower()
             puerto_lower = str(imp.get("puerto", "")).lower()
+            ruta_usb_lower = str(imp.get("ruta_usb", "")).lower()
             if (guardada_lower == nom_lower or 
                 (puerto_lower and guardada_lower == puerto_lower) or
                 (puerto_lower and puerto_lower in guardada_lower) or
+                (ruta_usb_lower and guardada_lower == ruta_usb_lower) or
                 (guardada_lower in nom_lower)):
-                candidata = imp
-                configurada_manualmente = True
-                break
+                if not imp.get("is_offline"):
+                    candidata = imp
+                    configurada_manualmente = True
+                    break
+                if candidata is None:
+                    candidata = imp
+                    configurada_manualmente = True
 
+    # Si no hay candidata guardada o la guardada está desconectada, buscar térmica disponible en línea
+    if not candidata or candidata.get("is_offline"):
+        for imp in impresoras:
+            if not imp.get("is_offline"):
+                nombre_lower = imp["nombre"].lower()
+                for kw in PALABRAS_CLAVE_TERMICAS:
+                    if kw in nombre_lower or imp.get("tipo") == "usb":
+                        candidata = imp
+                        configurada_manualmente = False
+                        break
+                if candidata and not candidata.get("is_offline"):
+                    break
+
+    # Si aún no hay candidata, tomar la primera coincidencia aunque esté fuera de línea
     if not candidata:
         for imp in impresoras:
             nombre_lower = imp["nombre"].lower()
             for kw in PALABRAS_CLAVE_TERMICAS:
-                if kw in nombre_lower:
+                if kw in nombre_lower or imp.get("tipo") == "usb":
                     candidata = imp
                     configurada_manualmente = False
                     break
@@ -393,16 +546,28 @@ def detectar_impresora_termica(verificar_online: bool = True, forzar_verificacio
 
     tipo = candidata.get("tipo", "spooler")
     puerto = candidata.get("puerto")
+    ruta_usb = candidata.get("ruta_usb")
     conectada = not candidata.get("is_offline", False)
     if tipo == "serial" and puerto:
         if verificar_online or forzar_verificacion:
-            conectada = esta_impresora_conectada(puerto, forzar_verificacion=forzar_verificacion)
+            conectada = probar_conexion_puerto_com(puerto)
+            _CACHE_ESTADO_CONEXION[puerto] = {"conectada": conectada, "timestamp": time.time()}
         else:
             cached = _CACHE_ESTADO_CONEXION.get(puerto)
             if cached and (time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
                 conectada = cached.get("conectada", False)
             else:
                 conectada = False
+    elif tipo == "usb" and ruta_usb:
+        if verificar_online or forzar_verificacion:
+            conectada = probar_conexion_puerto_usb(ruta_usb)
+            _CACHE_ESTADO_CONEXION[ruta_usb] = {"conectada": conectada, "timestamp": time.time()}
+        else:
+            cached = _CACHE_ESTADO_CONEXION.get(ruta_usb)
+            if cached and (time.time() - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
+                conectada = cached.get("conectada", False)
+            else:
+                conectada = not candidata.get("is_offline", False)
 
     return {
         "nombre": candidata["nombre"],
@@ -411,6 +576,7 @@ def detectar_impresora_termica(verificar_online: bool = True, forzar_verificacio
         "configurada_manualmente": configurada_manualmente,
         "tipo": tipo,
         "puerto": puerto,
+        "ruta_usb": ruta_usb,
     }
 
 
@@ -421,22 +587,29 @@ def esta_impresora_conectada(nombre_impresora: Optional[str] = None, forzar_veri
         det = detectar_impresora_termica(verificar_online=True, forzar_verificacion=forzar_verificacion)
         return bool(det and det.get("conectada", False))
 
+    # Si es una impresora USB directa (ej. 'USB: SUPERRISC S31 (MP80-12)')
+    if target.upper().startswith("USB:") or r"\USB#" in target.upper():
+        disps = listar_dispositivos_usb_impresora(forzar_verificacion=forzar_verificacion)
+        for d in disps:
+            if d["nombre"].lower() == target.lower() or d["ruta_usb"].lower() == target.lower():
+                return probar_conexion_puerto_usb(d["ruta_usb"])
+        if disps:
+            return probar_conexion_puerto_usb(disps[0]["ruta_usb"])
+        return False
+
     # Si es un puerto COM (ej. 'COM5' o 'COM5 (MP80-12 Bluetooth)')
     match = re.search(r"\bCOM\d+\b", target.upper())
     if match:
         puerto_buscado = match.group(0)
         puertos_activos = listar_puertos_com_sistema(forzar_verificacion=forzar_verificacion)
-        existe = any(p.get("puerto") == puerto_buscado for p in puertos_activos)
-        if not existe:
+        if not any(p.get("puerto") == puerto_buscado for p in puertos_activos):
             return False
 
-        # Consultar caché vigente si no se fuerza la verificación
         ahora = time.time()
         cached = _CACHE_ESTADO_CONEXION.get(puerto_buscado)
         if not forzar_verificacion and cached and (ahora - cached.get("timestamp", 0) < CACHE_TTL_SEGUNDOS):
             return cached.get("conectada", False)
 
-        # Probar conexión física real (Bluetooth/USB) con timeout adecuado
         conectada = probar_conexion_puerto_com(puerto_buscado, timeout_sec=6.0)
         _CACHE_ESTADO_CONEXION[puerto_buscado] = {"conectada": conectada, "timestamp": ahora}
         return conectada
@@ -757,14 +930,89 @@ def enviar_datos_crudos_com(
             time.sleep(0.15)
 
 
+def enviar_datos_crudos_usb(
+    identificador_o_ruta: str,
+    datos: bytes
+) -> Tuple[bool, str]:
+    """Envía una secuencia de bytes crudos (ESC/POS) directamente a la impresora térmica USB (usbprint.sys)."""
+    if not datos:
+        return False, "No hay datos para enviar a la impresora."
+
+    sistema = platform.system()
+    if sistema != "Windows":
+        return False, "Impresión directa por USB solo implementada para Windows."
+
+    # Resolver la ruta de dispositivo si nos pasaron un nombre amigable
+    ruta_dispositivo = identificador_o_ruta
+    if not ruta_dispositivo.startswith("\\\\?\\"):
+        dispositivos = listar_dispositivos_usb_impresora(forzar_verificacion=False)
+        matched = None
+        for d in dispositivos:
+            if d["nombre"].lower() == identificador_o_ruta.lower():
+                matched = d["ruta_usb"]
+                break
+        if not matched and dispositivos:
+            for d in dispositivos:
+                if identificador_o_ruta.lower() in d["nombre"].lower() or d["nombre"].lower() in identificador_o_ruta.lower():
+                    matched = d["ruta_usb"]
+                    break
+        if not matched and dispositivos:
+            matched = dispositivos[0]["ruta_usb"]
+
+        if not matched:
+            return False, f"No se encontró el dispositivo USB '{identificador_o_ruta}'. Verifique la conexión del cable."
+        ruta_dispositivo = matched
+
+    kernel32 = ctypes.windll.kernel32
+    GENERIC_WRITE = 0x40000000
+    OPEN_EXISTING = 3
+    FILE_ATTRIBUTE_NORMAL = 0x80
+
+    with _PORT_LOCK:
+        h = kernel32.CreateFileW(
+            ruta_dispositivo,
+            GENERIC_WRITE,
+            0,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None
+        )
+        if h == -1 or h == 0:
+            err = kernel32.GetLastError()
+            _CACHE_ESTADO_CONEXION[ruta_dispositivo] = {"conectada": False, "timestamp": time.time()}
+            _CACHE_ESTADO_CONEXION[identificador_o_ruta] = {"conectada": False, "timestamp": time.time()}
+            return False, f"No se pudo abrir la impresora USB (Error Windows: {err}). Verifique que esté encendida."
+
+        try:
+            escritos = wintypes.DWORD(0)
+            datos_buf = ctypes.create_string_buffer(datos)
+            ok = kernel32.WriteFile(h, datos_buf, len(datos), ctypes.byref(escritos), None)
+            if not ok or escritos.value == 0:
+                err = kernel32.GetLastError()
+                return False, f"Fallo al transmitir datos a la impresora USB (Error Windows: {err})."
+
+            kernel32.FlushFileBuffers(h)
+            _CACHE_ESTADO_CONEXION[ruta_dispositivo] = {"conectada": True, "timestamp": time.time()}
+            _CACHE_ESTADO_CONEXION[identificador_o_ruta] = {"conectada": True, "timestamp": time.time()}
+            return True, f"Ticket enviado con éxito a la impresora USB ({escritos.value} bytes transmitidos)."
+        finally:
+            kernel32.CloseHandle(h)
+            time.sleep(0.05)
+
+
 def enviar_datos_crudos_impresora(
     nombre_impresora: str,
     datos: bytes,
     nombre_documento: str = "Ticket de Venta"
 ) -> Tuple[bool, str]:
-    """Envía una secuencia de bytes crudos a la impresora térmica (vía COM/Bluetooth o Spooler de Windows)."""
+    """Envía una secuencia de bytes crudos a la impresora térmica (vía USB, COM/Bluetooth o Spooler de Windows)."""
     if not datos:
         return False, "No hay datos para enviar a la impresora."
+
+    # Si es una impresora USB directa (ej. 'USB: SUPERRISC S31 (MP80-12)')
+    if (nombre_impresora or "").upper().startswith("USB:") or r"\USB#" in (nombre_impresora or "").upper():
+        return enviar_datos_crudos_usb(nombre_impresora, datos)
 
     # Si el nombre corresponde a un puerto COM (ej: 'COM5' o 'COM5 (MP80-12 Bluetooth)')
     if re.search(r"\bCOM\d+\b", (nombre_impresora or "").upper()):

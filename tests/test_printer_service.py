@@ -346,5 +346,35 @@ def test_listar_puertos_com_refleja_cache_desconectada():
             assert com5["is_offline"] is True
 
 
+def test_detectar_impresora_usb_directa():
+    """Verifica que detectar_impresora_termica detecte e identifique impresoras USB directas."""
+    disps_usb = [
+        {"nombre": "USB: SUPERRISC S31 (MP80-12)", "ruta_usb": r"\\?\USB#TEST#1", "is_default": False, "is_offline": False, "tipo": "usb"}
+    ]
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=disps_usb), \
+         patch("services.printer_service.probar_conexion_puerto_usb", return_value=True):
+        det = detectar_impresora_termica(verificar_online=True)
+        assert det is not None
+        assert "SUPERRISC S31" in det["nombre"]
+        assert det["tipo"] == "usb"
+        assert det["conectada"] is True
+
+
+def test_fallback_a_usb_cuando_bluetooth_esta_apagado():
+    """Si la impresora configurada (Bluetooth COM5) está desconectada, conmuta a la térmica USB en línea."""
+    set_setting(CLAVE_IMPRESORA_TERMICA, "COM5 (MP80-12 Bluetooth)")
+    impresoras = [
+        {"nombre": "COM5 (MP80-12 Bluetooth)", "puerto": "COM5", "is_default": False, "is_offline": True, "tipo": "serial"},
+        {"nombre": "USB: SUPERRISC S31 (MP80-12)", "ruta_usb": r"\\?\USB#TEST#1", "is_default": False, "is_offline": False, "tipo": "usb"},
+    ]
+    with patch("services.printer_service.listar_impresoras_sistema", return_value=impresoras), \
+         patch("services.printer_service.probar_conexion_puerto_usb", return_value=True):
+        det = detectar_impresora_termica(verificar_online=True)
+        assert det is not None
+        assert det["tipo"] == "usb"
+        assert det["conectada"] is True
+
+
+
 
 
